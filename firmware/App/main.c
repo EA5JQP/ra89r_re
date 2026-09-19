@@ -149,13 +149,27 @@ int main(void)
     char echo[16];
     uint32_t echo_len = 0;
 
-    /* Clock first: the UART divisor below depends on knowing it. */
+    /* Clock first: the UART divisor below depends on knowing it.  Everything
+     * the bootloader left behind is captured for the log -- it is the only way
+     * to see why a peripheral misbehaves after the hand-over. */
     {
-        uint32_t left_by_bootloader = clock_init();
+        uint32_t left_cfgr;
+        uint32_t left_cr;
+        uint32_t left_flash_acr = FLASH->ACR;
+        uint32_t u_cr1 = BOARD_UART->CR1;
+        uint32_t u_cr2 = BOARD_UART->CR2;
+        uint32_t u_cr3 = BOARD_UART->CR3;
+
+        left_cfgr = clock_init();
+        left_cr = RCC->CR;
         uart_init(BOARD_UART_BAUD);
         uart_printf("\n\n=== " VERSION_STRING " ===\n");
-        uart_printf("clock forced to HSI (bootloader had left CFGR=%08X)\n",
-                    (unsigned)left_by_bootloader);
+        uart_printf("clock: forced HSI; bootloader had left CFGR=%08X CR=%08X "
+                    "FLASH_ACR=%08X\n", (unsigned)left_cfgr, (unsigned)left_cr,
+                    (unsigned)left_flash_acr);
+        uart_printf("usart1 as left by the bootloader: CR1=%04X CR2=%04X CR3=%04X "
+                    "(now 8N1, no flow control, no DMA)\n",
+                    (unsigned)u_cr1, (unsigned)u_cr2, (unsigned)u_cr3);
         uart_printf("sysclk %u Hz, APB1/APB2 %u Hz\n", (unsigned)SystemCoreClock,
                     (unsigned)BOARD_APB2_HZ);
     }
@@ -166,11 +180,12 @@ int main(void)
 
     uart_printf("built " __DATE__ " " __TIME__ "\n");
     uart_printf("reset cause: %s\n", reset_cause());
+    uart_printf("app-valid marker at 0x0805FFF0 = 0x%02X (expected 0x11)\n",
+                (unsigned)*APP_VALID_MARKER);
     if (*APP_VALID_MARKER != 0x11u) {
-        uart_puts("warning: app-valid marker (0x0805FFF0) is not 0x11 -- if the\n"
-                  "         radio rebooted into the bootloader instead of this\n"
-                  "         firmware, re-flash with tools/ra89r_flash.py (it sets\n"
-                  "         the marker automatically)\n");
+        uart_puts("  note: the bootloader started us anyway, so it saw 0x11; if\n"
+                  "        this line disagrees, report it -- the marker write is\n"
+                  "        then not landing where we read it.\n");
     }
 
     uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");
