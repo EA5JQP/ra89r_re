@@ -217,38 +217,75 @@ How to reproduce the analysis (see "Loading the current decode into Ghidra"):
   (`0x0800415F`) -- keys are polled.  (The real handlers are DMA1 streams,
   `TIM3`/`TIM5`, `SPI1`, `USART1`, `SysTick`.)
 
-**The keypad is an ADC ladder.**  `FUN_08004E58` programs a regular scan of six
-channels -- `2` *or* `14`, then `3`, `6`, `7`, `8`, `9` (`FUN_080109E4` per
-channel) -- and `FUN_0801BE90`/`FUN_08005460` finish the job by starting a
-DMA-driven conversion (`FUN_08010DB8(inst, buffer, 0x30)`), with the results
-landing at `0x20000C28`.  The channel set maps to **PA2, PA3, PA6, PA7, PB0,
-PB1**, and those are exactly the pins the app configures as **analog**:
-`GPIO_Init` with mode `3`, mask `0xCC` (PA2/PA3/PA6/PA7) at `0x0800A8F4`'s
-neighbour and `GPIOB` mask `0x3` in `FUN_08014B00`.  The two variants
-(`FUN_0801BE90(0/1)`: channel 2 on PA2 vs channel 14 on PC4) look like the
-RA89R/RA89G or two board revisions.
+**Correction: the keys are NOT on the ADC.**  The 6-channel ADC scan is real and
+worth recording, but it is the **S-meter**, not a keypad ladder.  `FUN_08004E58`
+programs a regular scan of six channels -- `2` *or* `14`, then `3`, `6`, `7`,
+`8`, `9` (`FUN_080109E4` per channel) -- and `FUN_0801BE90`/`FUN_08005460` start
+a DMA conversion (`FUN_08010DB8(inst, buffer, 0x30)`) whose results land at
+`0x20000C28`; the channels map to **PA2, PA3, PA6, PA7, PB0, PB1**, the pins the
+app puts in **analog** mode (`GPIO_Init` mode `3`, mask `0xCC` for PA2/PA3/PA6/PA7,
+`GPIOB` mask `0x3` in `FUN_08014B00`).  The two variants (`FUN_0801BE90(0/1)`:
+channel 2 on PA2 vs channel 14 on PC4) look like RA89R/RA89G or two revisions.
 
-Still to pin down: **which channel carries the 20 buttons and the threshold ->
-key-code table** (the result buffer has no direct xref -- it is read through the
-ADC instance at `0x20000BB0`).  That is the next step; `FUN_08005460` is the
-entry point to follow.
+The **only** consumers of those results are:
 
-**The digital key/PTT lines.**  `FUN_080218E8` (called from the main loop via
-`FUN_08021A38`) gates on `PC13` low, reads `PB10`, and drives `FUN_08021950`,
-which implements debounce (`counter == 8`) and long-press (up to 56000 ticks,
-compared against a configured timeout) and then posts a **key event** through
-`FUN_0800C550(..., 5)`.  `FUN_08021950` also reads **`PB9`** -- and `PB9` is
-exactly the line the **bootloader waits on** to leave update mode
-(`0x080005B0`: loop until `GPIOB` pin 9 reads high), i.e. the PTT that gates
-flashing.  So `PC13`/`PB9`/`PB10` are the handful of dedicated keys; everything
-else is on the ladder.
+* `FUN_08024260(ch)` -- average of 8 samples of channel `ch` (sample stride
+  `0x18`, channels 4 bytes apart) -- and it is called from exactly two places,
+  both reading **channel index 5** (the 6th = ADC channel 9 = **PB1**):
+  `FUN_08007664` (main loop: `>> 4`, compare and draw a bar through the display
+  module = the S-meter) and `FUN_0800E514` (average 5 samples, `>> 6`, smoothed
+  value).
+
+No function maps an ADC reading to a key code, and no threshold table is
+referenced from any key path, so the earlier "keypad = ADC ladder" claim in this
+file was wrong and is withdrawn.
+
+**The key codes (extracted).**  The app keeps its key state in a struct at
+**`0x20009F80`**: "new key" flag at **`+0`**, **key code at `+3`**.  It is read by
+
+* `FUN_08013F28` -- the key dispatcher (reached from the main loop through
+  `FUN_08013E2C`, and from the radio loop `FUN_0801A228`), which normalises the
+  code through `FUN_08013DB0` first;
+* `FUN_0801A228` -- the radio loop; digit keys arrive as `FUN_0800B7A4(code - 10)`.
+
+The codes the dispatcher handles:
+
+| code | meaning (from the code) |
+|---|---|
+| `1` | power/standby; `100` is its long-press variant |
+| `4`..`9` | six **programmable** keys, remapped by setting through `FUN_0800996C` / `FUN_0800990C` / `FUN_08009938` (`0x08013DB0`) |
+| `10`..`19` | **digits 0..9** (`FUN_0800B7A4(code - 10)` writes the digit) |
+| `0x15`, `0x16`, `0x18`, `0x1a`..`0x1f` | navigation / mode keys |
+| `0x20`..`0x25`, `0x26` | menu area (MENU/UP/DOWN/EXIT/`*`/`#`, plus `0x26`) |
+| `0x2a`, `0x2d`, `0x30`, `0x33`, `0x36`, `0x39`, `0x3c`, `0x3f`, `0x42`, `0x45`, `0x48`, `0x4b`, `0x4e`, `0x51` | **step of 3** -- a base code plus `+1`/`+2` for long / extra-long press |
+
+**The physical keys.**  Only three lines are read as keys: `PC13`, `PB9`,
+`PB10` (the other four reads -- `PA2`, `PA13`, `PA14`, `PD0` -- are straps or
+bus lines).  `FUN_080218E8` (main loop via `FUN_08021A38`) requires **`PC13`
+low**, then reads **`PB10`** and calls `FUN_08021950`, which debounces
+(`counter == 8`), times long presses (up to 56000 ticks vs a configured
+timeout) and also samples **`PB9`**; a `PB9` high keeps the hold timer running.
+`PB9` is exactly the line the **bootloader waits on** to leave update mode
+(`0x080005B0`: loop until `GPIOB` pin 9 reads high).  That matches the radio's
+"**PTT1 and PTT2 must be pressed to reach the bootloader**": the app reads the
+two PTTs individually (`PC13`, `PB10`) and `PB9` is the combined line the
+bootloader gates on.
+
+**Open question.**  The full set of functions that touch the key struct is ten,
+and every one is UI-side; the full set of *event* posters (`FUN_0800C550`
+callers) is six, and none scans a keypad.  So either the digit/function codes
+are framework-level (shared with the keypad models of this family -- plausible,
+the UI strings are common) and this radio physically has only a handful of keys,
+or the scanner lives in code the analysis never reached.  Before hunting
+further, confirm the button count on the hardware (keypad layout or the CPS key
+list).
 
 ### Other chips on the board (from the same pass)
 
 | bus | pins | what it is |
 |---|---|---|
 | companion / PMIC | `PC14` clock, `PB2` data, `PD0` reset pulse | battery + charger gauge: `FUN_0800687C` returns the pack voltage (10-bit reading + 875/760/640, x 10000 uV), registers 2/3/5/7/10/11, polled from the main loop by `FUN_08017BB4` |
-| BK4815/BK4829 | bit-banged | register layer is `FUN_080220A0(reg, val)` write / `FUN_080180F0(reg)` read, used by the T/R path `FUN_08016228` |
+| BK4815/BK4829 | bit-banged | register layer is `FUN_080220A0(reg, val)` write / `FUN_080180F0(reg)` read (used by the T/R path `FUN_08016228`); reg `0x67` is the RSSI (squelch decision in `FUN_080052B8`, debug string `RSSI R67 %d`), `0x65`/`0x63` are read alongside it |
 | SPI NOR | 16-bit serial: `FUN_08017FE4` (read) / `FUN_08018060` (write) | external flash |
 | LCD panel | `PA8`-`PA11` + `PB15` | see `ra89r_lcd.md` |
 | lamp | `PA1` + `PA5` | see "Backlight / lamp" above |
@@ -347,12 +384,14 @@ From the earlier revision's CPS decompilation (sources `cps_decompiled/` in
    UI has a "Carrier/Scrambler" debug page, but the 3-wire register layer was
    not identified in this pass (the `0x0800DCxx` region the earlier revision
    mentioned is EEPROM/config parsing, not RF).
-7. **Keypad** — mechanism found: an **ADC resistor ladder** (6-channel scan on
-   the analog pins PA2/PA3/PA6/PA7/PB0/PB1) plus a few digital keys on
-   PC13/PB9/PB10 -- see "Keypad" above.  Still missing: which channel carries the
-   20 buttons and the threshold -> key-code table.  **Audio (DAC/ADC) mix,
-   squelch, battery** are still not analysed (though the battery gauge chip is
-   now mapped, see "Other chips on the board").
+7. **Keypad** — the key **codes** are extracted (see "Keypad" above: `1`, `4`-`9`
+   programmable, `10`-`19` = digits, `0x20`-`0x25` menu, `0x2a`+3*k with long /
+   extra-long variants) and the key state lives at `0x20009F80` (+0 flag, +3
+   code).  What is **not** found: a scanner for a 20-button keypad -- the only
+   physical key lines are `PC13`/`PB9`/`PB10` (the PTT pair, `PB9` = the
+   bootloader's gate).  The earlier "ADC ladder" claim was withdrawn: the ADC
+   feeds the S-meter.  **Audio mix, squelch (beyond the RSSI read), battery**
+   are still open.
 8. ~~Bootloader upload protocol~~ — **done**: see `ra89r_bootloader.md` (frames,
    commands, baud table, record handling) with `tools/ra89r_flash.py` and
    `ra89r.py mkicf` as the working host-side implementation.  Remaining unknowns
