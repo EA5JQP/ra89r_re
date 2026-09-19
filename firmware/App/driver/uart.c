@@ -31,13 +31,24 @@ void uart_init(uint32_t baud)
     RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
     (void)RCC->APB2ENR;
 
+    /* Take the peripheral over from scratch.  The bootloader leaves USART1
+     * configured its own way, and anything it left enabled -- DMA requests,
+     * RTS/CTS flow control, a different stop-bit count -- keeps bytes from ever
+     * reaching RXNE, i.e. the console looks alive but ignores the keyboard.
+     * So: disable, clear the error/overrun flags, then configure 8N1 with no
+     * flow control and no DMA. */
+    BOARD_UART->CR1 = 0;
+    BOARD_UART->CR2 = 0;
+    BOARD_UART->CR3 = 0;
+    (void)BOARD_UART->SR;                    /* clearing ORE/FE/NE/PE needs ... */
+    (void)BOARD_UART->DR;                    /* ... a read of SR followed by DR */
+
     /* BRR keeps USARTDIV in 4.4 fixed point; with 16x oversampling
      * BRR = PCLK / baud (rounded). */
     BOARD_UART->BRR = (BOARD_APB2_HZ + (baud / 2u)) / baud;
-
     BOARD_UART->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
 
-    /* Flush anything the (possibly reset) peer left in the shift register. */
+    /* Drop anything already queued in the receive path. */
     while (BOARD_UART->SR & USART_SR_RXNE)
         (void)BOARD_UART->DR;
 }
@@ -89,11 +100,18 @@ void uart_printf(const char *fmt, ...)
 
     va_start(ap, fmt);
     while (*fmt) {
+        int pad = 0;
+
         if (*fmt != '%') {
             uart_putc(*fmt++);
             continue;
         }
         fmt++;
+        /* optional zero-padding width, e.g. "%08X" or "%02X" */
+        if (*fmt == '0' || (*fmt >= '1' && *fmt <= '9')) {
+            while (*fmt >= '0' && *fmt <= '9')
+                pad = pad * 10 + (*fmt++ - '0');
+        }
         switch (*fmt) {
         case 's': {
             const char *s = va_arg(ap, const char *);
@@ -107,20 +125,20 @@ void uart_printf(const char *fmt, ...)
             int32_t v = va_arg(ap, int32_t);
             if (v < 0) {
                 uart_putc('-');
-                put_u32((uint32_t)(-v), 10u, 0);
+                put_u32((uint32_t)(-v), 10u, pad);
             } else {
-                put_u32((uint32_t)v, 10u, 0);
+                put_u32((uint32_t)v, 10u, pad);
             }
             break;
         }
         case 'u':
-            put_u32(va_arg(ap, uint32_t), 10u, 0);
+            put_u32(va_arg(ap, uint32_t), 10u, pad);
             break;
         case 'x':
-            put_u32(va_arg(ap, uint32_t), 16u, 0);
+            put_u32(va_arg(ap, uint32_t), 16u, pad);
             break;
         case 'X':
-            put_u32(va_arg(ap, uint32_t), 16u, 8);
+            put_u32(va_arg(ap, uint32_t), 16u, pad ? pad : 8);
             break;
         case '%':
             uart_putc('%');
