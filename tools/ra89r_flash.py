@@ -95,6 +95,7 @@ class Transport(object):
 
     def __init__(self, port, baud, timeout=1.0, dry_run=False):
         self.dry_run = dry_run
+        self.garbled = 0
         self.port = port
         self.baud = baud
         self.serial = None
@@ -245,13 +246,26 @@ def ping(io, timeout=0.35):
 
 
 def wait_ack(io, timeout, what):
-    """Wait for the 4-byte PASS/FAIL reply; True/False/None (None = timeout)."""
+    """Wait for the 4-byte PASS/FAIL reply; True/False/None (None = timeout).
+
+    Cheap USB-serial adapters sometimes clip the first byte of the reply on a
+    high-rate link (`\xf8ASS` instead of `PASS`).  The remaining three bytes are
+    unambiguous, so accept them and count the damage -- the caller drops to a
+    lower baud if it keeps happening.
+    """
     data = io.read_ack(timeout)
     if data == ACK_PASS:
         return True
     if data == ACK_FAIL:
         return False
+    if len(data) == 4 and data[1:] in (ACK_PASS[1:], ACK_FAIL[1:]):
+        io.garbled += 1
+        verdict = data[1:] == ACK_PASS[1:]
+        print("  %s: damaged reply %r -> %s" % (what, data,
+                                                "PASS" if verdict else "FAIL"))
+        return verdict
     if data:
+        io.garbled += 1
         print("  %s: unexpected reply %r" % (what, data))
     return None
 
@@ -382,6 +396,29 @@ def cmd_flash(args):
             time.sleep(1.0)
             wait_ack(io, args.timeout, "erase")
 
+        for attempt_index, baud_index in enumerate(
+                [baud_index] + [i for i in BAUD_CANDIDATES if i < baud_index]):
+            if attempt_index:
+                print("link was unreliable; restarting at %d baud"
+                      % BAUD_TABLE[baud_index])
+                io.garbled = 0
+                if set_baud(io, baud_index, args) is None:
+                    continue
+            status = flash_records(io, records, args)
+            if status == "ok":
+                return 0
+            if status == "rejected":
+                return 1
+        print("could not get a clean link at any baud rate -- power-cycle the "
+              "radio back into update mode and retry with --baud 0 (9600)")
+        return 1
+    finally:
+        io.close()
+
+
+def flash_records(io, records, args):
+    """Program every record.  Returns "ok", "rejected" or "unreliable"."""
+    if True:
         started = time.time()
         pending = []                    # (index, addr, attempts) awaiting an ack
         for index, (addr, raw) in enumerate(records):
@@ -395,20 +432,19 @@ def cmd_flash(args):
                       % (index + 1, len(records), addr, len(raw) - 7))
             if args.window == 1:
                 if not drain_ack(io, pending, args, records):
-                    return 1
+                    return "rejected" if io.garbled == 0 else "unreliable"
         while pending:
             if not drain_ack(io, pending, args, records):
-                return 1
+                return "rejected" if io.garbled == 0 else "unreliable"
 
         print("sending EXIT")
         io.write(frame(CMD_EXIT, b"EXIT"))
         elapsed = time.time() - started
-        print("done: %d records, %d bytes in %.1f s (%.1f kB/s)"
+        print("done: %d records, %d bytes in %.1f s (%.1f kB/s)%s"
               % (len(records), sum(len(r) for _, r in records), elapsed,
-                 sum(len(r) for _, r in records) / max(elapsed, 1e-3) / 1024.0))
-        return 0
-    finally:
-        io.close()
+                 sum(len(r) for _, r in records) / max(elapsed, 1e-3) / 1024.0,
+                 (" [%d damaged replies]" % io.garbled) if io.garbled else ""))
+        return "ok"
 
 
 def drain_ack(io, pending, args, records):
