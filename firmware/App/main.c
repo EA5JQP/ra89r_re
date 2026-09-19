@@ -18,7 +18,6 @@
 #include "driver/fault.h"
 #include "driver/gpio.h"
 #include "driver/lcd_st7565.h"
-#include "driver/pinwatch.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
 #include "ui.h"
@@ -124,8 +123,7 @@ static void print_help(void)
               "          c clear  t test card   b border   f fill   p animation\n"
               "          v/V contrast up/down  l backlight on/off  q heartbeat\n"
               "          r re-init panel (standard, bootloader-proven)\n"
-              "          s re-init panel (stock app variant, 8 extra bytes)\n"
-              "          w pin watch (find the keypad)  W open-drain sweep\n");
+              "          s re-init panel (stock app variant, 8 extra bytes)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -285,23 +283,6 @@ int main(void)
                 heartbeat = !heartbeat;
                 uart_printf("\nheartbeat %s\n", heartbeat ? "on" : "off");
                 break;
-            case 'w':
-                if (pinwatch_is_active()) {
-                    pinwatch_stop();
-                    /* the watcher released the lamp and panel pins; put back the
-                     * parts of the board this firmware owns */
-                    BACKLIGHT_Init();
-                    lcd_reinit(lcd_variant());
-                    draw_test_card();
-                    uart_puts("[k] panel and lamp re-initialised (the RF/PMIC buses "
-                              "still need a reset)\n");
-                } else {
-                    pinwatch_arm();
-                }
-                break;
-            case 'W':
-                pinwatch_sweep(5);
-                break;
             default:
                 break;
             }
@@ -331,7 +312,6 @@ int main(void)
                             (unsigned)(now / 1000u), lcd_variant(), contrast);
         }
 
-        pinwatch_poll();
         animate_step(now);
     }
 }
