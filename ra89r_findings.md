@@ -259,6 +259,23 @@ The codes the dispatcher handles:
 | `0x20`..`0x25`, `0x26` | menu area (MENU/UP/DOWN/EXIT/`*`/`#`, plus `0x26`) |
 | `0x2a`, `0x2d`, `0x30`, `0x33`, `0x36`, `0x39`, `0x3c`, `0x3f`, `0x42`, `0x45`, `0x48`, `0x4b`, `0x4e`, `0x51` | **step of 3** -- a base code plus `+1`/`+2` for long / extra-long press |
 
+What those codes *do* (the dispatcher `FUN_08013F28` is the map; these are the
+handlers worth knowing):
+
+| action | code | handler |
+|---|---|---|
+| enter the menu | `0x20` | `FUN_0800C41C` |
+| menu / channel up, down | `0x15`, `0x16` | `FUN_080094CC(param, 1\|0)` |
+| change volume (or another stepped value) | `0x18` | `FUN_08015D14(3\|4)` |
+| type a digit | `10`..`19` | `FUN_0800B7A4(code - 10)` |
+| **channel / frequency change** | -- | `FUN_08005638`: writes the u16 at state `+0x20`, clears the key state, `FUN_080220A0(0xC001, 0x2B)` on the BK (reg `0x2B`) |
+
+The CPS corroborates that the radio has a real keypad: `_8890DTest/RadioSet.cs`
+carries the same `P1 Short` / `P2 Short` / `P1 Long` / `P2 Long` labels the
+firmware uses, its `Key Lock` options distinguish **`按键` (buttons) from `侧键`
+(side keys)**, and the CPS project also contains `Cmx138Set.cs` (a CMX138 voice
+chip), i.e. the radio does have companion silicon.
+
 **The physical keys.**  Only three lines are read as keys: `PC13`, `PB9`,
 `PB10` (the other four reads -- `PA2`, `PA13`, `PA14`, `PD0` -- are straps or
 bus lines).  `FUN_080218E8` (main loop via `FUN_08021A38`) requires **`PC13`
