@@ -1,0 +1,13 @@
+# python
+__pycache__/
+*.pyc
+
+# generated artifacts (regenerate from the stock .icf with ra89r.py /
+# tools/ra89r_analyze.py; see AGENTS.md)
+work/
+
+# firmware build output (see firmware/.gitignore)
+firmware/build/
+
+# host/tooling state
+.reasonix/
