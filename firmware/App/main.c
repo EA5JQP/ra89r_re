@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include "board.h"
+#include "driver/clock.h"
 #include "driver/fault.h"
 #include "driver/gpio.h"
 #include "driver/lcd_st7565.h"
@@ -148,10 +149,16 @@ int main(void)
     char echo[16];
     uint32_t echo_len = 0;
 
-    /* The console comes up first: with a black panel it is the only way to see
-     * whether the application is even running. */
-    uart_init(BOARD_UART_BAUD);
-    uart_puts("\n\n=== " VERSION_STRING " ===\n");
+    /* Clock first: the UART divisor below depends on knowing it. */
+    {
+        uint32_t left_by_bootloader = clock_init();
+        uart_init(BOARD_UART_BAUD);
+        uart_printf("\n\n=== " VERSION_STRING " ===\n");
+        uart_printf("clock forced to HSI (bootloader had left CFGR=%08X)\n",
+                    (unsigned)left_by_bootloader);
+        uart_printf("sysclk %u Hz, APB1/APB2 %u Hz\n", (unsigned)SystemCoreClock,
+                    (unsigned)BOARD_APB2_HZ);
+    }
     uart_puts("uart console up (USART1, PB6/PB7, 115200 8N1)\n");
 
     systick_init();
