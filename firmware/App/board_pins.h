@@ -31,10 +31,23 @@
 #define LCD_RST_PIN         (1u << 9)
 
 /* LCD backlight: GPIOA pin 1.  The stock bootloader blinks this pin when it
- * enters update mode (0x08000582) and the stock application drives it as the
- * user-visible lamp; level 1 = on (the blink goes 0 -> 1). */
+ * enters update mode (0x08000582) and leaves it high while it shows the
+ * "Update..." screen; level 1 = on (the blink goes 0 -> 1 and ends there). */
 #define BACKLIGHT_PIN       (1u << 1)
 #define BACKLIGHT_ON_LEVEL  1
+
+/* Second lamp control line, same port: the stock bootloader also blinks GPIOA
+ * pin 5, five times (0x08000AD2), immediately before the pin-1 blink -- and the
+ * panel stays dark on our firmware although pin 1 is driven high and the panel
+ * init is byte-for-byte the bootloader's.  So this build drives both and lets
+ * the hardware decide.
+ *
+ * Note for whoever resolves it: the stock *application* configures PA4 and PA5
+ * as DAC outputs (0x0800A8F4 -> DAC1 at 0x40007400, called from the boot path at
+ * 0x0801D748), so if pin 5 does turn out to be lamp-related, that DAC usage has
+ * to be understood before the pin can be repurposed. */
+#define BACKLIGHT_AUX_PIN       (1u << 5)
+#define BACKLIGHT_AUX_ON_LEVEL  1
 
 /* programming UART: USART1 on PB6 (TX) / PB7 (RX), AF2 -- the stock
  * bootloader's port, the radio's Kenwood-style jack */
