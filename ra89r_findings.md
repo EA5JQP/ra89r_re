@@ -371,14 +371,23 @@ owner's naming: the RA89R's `F` is `KEY_MENU`, `AB` is `KEY_EXIT`, `#` is
 | `10`-`19` | `PA7`/`PB0`/`PA3` | `KEY_0`-`KEY_9` | measured with the monitor |
 | `100` / `PB9` | `PA2` / `PB9` | `KEY_PTT` / `KEY_PTT2` | measured with the monitor |
 | `0x15` / `0x16` | `PA6` | `KEY_UP` / `KEY_DOWN` | the list widget uses their held codes `0x21`/`0x22` as list-up/down |
-| `0x14` | `PA6` | `KEY_MENU` | its held code `0x20` is the menu (`FUN_0800C41C`), and it is the only function code that reaches it |
-| `0x17` | `PA6` | `KEY_EXIT` | its held/extra codes land on the invalid/back beep (`FUN_0801880c(0x38)` in every menu context) |
+| `0x17` | `PA6` | `KEY_MENU` | measured: pressing the owner's MENU key holds `PA6` at `0x000` (the A tap) steadily |
+| `0x14` | `PA6` | `KEY_EXIT` | the other of the pair, by elimination |
 | `4`-`6` / `7`-`9` | `PA2` | `KEY_SIDE1` / `KEY_SIDE2` | the only codes with three press types = the CPS's "Side1/Side2 Short/Long" settings |
 | `0x18` / `0x19` | `PA3` | `KEY_STAR` / `KEY_F` | the remaining pair, by keypad row position (`9 * 0 #`) |
 
-The last row is a placement by elimination -- the two symbols are in the same
-keypad row and nothing in the binary distinguishes them -- so it is the one to
-re-check on the radio (the console monitor prints the code beside the name).
+Two of these came off the radio against an earlier *inference* from the stock's
+handlers, which had them the other way round: `0x14`'s held code `0x20` is the
+menu (`FUN_0800C41C`) and `0x17`'s held/extra codes land on the invalid/back beep
+(`FUN_0801880c(0x38)` in every menu context), which reads as "0x14 = MENU".  The
+radio disagrees: the key the owner presses as MENU holds `PA6` at the A tap
+(steady `0x000` for 250 ms in the monitor log), i.e. code `0x17`.  The radio wins.
+Worth knowing when the port assigns functions: whatever the stock does with these
+two keys, its own *menu* is on the `0x14` key's long press.
+
+The `*` / `#` pair is the one still placed by elimination -- `0x18` and `0x19` sit
+in the same keypad row and nothing in the binary separates them -- so it is what
+to re-check first (the console monitor prints the code beside the name).
 `App/driver/keypad.h` exposes the K5V3 enum so the port can use this reader
 unchanged.
 
@@ -394,7 +403,22 @@ That matters for the port rather than for elegance: one conversion with the
 longest sample time is ~123 us, so a five-line scan that waited for its own
 conversions cost ~5 ms -- half of the 10 ms tick the K5V3 application polls the
 keypad on (`APP_TimeSlice10ms`, thresholds 20 ms / 400 ms).  Free-running, the
-same scan is background hardware and a poll is a memory read.  The stock's DMA
+same scan is background hardware and a poll is a memory read.
+
+**One round, not eight.**  The buffer therefore holds a *single* round of the six
+channels and a poll takes the newest value of each line, where the stock averages
+eight rounds.  Measured reason: with the eight-round window the press and release
+*edges* mis-read.  The window still holds pre-press samples, so the average is a
+*fraction* of the tap level, and a fraction lands inside a neighbouring window --
+one key press was reported as its neighbours (`0x9FF` and `0x3FF` = 5/8 and 2/8 of
+an idle `0xFFF`, decoded as the neighbouring two keys; the steady state, all eight
+samples, decoded correctly).  The stock tolerates the long window because its own
+4-consecutive rule debounces on top; here debouncing belongs to the application
+layer, which wants the instantaneous level.
+
+Also set explicitly: `RCC_CFGR.ADCPRE = PCLK2/2`.  Nothing else in the firmware
+touches it, so its value was whatever the bootloader left, and the sample time --
+hence how levels compare with the stock windows -- depends on it.  The stock's DMA
 configuration is `MINC|PSIZE32|MSIZE32|CIRC|very-high priority`; ours is
 identical.
 
