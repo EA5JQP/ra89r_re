@@ -328,10 +328,14 @@ The button set is the same as the `UV-K1/K5V3` keyboard enum (`PTT1`, `PTT2`,
 sibling codebase, and the CPS agrees the radio has a real keypad (its key-lock
 options separate `按键` from `侧键`).
 
-**Probe artefact, not a radio fault.**  The console probe parks pins as *inputs
-with pull-ups*; pressing a key then pulls that ladder node toward ground through
-its resistor while the MCU sources current.  That -- not the keypad -- is why the
-radio got warm during the test.
+**The probe has been removed.**  It parked those lines as *inputs with pull-ups*,
+so pressing a button pulled the ladder node toward ground through its resistor
+while the MCU sourced current into it -- that, not the keypad, is why the radio
+got warm during the test.  Since the ladder pins must stay in analog mode and
+untouched, `App/driver/pinwatch.{c,h}` and its `w`/`W` console commands were
+dropped again (git history on `driver/keypad` has them if they are ever needed
+for the RA89G variant).  The pins themselves are recorded in
+`firmware/App/board_pins.h` as documentation only.
 
 ### Other chips on the board (from the same pass)
 

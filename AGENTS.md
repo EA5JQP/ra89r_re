@@ -145,9 +145,9 @@ develop                   integration: everything merged here
 driver/lcd                screen      -- working on hardware (init, fonts, layout)
 driver/uart               console     -- working on hardware (115200, fault reports)
 driver/backlight          lamp        -- working on hardware (GPIOA pin 1 + pin 5, 'l')
-driver/keypad             keys        -- current work: the 20 buttons are not on an
-                                         MCU matrix, so the branch carries a console
-                                         probe (`App/driver/pinwatch.c`: `w` / `W`)
+driver/keypad             keys        -- current work: the 20 buttons are a 5-line
+                                         analog matrix (PA2/PA3/PA6/PA7/PB0 + PB9);
+                                         discussed in ra89r_findings.md, no driver yet
 ```
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
@@ -220,8 +220,7 @@ reasons that have nothing to do with the code):
   diagnostics, `d` framebuffer dump as ASCII, `r`/`s` panel re-init variants
   (`r` = standard sequence, i.e. the bootloader-proven one **and the default**;
   `s` = the stock application's variant, 8 extra bytes), `v`/`V` contrast,
-  `l` backlight on/off, `q` heartbeat on/off, `w`/`W` the pin watcher (a keypad
-  probe that parks the spare pins and prints what moves), plus `h`/`c`/`t`/`b`/`f`/`p`.
+  `l` backlight on/off, `q` heartbeat on/off, plus `h`/`c`/`t`/`b`/`f`/`p`.
 - Console: USART1, PB6/PB7, **115200 8N1** — the same Kenwood jack the
   bootloader uses at 9600.  If the console is silent too, the application is not
   running; check `probe` (still in the bootloader?) and the marker byte.
