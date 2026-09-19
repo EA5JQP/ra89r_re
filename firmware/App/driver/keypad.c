@@ -15,10 +15,25 @@
  * sample (a short press), code[1] when held to the 40th, code[2] on release;
  * 0xFF = the window has no such code (the digits, for instance).
  *
- * `key` is KEY_INVALID for the codes whose stock action is not conclusive yet:
- * those buttons are unlabelled in the firmware, so the mapping has to be read
- * off the radio (press it, note the code).  UP and DOWN are settled because the
- * stock dispatcher uses their *held* codes (0x21 / 0x22) as list-up / list-down. */
+ * `key` is the K5V3 name this button takes in the port.  The mapping is the
+ * owner's (F -> KEY_MENU, AB -> KEY_EXIT, # -> KEY_F, the side pair -> the
+ * KEY_SIDEx pair) bound to codes as follows:
+ *
+ *  - digits, PTT and PTT2 were read straight off the radio with the monitor;
+ *  - UP / DOWN: the stock list widget uses their held codes 0x21 / 0x22 as
+ *    list-up / list-down;
+ *  - F (0x14): its held code 0x20 is the menu (FUN_0800C41C), and 0x14 is the
+ *    only function code that reaches the menu;
+ *  - AB (0x17): its held/extra codes land on the "invalid / back" beep
+ *    (FUN_0801880c(0x38) in every menu context), i.e. the back-out key;
+ *  - SIDE1 / SIDE2 (4-6 / 7-9): these are the only codes with three press
+ *    types, which is what the CPS's "Side1 / Side2 Short/Long" settings name;
+ *  - * (0x18) and # (0x19): the remaining pair, placed by where they sit in the
+ *    keypad row (9 * 0 #) as read off the radio.
+ *
+ * The last four are placements by elimination, so they are the ones to check
+ * first: the monitor prints the code next to the name, so pressing the key is
+ * enough to see whether this table agrees with the silkscreen. */
 typedef struct {
     uint8_t line;
     uint16_t lo, hi;
@@ -33,20 +48,20 @@ static const kp_window_t windows[] = {
     /* PA2 = ADC rank 0 (channel 2): the programmable keys plus PTT1, which is
      * the key that pulls this line fully low and is also read digitally. */
     W(PA2, 0x0000, 0x007C, 0x64, 0xFF, 0xFF, KEY_PTT),
-    W(PA2, 0x04AA, 0x05A2, 0x04, 0x05, 0x06, KEY_INVALID),/* TODO: P1/P2/SIDE ? */
-    W(PA2, 0x074E, 0x0846, 0x07, 0x08, 0x09, KEY_INVALID),/* TODO */
+    W(PA2, 0x04AA, 0x05A2, 0x04, 0x05, 0x06, KEY_SIDE1),
+    W(PA2, 0x074E, 0x0846, 0x07, 0x08, 0x09, KEY_SIDE2),
 
     /* PA3 = rank 1 (channel 3): digits 9 and 0, plus two function keys. */
     W(PA3, 0x0000, 0x007C, 0x13, 0xFF, 0xFF, KEY_9),
-    W(PA3, 0x0384, 0x047C, 0x19, 0x1F, 0x25, KEY_INVALID),/* TODO */
+    W(PA3, 0x0384, 0x047C, 0x19, 0x1F, 0x25, KEY_F),
     W(PA3, 0x08B2, 0x09AA, 0x0A, 0xFF, 0xFF, KEY_0),
-    W(PA3, 0x0ABB, 0x0BB3, 0x18, 0x1E, 0x24, KEY_INVALID),/* TODO (0x18 -> volume) */
+    W(PA3, 0x0ABB, 0x0BB3, 0x18, 0x1E, 0x24, KEY_STAR),
 
     /* PA6 = rank 2 (channel 6): four function keys. */
-    W(PA6, 0x0000, 0x007C, 0x17, 0x1D, 0x23, KEY_INVALID),/* TODO */
+    W(PA6, 0x0000, 0x007C, 0x17, 0x1D, 0x23, KEY_EXIT),
     W(PA6, 0x0384, 0x047C, 0x15, 0x1B, 0x21, KEY_UP),    /* held 0x21 = up */
     W(PA6, 0x08B2, 0x09AA, 0x16, 0x1C, 0x22, KEY_DOWN),  /* held 0x22 = down */
-    W(PA6, 0x0ABB, 0x0BB3, 0x14, 0x1A, 0x20, KEY_INVALID),/* TODO (long 0x20 = select/menu) */
+    W(PA6, 0x0ABB, 0x0BB3, 0x14, 0x1A, 0x20, KEY_MENU),
 
     /* PA7 = rank 3 (channel 7): digits 3, 2, 1 and 4. */
     W(PA7, 0x0000, 0x007C, 0x0D, 0xFF, 0xFF, KEY_3),
