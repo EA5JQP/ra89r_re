@@ -15,6 +15,8 @@
 #define EARLY_RCC_AHB2EN ((volatile uint32_t *)0x40021034u)   /* AHB2ENR: IOPBEN = bit 3 */
 #define EARLY_RCC_APB2EN ((volatile uint32_t *)0x40021018u)   /* APB2ENR: USART1EN = bit 14 */
 #define EARLY_USART1     ((volatile uint32_t *)0x40013800u)   /* SR, DR, BRR, CR1 */
+#define EARLY_RCC_CR     ((volatile uint32_t *)0x40021000u)   /* CR: HSION 0, HSIRDY 1, PLLON 24 */
+#define EARLY_RCC_CFGR   ((volatile uint32_t *)0x40021004u)   /* SW/SWS/HPRE/PPRE1/PPRE2 */
 
 #define MODER 0
 #define OSPEEDR 2
@@ -39,6 +41,22 @@ static void early_puts(const char *s)
 
 void early_boot_banner(void)
 {
+    /* Force the clock to the reset default (HSI 8 MHz, no PLL, no prescalers):
+     * the bootloader hands its own frequency over with the application, so the
+     * UART divisor below would otherwise be wrong. */
+    uint32_t before = *EARLY_RCC_CFGR;
+
+    *EARLY_RCC_CR |= (1u << 0);
+    while (!(*EARLY_RCC_CR & (1u << 1)))
+        ;
+    *EARLY_RCC_CFGR &= ~0x3u;                      /* SW = HSI */
+    *EARLY_RCC_CFGR &= ~(0xFu << 4);               /* HPRE /1 */
+    *EARLY_RCC_CFGR &= ~(0x7u << 8);               /* PPRE1 /1 */
+    *EARLY_RCC_CFGR &= ~(0x7u << 11);              /* PPRE2 /1 */
+    while ((*EARLY_RCC_CFGR & (0x3u << 2)) != 0)
+        ;
+    *EARLY_RCC_CR &= ~(1u << 24);                  /* PLL off */
+
     *EARLY_RCC_AHB2EN |= (1u << 3);                /* GPIOB clock */
     *EARLY_RCC_APB2EN |= (1u << 14);               /* USART1 clock */
     (void)*EARLY_RCC_APB2EN;
@@ -55,5 +73,14 @@ void early_boot_banner(void)
 
     EARLY_USART1[2] = 8000000u / 115200u;         /* BRR, reset-default HSI 8 MHz */
     EARLY_USART1[3] = 0x200Cu;                    /* CR1 = UE | TE | RE */
-    early_puts("\n[early] reset handler reached (HSI 8 MHz assumed)\n");
+    early_puts("\n[early] reset handler reached; clock forced to HSI 8 MHz.\n");
+    early_puts("[early] the bootloader had left CFGR=");
+    {
+        /* four hex digits, most significant first -- no printf here */
+        int shift;
+        const char *digits = "0123456789ABCDEF";
+        for (shift = 28; shift >= 0; shift -= 4)
+            early_putc(digits[(before >> shift) & 0xFu]);
+    }
+    early_puts("\n");
 }
