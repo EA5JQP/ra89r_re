@@ -184,6 +184,17 @@ firmware is a different program, the **flashing tool must write the marker**:
 and 0xFF elsewhere, unless `--no-valid-marker` is given.  The same applies when
 restoring the stock `.icf`, which does not contain that byte either.
 
+## 4d. The bootloader drives the same panel
+
+While in update mode the bootloader displays `Update....` on the LCD, which
+makes its own display driver a *known-working* reference for this glass: init at
+`0x08002440` (standard ST7565 commands only), byte writer at `0x080024D0`
+(CS PA11, SCLK PA8, data PB15, MSB first), command/data at `0x0800254C` /
+`0x08002572` (A0/DC PA10) and the page/column builder at `0x08000CC8`
+(page `0xB0|n`, column `0x10|hi`, `lo`, with the `+4` offset and a clamp at
+127).  All of it matches `ra89r_lcd.md`, and it proves the eight extra init
+bytes the stock *application* sends are not needed.
+
 ## 5. Baud rates and speed
 
 ### Baud table

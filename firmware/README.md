@@ -89,10 +89,11 @@ of the flash finishing.
 
 If instead you get:
 
-* **nothing** -> try `v`/`V` (contrast) over the serial port; if still blank the
-  panel did not accept the init sequence (open point: the 8 vendor-specific
-  bytes) -- and note that a SysTick failure can no longer hang the boot (there is
-  a busy-loop fallback);
+* **nothing** -> try `v`/`V` (contrast) over the serial port, then `r` (re-init).
+  The default init is the one the stock bootloader uses (`0x08002440`) and that
+  bootloader demonstrably drives this panel, so a blank panel after that points
+  at power/backlight or the wiring rather than the command sequence.  A SysTick
+  failure can no longer hang the boot either (busy-loop fallback).
 * **a picture shifted 4 px** -> set `LCD_COLUMN_OFFSET` to 0 in
   `App/driver/lcd_st7565.h`;
 * **mirrored / garbled** -> the 0xA1 (SEG direction) / 0xC0 (COM direction) init
@@ -121,7 +122,7 @@ the stacked registers on the console instead of dying silently
 | `b` | toggle the border |
 | `f` | checkerboard fill |
 | `p` | animated bar on/off |
-| `r` / `s` | re-init the panel: stock sequence / standard commands only (finds out whether the eight vendor-specific bytes are the problem) |
+| `r` / `s` | re-init the panel: standard sequence (the bootloader's, now the default) / stock-app sequence (eight extra bytes) |
 | `v` / `V` | contrast up / down (`0x81`, value) |
 | `q` | heartbeat lines on the console (every 5 s) on/off |
 | other printable keys | echoed to the UART and shown on the display |

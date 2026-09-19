@@ -8,7 +8,14 @@ documented in `ra89r_findings.md` ("Address drift").
 Status: **interface, init sequence, fonts and geometry are verified from the
 firmware image** (every claim below is backed by disassembly of the listed
 address + cross-checked against the PY32F403 register map in
-`PY32F4xx_Firmware/`). Items marked *open* need hardware or a datasheet.
+`PY32F4xx_Firmware/`), and the low-level protocol is additionally verified
+against a *known-working* driver: **the stock bootloader drives this same panel**
+(it shows "Update...." when the radio is in update mode) and its LCD code --
+init `0x08002440`, byte writer `0x080024D0`, command/data `0x0800254C` /
+`0x08002572`, page/column builder `0x08000CC8` -- uses **exactly the same pins,
+bit order, `+4` column offset and the standard ST7565 commands only**.  The
+firmware in `firmware/` therefore defaults to that sequence.  Items marked *open*
+need hardware or a datasheet.
 
 ## 1. Summary
 
@@ -70,25 +77,26 @@ cmd 0xF8, cmd 0x01  ; booster ratio
 cmd 0x2F            ; power circuit: VB=1 VR=1 VF=1
 cmd 0x25            ; regulation ratio (V0 resistor ratio)
 cmd 0x81, cmd 0x19  ; electronic volume (contrast) = 25
-cmd 0xFF            ; \
-cmd 0x64            ;  |
-cmd 0x72            ;  |  not in the standard ST7565 command table,
-cmd 0xB4            ;  |  see "open points"
-cmd 0x90            ;  |
-cmd 0x98            ;  |
-cmd 0x70            ;  |
-cmd 0xFE            ; /
 cmd 0x40            ; display start line = 0
 cmd 0xAF            ; display on
 delay(10 ms)
 ```
 
-The panel is never given a `0xAE` (display off) before the init; the driver
-simply writes `0xAF` at the end. The last 8 bytes are not ST7565 commands
-(a compatible-clone/extended command set is likely, e.g. NT7534-class — u8g2
-notes such parts exist) — *open*: either replay them verbatim (what the RA89R
-firmware does, so they are safe on this glass) or determine the real
-controller from the panel marking.
+This is the **bootloader's** sequence (`0x08002440`) and it is proven on this
+panel.  The stock *application* (`0x08014F42`) sends the same commands but with
+eight extra bytes between the contrast and `0x40`:
+
+```
+cmd 0xFF, 0x64, 0x72, 0xB4, 0x90, 0x98, 0x70, 0xFE
+```
+
+None of those are ST7565 commands (`0x64/0x72/0x70` would be "display start
+line 36/50/48", `0xB4` "page 4", `0x90/0x98/0xFE` are undefined or reserved) and
+the bootloader shows that the panel does not need them — so the firmware in
+`firmware/` sends the standard sequence by default (`LCD_INIT_STANDARD`) and
+keeps the application's variant selectable for comparison (`LCD_INIT_STOCK_APP`,
+`r` / `s` on the console).  The panel is never given a `0xAE` (display off)
+before the init; the driver simply writes `0xAF` at the end.
 
 ## 5. Addressing and geometry
 

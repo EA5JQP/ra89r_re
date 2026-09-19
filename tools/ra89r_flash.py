@@ -302,12 +302,15 @@ def set_baud(io, index, args, verbose=True):
 def classify(ident):
     """Tell the bootloader's announcement apart from the application's reply.
 
-    Both answer the E0 handshake with FE FE EF EE E1; the bootloader follows it
-    with the ASCII model string "8600BYARR" (the updater's own entry frame), the
-    running application with a short model code (the updater switches on values
-    such as 0x2900, 0x3100, 0x8500 -- see AckDataChkPro).
+    Both answer the E0 handshake with FE FE EF EE E1.  The bootloader's identity
+    starts with 0x56 (on the RA89R: 56 11 16 04 15 followed by ASCII "8600" and
+    "0000"); the updater tests exactly that byte (`RxBuffer[...+5] == 86`) to
+    recognise the bootloader, and switches on model codes such as 0x2900, 0x3100,
+    0x8500 for the running application (AckDataChkPro).
     """
-    if ident[:5] == b"8600B":
+    if not ident:
+        return "unknown"
+    if ident[0] == 0x56:
         return "bootloader"
     if len(ident) >= 2:
         return "application (model code %02X%02X)" % (ident[0], ident[1])
