@@ -385,8 +385,7 @@ unchanged.
 **Our reader copies the stock's ADC scheme.**  The vendor does not convert on
 demand -- the ADC scans six channels (2, 3, 6, 7, 8, 9) continuously into memory
 through DMA, and the accessor averages eight samples per channel out of that
-buffer.  `keypad.c` now does the same: `DMA1_Channel1` (this part has no DMA
-request-select register, so ADC1's request is hardwired there) in circular mode
+buffer.  `keypad.c` now does the same: `DMA1_Channel1` in circular mode
 with 32-bit transfers, into a 48-word buffer shaped exactly like the stock's
 (one round of six channels = 24 bytes, the "sample stride 0x18" of its accessor),
 and a poll averages the last eight samples of each line.
@@ -397,7 +396,19 @@ conversions cost ~5 ms -- half of the 10 ms tick the K5V3 application polls the
 keypad on (`APP_TimeSlice10ms`, thresholds 20 ms / 400 ms).  Free-running, the
 same scan is background hardware and a poll is a memory read.  The stock's DMA
 configuration is `MINC|PSIZE32|MSIZE32|CIRC|very-high priority`; ours is
-identical.  **Not yet run on the radio** -- the `k` monitor is the check, and the
+identical.
+
+**This part maps DMA requests in `SYSCFG`, not with a `CSELR`.**  A channel's
+request is a 7-bit field in `SYSCFG->CFGR[2..4]` (DMA1 channels 1-4 at the bottom
+of `CFGR[2]`, 8 bits apart); `ADC1` is map value `0`
+(`LL_SYSCFG_DMA_MAP_ADC1`), i.e. the reset default.  Write it anyway: the SDK's
+own ADC+DMA example (`Projects/PY32F403-STK/Example_LL/ADC/ADC_MultiChannelSingleConversion_TriggerSW_DMA`)
+writes it explicitly, and so does the vendor's DMA driver -- `FUN_080111D8`, the
+function the stock ADC power-up calls, sits right next to the `0x40010000`
+literal.  Relevant to any future DMA user (the port's SPI/RF paths), not just the
+keypad.  Also worth knowing from that example: it runs its DMA 16-bit
+(`LL_DMA_PDATAALIGN_HALFWORD`) while the stock uses 32-bit slots -- either works,
+the value is in the low 12 bits.  **Not yet run on the radio** -- the `k` monitor is the check, and the
 raw values it prints should be unchanged (they are the same measurement, still
 averaged over eight samples).
 

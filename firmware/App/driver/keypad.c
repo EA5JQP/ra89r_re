@@ -162,10 +162,19 @@ bool keypad_init(void)
     uint32_t sqr = 0;
     bool any = false;
 
-    RCC->APB2ENR |= RCC_APB2ENR_ADC1EN;
+    RCC->APB2ENR |= RCC_APB2ENR_ADC1EN | RCC_APB2ENR_SYSCFGEN;
     (void)RCC->APB2ENR;
     RCC->AHB1ENR |= RCC_AHB1ENR_DMA1EN;
     (void)RCC->AHB1ENR;
+
+    /* Choose the request: this part has no DMA request-select register, it maps
+     * requests in SYSCFG instead -- DMA1 channel 1 is the 7-bit field at the
+     * bottom of SYSCFG->CFGR[2], and the value for ADC1 is 0
+     * (LL_SYSCFG_DMA_MAP_ADC1), i.e. the reset default restated.  Both the SDK's
+     * ADC+DMA example (Projects/.../ADC_MultiChannelSingleConversion_TriggerSW_DMA)
+     * and the vendor's own DMA driver write it, so do it rather than trust the
+     * default.  Field preserved for the other channels. */
+    SYSCFG->CFGR[2] = SYSCFG->CFGR[2] & ~0x7Fu;
 
     ADC1->CR1 = ADC_CR1_SCAN;               /* scan the sequence, 12-bit */
     ADC1->CR2 = EXTSEL_SWSTART;             /* software start as the trigger */
