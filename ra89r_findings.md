@@ -288,28 +288,50 @@ timeout) and also samples **`PB9`**; a `PB9` high keeps the hold timer running.
 two PTTs individually (`PC13`, `PB10`) and `PB9` is the combined line the
 bootloader gates on.
 
-**The button set (from the radio's owner).**  Twenty buttons: `PTT1`, `PTT2`,
-`SIDE1`, `SIDE2`, `F`, `UP`, `DOWN`, `AB`, `1`-`9`, `*`, `0`, `#`.  That is the
-same set as the `UV-K1/K5V3` keyboard enum, i.e. the UI is a sibling codebase --
-which is why it handles digits and function codes even though the stock image
-shows no MCU-side scanner for them.  The CPS agrees the radio has a real keypad
-(its key-lock options separate `按键` from `侧键`).
+**SOLVED: a 5-line analog key matrix.**  The 20 buttons are read as **analog
+levels**, which is why no digital scan exists: 19 of them hang on the five
+ADC-capable pins, one key group per line, and `PTT2` is the one digital key
+(`PB9`).  The owner's console probe confirms it and matches the code exactly --
+pressing `PTT1` pulled `PA2`, `AB` pulled `PA6`, `3` pulled `PA7`, `6` pulled
+`PB0` and `9` pulled `PA3`.
 
-**So the wiring is an open question that needs the hardware.**  Three independent
-checks say the buttons are *not* on an MCU GPIO matrix: no port-register access
-exists anywhere in the image, there is no EXTI handler, and the pin budget has
-no room for the nine lines a 20-key matrix needs.  `driver/keypad` therefore
-carries a console diagnostic (`App/driver/pinwatch.c`) to settle it on the radio:
+* scanner: `FUN_08024324` (called from the main loop, gated by the flag at
+  `0x20009F80+1`).  It reads ADC ranks 0..4 with `FUN_08024260(rank)` and calls
+  one tiny handler per key;
+* each handler tests **one ADC window** and stores its **key code** into a
+  per-key state byte at `0x20009F80+5 .. +0x19` (`FUN_08005724` = a bounded
+  store); the UI reads the resulting code through `0x20009F80+3`;
+* the four windows are the **same on every line** (a four-value resistor ladder
+  per line), so *line x window* = 20 keys:
 
-* `w` parks every spare pin as an input with a pull-up and prints, with pin names
-  and levels, whatever moves when a button is pressed -- for a matrix, a ladder,
-  direct keys, or (if nothing moves) proof that the buttons hang off a chip;
-* `W` runs an open-drain sweep (each pin pulled low in turn, nothing else driven)
-  and reports which lines follow, which is what a matrix responds to.
+| window (12-bit ADC) | `PA7` ADC3 | `PB0` ADC4 | `PA6` ADC2 | `PA3` ADC1 |
+|---|---|---|---|---|
+| `(0, 0x07C]` | `0x0D` = 3 | `0x10` = 6 | `0x17` | `0x13` = 9 |
+| `(0x384, 0x47C]` | `0x0C` = 2 | `0x0F` = 5 | `0x15` | `0x19` |
+| `(0x8B2, 0x9AA]` | `0x0B` = 1 | `0x12` = 8 | `0x16` | `0x0A` = 0 |
+| `(0xABB, 0xBB3]` | `0x0E` = 4 | `0x11` = 7 | `0x14` | `0x18` |
 
-The full set of functions that touch the key struct is ten, and all are UI-side;
-the full set of *event* posters (`FUN_0800C550` callers) is six, none of which
-scans a keypad -- hence the probe.
+`PA2` (ADC rank 0, channel 2 -- or channel 14 on the other board variant)
+carries the "programmable" keys instead: windows `(0x4AA, 0x5A2]` -> codes
+`4/5/6`, `(0x74E, 0x846]` -> `7/8/9` (three codes per window = the press-type
+variants the `P1/P2 Short/Long` settings select), plus a **digital** read of the
+same pin (`FUN_08014AD0`, stored as code `100`) -- and `PTT1` is the key that
+pulls `PA2` fully low.
+
+The `PA6`/`PA3` function slots carry codes `0x14`-`0x19` (20..25) plus `+6` /
+`+0xC` variants (26../32..) = the navigation/menu keys with long / extra-long
+presses.  Handler addresses are `0x080146A0`-`0x08014B00`; the per-key bytes are
+`0x85, 0x86, 0x88, 0x8A`-`0x99` (19 of them) and `PB9` makes the twentieth.
+
+The button set is the same as the `UV-K1/K5V3` keyboard enum (`PTT1`, `PTT2`,
+`SIDE1`, `SIDE2`, `F`, `UP`, `DOWN`, `AB`, `0`-`9`, `*`, `#`), i.e. the UI is a
+sibling codebase, and the CPS agrees the radio has a real keypad (its key-lock
+options separate `按键` from `侧键`).
+
+**Probe artefact, not a radio fault.**  The console probe parks pins as *inputs
+with pull-ups*; pressing a key then pulls that ladder node toward ground through
+its resistor while the MCU sources current.  That -- not the keypad -- is why the
+radio got warm during the test.
 
 ### Other chips on the board (from the same pass)
 
