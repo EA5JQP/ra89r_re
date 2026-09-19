@@ -196,7 +196,7 @@ int main(void)
     uart_puts("lcd: init done\n");
 
     BACKLIGHT_Init();
-    uart_puts("backlight: on (GPIOA pin 1)\n");
+    uart_puts("backlight: on (GPIOA pin 1 + pin 5, test)\n");
     draw_test_card();
     uart_puts("lcd: test card drawn\n");
     uart_puts("boot complete. 'h' for commands, 'd' dumps the screen over this\n"
