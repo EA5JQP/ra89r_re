@@ -245,7 +245,7 @@ def ping(io, timeout=0.35):
     return do_handshake(io, timeout, verbose=False) is not None
 
 
-def wait_ack(io, timeout, what):
+def wait_ack(io, timeout, what, strict=False):
     """Wait for the 4-byte PASS/FAIL reply; True/False/None (None = timeout).
 
     Cheap USB-serial adapters sometimes clip the first byte of the reply on a
@@ -258,6 +258,11 @@ def wait_ack(io, timeout, what):
         return True
     if data == ACK_FAIL:
         return False
+    if strict:
+        if data:
+            io.garbled += 1
+            print("  %s: damaged reply %r (needs a clean one)" % (what, data))
+        return None
     # damage can clip the head ('\xf8ASS') or the tail ('PA\xff\xff'); the first
     # two bytes still say which verdict it was
     if len(data) == 4 and data[:2] in (ACK_PASS[:2], ACK_FAIL[:2]):
@@ -460,6 +465,7 @@ def flash_records(io, records, args):
     if True:
         started = time.time()
         pending = []                    # (index, addr, attempts) awaiting an ack
+        confirm = []                    # records whose ack arrived damaged
         for index, (addr, raw) in enumerate(records):
             while len(pending) >= args.window:
                 if not drain_ack(io, pending, args, records):
@@ -470,11 +476,25 @@ def flash_records(io, records, args):
                 print("  %3d/%d  0x%08X  %6d bytes"
                       % (index + 1, len(records), addr, len(raw) - 7))
             if args.window == 1:
-                if not drain_ack(io, pending, args, records):
+                if not drain_ack(io, pending, args, records, confirm):
                     return "rejected" if io.garbled == 0 else "unreliable"
         while pending:
-            if not drain_ack(io, pending, args, records):
+            if not drain_ack(io, pending, args, records, confirm):
                 return "rejected" if io.garbled == 0 else "unreliable"
+
+        # Confirmation pass: re-write (idempotent) every record whose PASS came
+        # back damaged and insist on an exact PASS this time.  Without it a
+        # damaged reply is only *probable* evidence, not proof.
+        for index in confirm:
+            addr, raw = records[index]
+            for attempt in range(1, args.retries + 1):
+                io.write(frame(CMD_PROGRAM, raw))
+                if wait_ack(io, args.timeout, "confirm %d" % index, strict=True):
+                    print("  record %d (0x%08X) confirmed" % (index, addr))
+                    break
+            else:
+                print("record %d (0x%08X) could not be confirmed" % (index, addr))
+                return "unreliable"
 
         print("sending EXIT")
         io.write(frame(CMD_EXIT, b"EXIT"))
@@ -486,10 +506,15 @@ def flash_records(io, records, args):
         return "ok"
 
 
-def drain_ack(io, pending, args, records):
+def drain_ack(io, pending, args, records, confirm=None):
     """Read the ack for the oldest pending record; retry or abort on FAIL."""
     index, addr, attempts = pending.pop(0)
+    before = io.garbled
     ack = wait_ack(io, args.timeout, "record %d" % index)
+    if ack and confirm is not None and io.garbled > before:
+        # the write was acknowledged, but the reply was damaged -- ask for it
+        # again so the record ends up with an *exact* PASS
+        confirm.append(index)
     if ack:
         return True
     if attempts < args.retries:
