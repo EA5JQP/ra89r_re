@@ -181,14 +181,15 @@ field made of **PA0** plus a BK4815/BK4829 register bit (`0x08013A70`,
 next to an RF register write (`0x080137D4` -> reg `0x33`, `0x08013790` -> reg
 `0x75`).  PA0 + PA1 are also configured together (one `GPIO_Init`, mask `0x3`).
 
-**Open point.**  Our firmware drives pin 1 high and its panel init sequence is
-byte-for-byte the bootloader's (`E2 A2 A1 C0 A6 F8 01 2F 25 81 19 40 AF`), yet
-the panel stays dark on the radio.  The bootloader also blinks **GPIOA pin 5**
-five times (`0x08000AD2`) immediately before the pin-1 blink, and the stock
-application configures PA4/PA5 as **DAC outputs** (`0x0800A8F4` -> DAC1 at
-`0x40007400`, called from the boot path at `0x0801D748`) -- so either the lamp
-needs both lines or pin 5 is the real one.  A test build that drives both is on
-branch `driver/backlight` (`BACKLIGHT_AUX_PIN`).
+**Resolved, with one loose end (radio test).**  Pin 1 alone left the panel dark,
+so the driver also drives **GPIOA pin 5** -- the pin the bootloader blinks five
+times at `0x08000AD2`, immediately before the pin-1 blink -- and with both lines
+driven the lamp comes on and `l` switches it.  So the pin-5 line does something
+that pin 1 on its own does not.  Still undetermined: whether pin 5 alone is
+enough or both lines are required, and how either squares with the stock
+application configuring PA4/PA5 as **DAC outputs** (`0x0800A8F4` -> DAC1 at
+`0x40007400`, called from the boot path at `0x0801D748`).  Narrowing that is
+follow-up work; the second line is `BACKLIGHT_AUX_PIN` in `board_pins.h`.
 
 No PWM/DMA-to-BSRR path was found in this build (unlike the UV-K1/K5V3, whose
 backlight is dimmed with TIM7+DMA), so on/off is all this radio needs.
