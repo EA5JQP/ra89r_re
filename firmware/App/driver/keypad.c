@@ -96,6 +96,11 @@ static uint16_t s_raw[KEYPAD_LINE_COUNT];
  * the longest settling time the part offers (SMP field 7). */
 #define SAMPLE_TIME 7u
 
+/* The stock application averages 8 samples per channel (0x08024260) and its
+ * windows were measured with that filtering, so a single un-averaged conversion
+ * is both noisier and not quite the same measurement. */
+#define SAMPLES 8u
+
 /* SWSTART as the regular-channel trigger source (EXTSEL = 0b111).  This is not
  * optional: with EXTSEL left at 0 (TIM1_CC1) a SWSTART write starts nothing, the
  * EOC flag never sets and every read times out.  The stock driver writes the same
@@ -139,7 +144,7 @@ static void keypad_init_ptt2(void)
      * beyond making sure its port clock is on for the read. */
     gpio_port_clock(KEYPAD_PTT2_PORT);
 }
-static uint16_t adc_sample(unsigned channel)
+static uint16_t adc_sample_once(unsigned channel)
 {
     uint32_t t0 = systick_millis();
 
@@ -152,9 +157,31 @@ static uint16_t adc_sample(unsigned channel)
     return (uint16_t)(ADC1->DR & 0xFFFFu);
 }
 
+/* Average of SAMPLES conversions, like the stock accessor. */
+static uint16_t adc_sample(unsigned channel)
+{
+    uint32_t sum = 0;
+    unsigned i;
+
+    for (i = 0; i < SAMPLES; i++) {
+        uint16_t v = adc_sample_once(channel);
+
+        if (v == 0xFFFFu)
+            return 0xFFFFu;                 /* never hang on a dead ADC */
+        sum += v;
+    }
+    return (uint16_t)(sum / SAMPLES);
+}
+
 /* ------------------------------------------------------------------------- */
 /* decode                                                                    */
 /* ------------------------------------------------------------------------- */
+
+/* The vendor's windows are the calibration; WINDOW_MARGIN widens each one so a
+ * level that lands just outside still decodes.  The bands are far apart (the
+ * narrowest gap is 273 counts, between the third and fourth band) and the idle
+ * level is near full scale, so 96 counts is safe. */
+#define WINDOW_MARGIN 0x60
 
 static const uint8_t *window_for(uint8_t line, uint16_t value)
 {
@@ -163,7 +190,8 @@ static const uint8_t *window_for(uint8_t line, uint16_t value)
     for (i = 0; i < NWINDOWS; i++) {
         if (windows[i].line != line)
             continue;
-        if (value > windows[i].lo && value <= windows[i].hi)
+        if ((int32_t)value > (int32_t)windows[i].lo - WINDOW_MARGIN &&
+            (int32_t)value <= (int32_t)windows[i].hi + WINDOW_MARGIN)
             return windows[i].code;
     }
     return 0;
