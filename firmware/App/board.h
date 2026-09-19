@@ -20,6 +20,11 @@
 #define BOARD_UART_PORT     GPIOB
 #define BOARD_UART          USART1
 
+/* Keypad lines (see board_pins.h): the ladder inputs and the one digital key */
+#define KEYPAD_ANALOG_A_PORT GPIOA
+#define KEYPAD_ANALOG_B_PORT GPIOB
+#define KEYPAD_PTT2_PORT     GPIOB
+
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) drives the
  * external SPI NOR flash, the RF transceiver (BK4815/BK4829) is on a 3-wire
  * bus, and the USB-C port goes to the MCU's USB peripheral -- unused by the

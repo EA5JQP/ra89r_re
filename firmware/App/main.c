@@ -191,8 +191,17 @@ int main(void)
                   "        then not landing where we read it.\n");
     }
 
-    uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");
-    lcd_init();
+    /* Keypad lines back to their default state before anything else touches
+     * GPIO: the five ladder inputs (plus the ADC's other analog input) analog,
+     * undriven and unpulled, and PTT2 a plain input.  A ladder line that is
+     * driven or pulled has its level corrupted -- and sinks current through the
+     * ladder -- so nothing else in this firmware may touch these pins. */
+    gpio_config_analog(KEYPAD_ANALOG_A_PORT, KEYPAD_ANALOG_A_MASK);
+    gpio_config_analog(KEYPAD_ANALOG_B_PORT, KEYPAD_ANALOG_B_MASK);
+    gpio_config_input(KEYPAD_PTT2_PORT, KEYPAD_PTT2_PIN);
+    uart_puts("keypad: PA2/PA3/PA6/PA7/PB0/PB1 analog, PB9 input (default state)\n");
+
+    uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");    lcd_init();
     uart_puts("lcd: init done\n");
 
     BACKLIGHT_Init();
