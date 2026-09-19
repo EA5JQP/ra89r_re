@@ -30,6 +30,12 @@
 #define LCD_CS_PIN          (1u << 11)
 #define LCD_RST_PIN         (1u << 9)
 
+/* LCD backlight: GPIOA pin 1.  The stock bootloader blinks this pin when it
+ * enters update mode (0x08000582) and the stock application drives it as the
+ * user-visible lamp; level 1 = on (the blink goes 0 -> 1). */
+#define BACKLIGHT_PIN       (1u << 1)
+#define BACKLIGHT_ON_LEVEL  1
+
 /* programming UART: USART1 on PB6 (TX) / PB7 (RX), AF2 -- the stock
  * bootloader's port, the radio's Kenwood-style jack */
 #define BOARD_UART_TX_PIN   (1u << 6)

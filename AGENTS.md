@@ -118,9 +118,10 @@ narrow, testable interface) as the model, and merged back into **`develop`**:
 ```
 main                      stable/import state
 develop                   integration: everything merged here
-driver/lcd                screen      (panel init variants, drawing, fonts)
-driver/uart               console     (USART1, debug output, fault reporting)
-driver/keypad             keys        (not started yet)
+driver/lcd                screen      -- working on hardware (init, fonts, layout)
+driver/uart               console     -- working on hardware (115200, fault reports)
+driver/backlight          lamp        -- GPIOA pin 1, on/off ('l' on the console)
+driver/keypad             keys        -- not started yet
 ```
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
@@ -130,9 +131,9 @@ where possible (`firmware/tools/preview.c` for the screen), and merge into
 docs and integration changes (flasher, analysis scripts, this file) go straight
 onto `develop`.
 
-The initial import already contains the bring-up versions of the screen and UART
-drivers, so `driver/lcd` and `driver/uart` are where the *next* change to each of
-them goes; `driver/keypad` is still untouched.
+Screen and UART are confirmed working on the radio (panel shows the test card,
+console logs and answers commands at 115200), so changes to them are now
+incremental.  `driver/keypad` is still untouched.
 
 ## Firmware / flashing
 
