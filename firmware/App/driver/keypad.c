@@ -85,15 +85,64 @@ typedef struct {
 } kp_line_t;
 
 static void keypad_init_ptt2(void);
-static uint16_t adc_sample(unsigned channel);
+
+/* ------------------------------------------------------------------------- */
+/* ADC -- free-running scan through DMA, as the stock application does        */
+/* ------------------------------------------------------------------------- */
+
+/* The stock does not convert on demand: it leaves the ADC scanning six channels
+ * continuously into memory through DMA (`FUN_08010DB8` starts it, and the
+ * accessor it later calls, `FUN_08024260`, averages the eight samples of one
+ * channel out of that buffer).  That is worth copying rather than reimplementing:
+ * one conversion with the longest sample time takes ~123 us, so a five-line scan
+ * that waited for its own conversions cost ~5 ms -- half of the 10 ms tick the
+ * K5V3 application polls the keypad on.  Free-running, a read is a memory access.
+ *
+ * The layout is the stock's: 32-bit slots (its DMA runs with PSIZE/MSIZE = 32 bit
+ * and memory increment), so a channel is 4 bytes from the next, and one round of
+ * the six channels is 24 bytes -- the "sample stride 0x18" the stock's accessor
+ * uses.  Buffer index = round * KP_CHANNELS + channel.
+ *
+ * Channel 6 (PB1) is scanned too and unused by the keypad: it is the channel the
+ * stock's S-meter reads, and keeping it makes the buffer identical to the stock's.
+ */
+#define KP_CHANNELS 6u
+#define KP_SAMPLES  8u                          /* what the stock averages over */
+#define KP_TOTAL    (KP_CHANNELS * KP_SAMPLES)  /* 48 transfers = the stock's 0x30 */
+
+/* 480 cycles -- the ladders are high impedance, so the sample capacitor needs
+ * the longest settling time the part offers (SMP field 7).  Free-running, the
+ * cost of that is background: 48 conversions per round is about 6 ms, so the
+ * buffer is always newer than the 10 ms tick that reads it. */
+#define SAMPLE_TIME 7u
+
+/* SWSTART as the regular-channel trigger source (EXTSEL = 0b111).  This is not
+ * optional: with EXTSEL left at 0 (TIM1_CC1) a SWSTART write starts nothing, the
+ * EOC flag never sets and every read times out.  The stock driver writes the same
+ * value -- 0xE0000 into CR2 (it clears bits 17..20 first, mask 0xFFE1F7FD), and
+ * it too only sets EXTTRIG when EXTSEL selects SWSTART. */
+#define EXTSEL_SWSTART (7u << ADC_CR2_EXTSEL_Pos)
+
+static const kp_line_t lines[KEYPAD_LINE_COUNT] = {
+    { 2, "PA2" }, { 3, "PA3" }, { 6, "PA6" }, { 7, "PA7" }, { 8, "PB0" },
+};
+
+/* the six scanned channels, in sequence order (the first five are the lines) */
+static const uint8_t channels[KP_CHANNELS] = { 2, 3, 6, 7, 8, 9 };
+
+/* DMA target: one 32-bit slot per conversion, round-major */
+static uint32_t s_dma[KP_TOTAL];
+
+static uint16_t s_raw[KEYPAD_LINE_COUNT];
 
 static void adc_calibrate(void)
 {
     uint32_t t0 = systick_millis();
 
     /* Reset and run the ADC calibration, exactly as the stock driver does
-     * (0x080108C0 sets RSTCAL, waits, then CAL, waits).  The windows below are
-     * that driver's calibration, so this side has to match it. */
+     * (0x080108C0 sets RSTCAL, waits, then CAL, waits).  The windows are that
+     * driver's calibration, so this side has to match it.  Done before the scan
+     * starts, since a running sequence must not be disturbed. */
     ADC1->CR2 |= ADC_CR2_RSTCAL;
     while (ADC1->CR2 & ADC_CR2_RSTCAL) {
         if ((uint32_t)(systick_millis() - t0) > 20u)
@@ -105,60 +154,66 @@ static void adc_calibrate(void)
             return;
     }
 }
-static const kp_line_t lines[KEYPAD_LINE_COUNT] = {
-    { 2, "PA2" }, { 3, "PA3" }, { 6, "PA6" }, { 7, "PA7" }, { 8, "PB0" },
-};
-
-static uint16_t s_raw[KEYPAD_LINE_COUNT];
-
-/* ------------------------------------------------------------------------- */
-/* ADC                                                                       */
-/* ------------------------------------------------------------------------- */
-
-/* 480 cycles -- the ladders are high impedance, so the sample capacitor needs
- * the longest settling time the part offers (SMP field 7). */
-#define SAMPLE_TIME 7u
-
-/* The stock application averages 8 samples per channel (0x08024260) and its
- * windows were measured with that filtering, so a single un-averaged conversion
- * is both noisier and not quite the same measurement. */
-#define SAMPLES 8u
-
-/* SWSTART as the regular-channel trigger source (EXTSEL = 0b111).  This is not
- * optional: with EXTSEL left at 0 (TIM1_CC1) a SWSTART write starts nothing, the
- * EOC flag never sets and every read times out.  The stock driver writes the same
- * value -- 0xE0000 into CR2 (it clears bits 17..20 first, mask 0xFFE1F7FD). */
-#define EXTSEL_SWSTART (7u << ADC_CR2_EXTSEL_Pos)
 
 bool keypad_init(void)
 {
+    uint32_t t0, before;
     unsigned i;
+    uint32_t sqr = 0;
+    bool any = false;
 
     RCC->APB2ENR |= RCC_APB2ENR_ADC1EN;
     (void)RCC->APB2ENR;
+    RCC->AHB1ENR |= RCC_AHB1ENR_DMA1EN;
+    (void)RCC->AHB1ENR;
 
-    ADC1->CR1 = 0;                          /* 12-bit, no scan, no interrupts */
+    ADC1->CR1 = ADC_CR1_SCAN;               /* scan the sequence, 12-bit */
     ADC1->CR2 = EXTSEL_SWSTART;             /* software start as the trigger */
-    for (i = 0; i < KEYPAD_LINE_COUNT; i++) {
-        unsigned ch = lines[i].channel;
-        unsigned sh = (ch % 10u) * 3u;
-        if (ch < 10u)
-            ADC1->SMPR2 = (ADC1->SMPR2 & ~(7u << sh)) | (SAMPLE_TIME << sh);
-        else
-            ADC1->SMPR1 = (ADC1->SMPR1 & ~(7u << sh)) | (SAMPLE_TIME << sh);
+    for (i = 0; i < KP_CHANNELS; i++) {
+        unsigned ch = channels[i];
+        unsigned sh = (ch % 10u) * 3u;      /* all six are < 10 -> SMPR2 only */
+        ADC1->SMPR2 = (ADC1->SMPR2 & ~(7u << sh)) | (SAMPLE_TIME << sh);
+        sqr |= (uint32_t)ch << (5u * i);    /* SQR3: SQ1..SQ6, 5 bits each */
     }
-    ADC1->SQR1 = 0;                         /* one conversion in the sequence */
+    ADC1->SQR1 = (KP_CHANNELS - 1u) << ADC_SQR1_L_Pos;   /* six conversions */
+    ADC1->SQR3 = sqr;
 
     ADC1->CR2 |= ADC_CR2_ADON;              /* wake the ADC */
     (void)ADC1->CR2;
     systick_delay_ms(1);
     adc_calibrate();
 
+    /* ADC1's DMA request is wired to DMA1 channel 1 on this part (there is no
+     * request-select register).  32-bit both sides, memory increment, circular,
+     * very high priority -- the stock's DMA configuration. */
+    DMA1_Channel1->CCR = 0;
+    DMA1_Channel1->CPAR = (uint32_t)&ADC1->DR;
+    DMA1_Channel1->CMAR = (uint32_t)s_dma;
+    DMA1_Channel1->CNDTR = KP_TOTAL;
+    DMA1->IFCR = DMA_IFCR_CGIF1;
+    DMA1_Channel1->CCR = DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_PSIZE_1 |
+                         DMA_CCR_MSIZE_1 | DMA_CCR_PL;
+    DMA1_Channel1->CCR |= DMA_CCR_EN;
+
+    ADC1->CR2 |= ADC_CR2_DMA | ADC_CR2_CONT;    /* stream every conversion */
+    ADC1->CR2 |= ADC_CR2_EXTTRIG | ADC_CR2_SWSTART; /* kick the sequence off */
+
     keypad_init_ptt2();
 
-    /* Prove it converts: a conversion that never finishes is otherwise silent
-     * (every read would just report 0xFFFF). */
-    return adc_sample(lines[0].channel) != 0xFFFFu;
+    /* Prove the scan is really running, and that it is *writing*: a dead DMA
+     * leaves the buffer at zero, and an all-zero read is indistinguishable from
+     * a held PTT1 (its window starts at 0), which would be a phantom keypress.
+     * Both checks are cheap and neither can false-fail: the idle levels are near
+     * full scale, so a round of six real conversions is never all zero. */
+    t0 = systick_millis();
+    before = DMA1_Channel1->CNDTR;
+    while (DMA1_Channel1->CNDTR == before) {
+        if ((uint32_t)(systick_millis() - t0) > 5u)
+            return false;                   /* the transfers are not moving */
+    }
+    for (i = 0; i < KP_TOTAL; i++)
+        any = any || (s_dma[i] & 0xFFFu) != 0u;
+    return any;
 }
 
 static void keypad_init_ptt2(void)
@@ -167,33 +222,17 @@ static void keypad_init_ptt2(void)
      * beyond making sure its port clock is on for the read. */
     gpio_port_clock(KEYPAD_PTT2_PORT);
 }
-static uint16_t adc_sample_once(unsigned channel)
-{
-    uint32_t t0 = systick_millis();
-
-    ADC1->SQR3 = channel & 0x1Fu;
-    ADC1->CR2 |= ADC_CR2_EXTTRIG | ADC_CR2_SWSTART;
-    while (!(ADC1->SR & ADC_SR_EOC)) {
-        if ((uint32_t)(systick_millis() - t0) > 5u)
-            return 0xFFFFu;                 /* never hang on a dead ADC */
-    }
-    return (uint16_t)(ADC1->DR & 0xFFFFu);
-}
-
-/* Average of SAMPLES conversions, like the stock accessor. */
-static uint16_t adc_sample(unsigned channel)
+/* Average of the last KP_SAMPLES conversions of one channel -- the stock's
+ * accessor (0x08024260) averaged the same way, and the windows were measured
+ * with that filtering.  Non-blocking: it only touches the DMA buffer. */
+static uint16_t line_value(unsigned line)
 {
     uint32_t sum = 0;
     unsigned i;
 
-    for (i = 0; i < SAMPLES; i++) {
-        uint16_t v = adc_sample_once(channel);
-
-        if (v == 0xFFFFu)
-            return 0xFFFFu;                 /* never hang on a dead ADC */
-        sum += v;
-    }
-    return (uint16_t)(sum / SAMPLES);
+    for (i = 0; i < KP_SAMPLES; i++)
+        sum += s_dma[i * KP_CHANNELS + line] & 0xFFFu;
+    return (uint16_t)(sum / KP_SAMPLES);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -228,7 +267,7 @@ KEY_Code_t keypad_poll(void)
     unsigned line;
 
     for (line = 0; line < KEYPAD_LINE_COUNT; line++) {
-        uint16_t v = adc_sample(lines[line].channel);
+        uint16_t v = line_value(line);
 
         s_raw[line] = v;
         if (!win)
