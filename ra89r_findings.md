@@ -197,6 +197,54 @@ backlight is dimmed with TIM7+DMA), so on/off is all this radio needs.
 Implemented as `firmware/App/driver/backlight.{c,h}` (API mirrors the K1 driver
 of the same name) and driven on at boot; the console command `l` toggles it.
 
+### Keypad (recon -- mechanism not yet solved)
+
+The stock keypad is **not** an MCU GPIO matrix, which is worth recording because
+the sibling port tree uses exactly that (`UV-K1/K5V3`, `App/driver/keyboard.c`:
+4x4, cols PB3-PB6 driven, rows PB12-PB15 read).
+
+What the stock image shows:
+
+* **No port-level access at all.**  A linear scan tracking the GPIO base register
+  finds every GPIO access going through the two single-bit helpers
+  (`GPIO_WriteBit` `0x08011B74`, `GPIO_ReadInputDataBit` `0x08011B64`) or the
+  `GPIO_Init` wrapper (`0x0801199C`); no `ldr`/`str` against a GPIO
+  `IDR`/`ODR`/`BSRR` was found, so nothing reads a whole port.
+* **Only 12 single-bit input reads**, on 7 lines: `PC13` (4 call sites:
+  `0x08005CCE`, `0x08013F3C`, `0x080218B4`, `0x080218F6`), `PA14` (3:
+  `0x08006144`, `0x0800657E`, `0x08019C92`), `PA13` (`0x08005FC2`), `PB9`
+  (`0x080169F8`), `PB10` (`0x0802192E`), `PA2` (`0x08014AE8` -- inside the LCD
+  module) and `PD0` (`0x080066E2`).
+* **No interrupt path either.**  Correcting the vector table for the
+  `IRQn + 16` offset: every `EXTI*` vector is the default handler
+  (`0x0800415F`), so keys are polled, if they are on the MCU at all.  (The real
+  handlers are DMA1 streams, `TIM3`/`TIM5`, `SPI1`, `USART1`, `SysTick`.)
+* Several of those lines are **bidirectional, read then driven** in the same
+  routine (`PA13` at `0x08005FC2`, `PA14` at `0x08006144`/`0x0800657E`, `PD0` at
+  `0x080066E2` + `0x08006858`) -- a handshake, not a button.
+* The `PB9` read feeds a 3-byte buffer into `0x08005724`, the same "set a field"
+  helper the LCD module uses, i.e. it samples a *config/strap* value.
+
+So the keypad is either not on the MCU's GPIO, or its scan routine is one of the
+functions the analyzer never reached (see the "Contracts that are easy to get
+wrong" note in `AGENTS.md` about code reached only via a RAM-built pointer).
+
+Candidates, most likely first:
+
+1. **Keys on the BK4815/BK4829 GPIO pins.**  `0x080137D4` reads RF register
+   `0x33`, rewrites a **six-bit field** from two masks and writes it back;
+   `0x08013790` does the same for register `0x75`.  A six-pin GPIO bank on the RF
+   chip is exactly where a key bank (or key/LED bank) would sit.
+2. **The RA89R has few keys.**  The UI offers `P1 Short`/`P2 Short`, `PTT Type`
+   and a `PTT` label, and the bootloader waits on **GPIOB pin 9** to leave update
+   mode -- consistent with a handful of keys plus a rotary, not a full keypad.
+3. A scan routine outside the current analysis (RAM-made pointer).
+
+Next probes, each bounded: decode the `0x33`/`0x75` RF-register writers and their
+callers; look for a value read back from the RF chip being compared against a key
+table; re-run `tools/ra89r_analyze.py` and inspect the `0x0801Cxxx` cluster that
+Ghidra flagged as never called.
+
 ### UI strings (useful for the port)
 
 * `0x08022344..0x080225D0` — Bluetooth AT commands (`AT+GMR?`, `AT+BAUD=`,
@@ -270,7 +318,9 @@ From the earlier revision's CPS decompilation (sources `cps_decompiled/` in
    UI has a "Carrier/Scrambler" debug page, but the 3-wire register layer was
    not identified in this pass (the `0x0800DCxx` region the earlier revision
    mentioned is EEPROM/config parsing, not RF).
-7. **Keypad, audio (DAC/ADC), squelch, battery** — not analysed at all.
+7. **Keypad** — recon done, mechanism unsolved: see "Keypad" above (not a GPIO
+   matrix; candidate is the BK4815/BK4829 GPIO bank).  **Audio (DAC/ADC),
+   squelch, battery** are still not analysed at all.
 8. ~~Bootloader upload protocol~~ — **done**: see `ra89r_bootloader.md` (frames,
    commands, baud table, record handling) with `tools/ra89r_flash.py` and
    `ra89r.py mkicf` as the working host-side implementation.  Remaining unknowns
