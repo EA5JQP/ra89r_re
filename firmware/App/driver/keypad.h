@@ -32,8 +32,10 @@ enum {
     KEYPAD_LINE_COUNT
 };
 
-/* Power up the ADC and give it a first conversion to settle. */
-void keypad_init(void);
+/* Power up the ADC (channels, sample time, calibration) and check that it
+ * really converts.  Returns false if the self-test conversion did not finish --
+ * worth printing, because that failure mode makes every read look like 0xFFFF. */
+bool keypad_init(void);
 
 /* Code of the key currently held, or KEYPAD_NONE.  Level semantics, like the
  * port tree's KEYBOARD_Poll: the debounce / long-press logic belongs on top. */
