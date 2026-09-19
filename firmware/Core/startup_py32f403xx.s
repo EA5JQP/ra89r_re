@@ -74,6 +74,10 @@ Reset_Handler:
   ldr   r0, =_estack
   mov   sp, r0          /* set stack pointer */
 
+/* RA89R: print a trace line before anything else runs (SystemInit, .data/.bss
+   init, the C runtime) so a hang or reset in that path is not silent. */
+  bl    early_boot_banner
+
 /* Copy the data segment initializers from flash to SRAM */
   ldr r0, =_sdata
   ldr r1, =_edata

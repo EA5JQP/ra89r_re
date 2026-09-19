@@ -224,8 +224,19 @@ void APP_LoadTrim(void)
   */
 void SystemInit(void)
 {
-  /* Load trim */
-  APP_LoadTrim();
+  /* Load trim.
+   *
+   * RA89R: deliberately NOT called.  APP_LoadTrim() reads 18 factory trim words
+   * from 0x1FFF5110..0x1FFF5604 and calls APP_ErrorProc() -- a system reset --
+   * when their complement check fails, i.e. before main() ever runs, which looks
+   * exactly like "the firmware does nothing": no console, no panel, and a reset
+   * loop the bootloader keeps re-entering.  Neither the stock RA89R nor the
+   * RA89G application references those addresses (verified: 0 occurrences of
+   * 0x1FFF5110 / 0x40022208 / 0x4002228C in both images), and the reset default
+   * already carries the factory HSI trim, so the loader is not needed here.
+   *
+   * APP_LoadTrim();  <- keep the function, do not call it
+   */
   
 #if (__FPU_PRESENT == 1) && (__FPU_USED == 1)
   SCB->CPACR |= ((3UL << 10*2)|(3UL << 11*2));  /* set CP10 and CP11 Full Access */
