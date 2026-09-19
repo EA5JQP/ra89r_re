@@ -197,7 +197,12 @@ backlight is dimmed with TIM7+DMA), so on/off is all this radio needs.
 Implemented as `firmware/App/driver/backlight.{c,h}` (API mirrors the K1 driver
 of the same name) and driven on at boot; the console command `l` toggles it.
 
-### Keypad (recon -- mechanism not yet solved)
+### Keypad (SOLVED: a 5-line analog key matrix)
+
+**Read this section bottom-up.**  The intermediate conclusion in its middle
+("the keys are NOT on the ADC") was itself wrong and is withdrawn; the answer is
+the "SOLVED: a 5-line analog key matrix" block further down.  Neither the
+"recon" title this section used to carry nor that paragraph should be quoted.
 
 The stock keypad is **not** an MCU GPIO matrix, which is worth recording because
 the sibling port tree uses exactly that (`UV-K1/K5V3`, `App/driver/keyboard.c`:
@@ -322,6 +327,48 @@ The `PA6`/`PA3` function slots carry codes `0x14`-`0x19` (20..25) plus `+6` /
 `+0xC` variants (26../32..) = the navigation/menu keys with long / extra-long
 presses.  Handler addresses are `0x080146A0`-`0x08014B00`; the per-key bytes are
 `0x85, 0x86, 0x88, 0x8A`-`0x99` (19 of them) and `PB9` makes the twentieth.
+
+**How a press becomes a code.**  Each handler calls
+`FUN_08005724(counter, buf3, in_window)` with `buf3 = {short, held, long}` (`0xFF`
+= unused), which turns the *how long* into the *which code*:
+
+| counter reaches | action |
+|---|---|
+| `4` | post `buf3[0]` -- the **short press** code |
+| `0x28` (40) | post `buf3[1]` -- the **held / repeat** code |
+| on release, while `4 <= counter < 0x28` | post `buf3[2]` -- the **long press** code |
+
+The counter is the per-key byte at `0x20009F80+5..+0x19`, incremented once per
+scan pass while its key stays in-window (`>= 0xF0` clamps to `0xEF`) and reset
+when it leaves.  So one button owns three codes -- e.g. `{0x15, 0x1B, 0x21}` is a
+single key whose short press is `0x15`, whose hold repeat is `0x1B` and whose
+long press is `0x21` -- and since `0x21` is what the menu list uses as "step up",
+that button is **UP** (and `{0x16,0x1C,0x22}` is **DOWN**).
+
+**Measured on the radio** (console monitor in `App/driver/keypad.c`; idle level
+`0xFF6`-`0xFF8`, i.e. the ladders idle near full scale):
+
+| line | levels measured while pressed | keys |
+|---|---|---|
+| `PA7` | `0x000` `0x3E9` `0x923` `0xBCE` | 3, 2, 1, 4 |
+| `PB0` | `0x000` `0x3EC` `0x91F` `0xB2D` | 6, 5, 8, 7 |
+| `PA6` | `0x000` `0x3F0` `0x91B` `0xB2A` | `0x17`, `0x15` (UP), `0x16` (DOWN), `0x14` |
+| `PA3` | `0x000` `0x3F5` `0x91D` `0xB2A` | 9, `0x19`, 0, `0x18` |
+| `PA2` | `0x000` `0x533` `0x7DB` | `100` (PTT1), codes `4`-`6`, codes `7`-`9` |
+
+Every measured level falls inside the vendor's window, so the stock calibration
+transfers to this board unchanged (the reader widens each window by 96 counts
+only because it samples once per pass rather than the stock's 8-sample average;
+the bands are far apart -- narrowest gap 273 counts -- and the idle level is
+above the top band).
+
+**Which button is which.**  `PTT1` = code `100` (`PA2`), `PTT2` = `PB9`, the
+digits are the `10`-`19` codes, and `UP` = `0x15` / `DOWN` = `0x16` as above.
+The other six buttons (`SIDE1`, `SIDE2`, `F`, `AB`, `*`, `#`) are the six codes
+`0x14`, `0x17`, `0x18`, `0x19`, `4`, `7` -- the binary does not say which is
+which (the stock UI sends them all to the same handlers), so they are read off
+the radio with the console monitor.  `App/driver/keypad.h` exposes the
+K5V3/F4HWN `KEY_Code_e` so the port can use this reader unchanged.
 
 The button set is the same as the `UV-K1/K5V3` keyboard enum (`PTT1`, `PTT2`,
 `SIDE1`, `SIDE2`, `F`, `UP`, `DOWN`, `AB`, `0`-`9`, `*`, `#`), i.e. the UI is a
