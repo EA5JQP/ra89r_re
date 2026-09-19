@@ -161,18 +161,37 @@ These match the CPS "Frequency Range" presets (see below), and no code path
 compares a live frequency against them in-line — the ranges are CPS/EEPROM data,
 so a band change is an EEPROM/`CPS` edit, not a flash patch.
 
-### Backlight
+### Backlight / lamp
 
-**GPIOA pin 1** (mask `0x2`), plain push-pull output, level 1 = on:
+**GPIOA pin 1** (mask `0x2`), plain push-pull output, **level 1 = on**: the stock
+**bootloader** blinks exactly this pin when it enters update mode
+(`0x08000582`: clear -> 100 ms -> set -> 100 ms, three times) and leaves it
+**high** while it shows the "Update..." screen.  The panel lamp was observed to
+follow that blink on the radio (hardware check, not inference).
 
-* the stock **bootloader** blinks exactly this pin when it enters update mode
-  (`0x08000582`: clear -> 100 ms -> set -> 100 ms, three times), i.e. it is the
-  lamp a user can see; the pin is configured as an output in its init path.
-* the stock **application** drives the same pin from ~78 sites and offers the
-  menu items `Back Light` (`0x08027191`) and `Rx.Light` (`0x08026D43`), so this is
-  the display backlight, with a timeout setting in the UI.
-* No PWM/DMA-to-BSRR path was found in this build (unlike the UV-K1/K5V3, whose
-  backlight is dimmed with TIM7+DMA), so on/off is all this radio needs.
+Correction to the previous revision of this section: it claimed the stock
+*application* "drives the same pin from ~78 sites".  That was a misreading --
+the app's GPIOA writes are dominated by the **panel bus** (PA8 SCLK, PA9 RST,
+PA10 A0, PA11 CS, plus PB15 SDA -- see `ra89r_lcd.md`), the bit-banged buses
+(PA12/PA13/PA14 with PB8/PB12/PB13, e.g. the RF register transport at
+`0x080180F0`), the SPI NOR (PA15) and PD0/PC13-PC15.  Exactly **eight** writes
+touch pin 1, and every one sits in a `switch (0..3)` helper that sets a two-bit
+field made of **PA0** plus a BK4815/BK4829 register bit (`0x08013A70`,
+`0x08013B12`, and the single sites at `0x0800940A` / `0x0801BE70`), each right
+next to an RF register write (`0x080137D4` -> reg `0x33`, `0x08013790` -> reg
+`0x75`).  PA0 + PA1 are also configured together (one `GPIO_Init`, mask `0x3`).
+
+**Open point.**  Our firmware drives pin 1 high and its panel init sequence is
+byte-for-byte the bootloader's (`E2 A2 A1 C0 A6 F8 01 2F 25 81 19 40 AF`), yet
+the panel stays dark on the radio.  The bootloader also blinks **GPIOA pin 5**
+five times (`0x08000AD2`) immediately before the pin-1 blink, and the stock
+application configures PA4/PA5 as **DAC outputs** (`0x0800A8F4` -> DAC1 at
+`0x40007400`, called from the boot path at `0x0801D748`) -- so either the lamp
+needs both lines or pin 5 is the real one.  A test build that drives both is on
+branch `driver/backlight` (`BACKLIGHT_AUX_PIN`).
+
+No PWM/DMA-to-BSRR path was found in this build (unlike the UV-K1/K5V3, whose
+backlight is dimmed with TIM7+DMA), so on/off is all this radio needs.
 
 Implemented as `firmware/App/driver/backlight.{c,h}` (API mirrors the K1 driver
 of the same name) and driven on at boot; the console command `l` toggles it.
