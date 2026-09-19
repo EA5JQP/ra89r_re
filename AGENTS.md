@@ -144,9 +144,8 @@ main                      stable/import state
 develop                   integration: everything merged here
 driver/lcd                screen      -- working on hardware (init, fonts, layout)
 driver/uart               console     -- working on hardware (115200, fault reports)
-driver/backlight          lamp        -- GPIOA pin 1 (+ pin 5 on test); the driver is
-                                         NOT validated, unmerged work sits on the branch
-driver/keypad             keys        -- not started yet
+driver/backlight          lamp        -- working on hardware (GPIOA pin 1 + pin 5, 'l')
+driver/keypad             keys        -- current work; branch created, nothing on it yet
 ```
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
@@ -159,9 +158,10 @@ disassembly is not validation: unvalidated work stays on the
 carries something we cannot stand behind.  Tooling, docs and integration changes
 (flasher, analysis scripts, this file) go straight onto `develop`.
 
-Screen and UART are confirmed working on the radio (panel shows the test card,
-console logs and answers commands at 115200), so changes to them are now
-incremental.  `driver/keypad` is still untouched.
+Screen, UART and backlight are confirmed working on the radio (panel shows the
+test card, console logs and answers commands at 115200, `l` switches the lamp),
+so changes to them are now incremental.  `driver/keypad` is the current work and
+has not been started.
 
 ## Firmware / flashing
 
