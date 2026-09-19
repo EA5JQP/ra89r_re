@@ -37,6 +37,7 @@ static int animate;
 static int heartbeat = 1;
 static int keypad_monitor;
 static int keypad_last = -2;            /* force a first print when enabled */
+static int keypad_ptt2_last = -1;
 
 /* ------------------------------------------------------------ keypad monitor */
 
@@ -46,21 +47,25 @@ static int keypad_last = -2;            /* force a first print when enabled */
 static void keypad_monitor_step(void)
 {
     const uint8_t *variants;
-    int code;
+    int code, ptt2;
     unsigned line;
 
     if (!keypad_monitor)
         return;
 
     code = keypad_scan();
-    if (code == keypad_last)
+    /* PTT2 moves no analog line, so it has to be part of the change test or a
+     * press of it would print nothing at all. */
+    ptt2 = keypad_ptt2_level() ? 1 : 0;
+    if (code == keypad_last && ptt2 == keypad_ptt2_last)
         return;
     keypad_last = code;
+    keypad_ptt2_last = ptt2;
 
     uart_printf("[k %ums]", (unsigned)systick_millis());
     for (line = 0; line < KEYPAD_LINE_COUNT; line++)
         uart_printf(" %s=0x%03X", keypad_line_name(line), (unsigned)keypad_raw(line));
-    uart_printf(" PTT2=%u -> %s", keypad_ptt2_level() ? 1u : 0u, keypad_name(code));
+    uart_printf(" PTT2=%d -> %s", ptt2, keypad_name(code));
 
     variants = keypad_variants(code);
     if (variants && (variants[1] != 0xFF || variants[2] != 0xFF))
