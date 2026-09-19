@@ -57,7 +57,9 @@ BASELINE = 0x66
 
 class Sim(object):
     def __init__(self, verbose=False, fail_first_n=0, mutate_every=0,
-                 ignore_baud=False, mute_after_baud=0.0):
+                 ignore_baud=False, mute_after_baud=0.0, garble_acks=0):
+        self.garble_acks = garble_acks
+        self.acks = 0
         self.ignore_baud = ignore_baud
         self.mute_after_baud = mute_after_baud
         self.mute_until = 0.0
@@ -69,6 +71,15 @@ class Sim(object):
         self.rejected = 0
         self.exited = False
         self.baud_index = 0
+
+    def ack(self, verdict):
+        """PASS/FAIL, optionally with the first byte damaged (cheap adapters)."""
+        self.acks += 1
+        if self.garble_acks and self.acks % self.garble_acks == 0:
+            self.log("  (damaging the first byte of this reply, like a clipped "
+                     "high-rate link)")
+            return bytes([0xF8]) + verdict[1:]
+        return verdict
 
     def log(self, msg):
         if self.verbose:
@@ -107,7 +118,7 @@ class Sim(object):
         if cmd == CMD_ERASE:
             self.log("E1 %s -> PASS" % payload.decode("ascii", "replace"))
             self.pages.clear()
-            return PASS
+            return self.ack(PASS)
 
         if cmd == CMD_READ:
             self.log("E3 read (not implemented by this build)")
@@ -116,7 +127,7 @@ class Sim(object):
         if cmd == CMD_EXIT:
             self.log("E4 EXIT -> PASS")
             self.exited = True
-            return PASS
+            return self.ack(PASS)
 
         self.log("unknown command 0x%02X" % cmd)
         return FAIL
@@ -126,7 +137,7 @@ class Sim(object):
             self.remaining_failures -= 1
             self.rejected += 1
             self.log("E2 record %d -> FAIL (simulated failure)" % self.records)
-            return FAIL
+            return self.ack(FAIL)
         if len(record) < 8:
             self.rejected += 1
             return FAIL
@@ -160,7 +171,7 @@ class Sim(object):
         self.records += 1
         self.log("E2 0x%08X len %d -> PASS (%d pages, %d erased)"
                  % (addr, length, len(pages), len(fresh)))
-        return PASS
+        return self.ack(PASS)
 
     # -- framing ----------------------------------------------------------
     # The program frame is *length driven*: the record header says how long the
@@ -236,6 +247,9 @@ def main(argv=None):
                     help="answer FAIL to the first N program records")
     ap.add_argument("--mutate-every", type=int, default=0,
                     help="corrupt every Nth record before validating it")
+    ap.add_argument("--garble-acks", type=int, default=0,
+                    help="damage the first byte of every Nth reply (emulates a "
+                         "clipped high-baud link)")
     ap.add_argument("--mute-after-baud", type=float, default=0.0,
                     help="drop E0 pings for this many seconds after BAUDRATE, to "
                          "emulate the host guessing the wrong rate")
@@ -253,7 +267,7 @@ def main(argv=None):
 
     sim = Sim(verbose=a.verbose, fail_first_n=a.fail_first_n,
               mutate_every=a.mutate_every, ignore_baud=a.ignore_baud,
-              mute_after_baud=a.mute_after_baud)
+              mute_after_baud=a.mute_after_baud, garble_acks=a.garble_acks)
     try:
         sim.run(master)
     except KeyboardInterrupt:
