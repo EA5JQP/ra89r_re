@@ -56,19 +56,27 @@
 #define BOARD_UART_AF       2u           /* GPIO_AF2_USART1 */
 #define BOARD_UART_BAUD     115200u
 
-/* Keypad -- NOT configured here on purpose, and this firmware does not read it.
+/* Keypad -- not read by this firmware, but parked back to its default state.
  *
  * The stock application reads 19 of the 20 buttons as analog levels: five lines,
  * each with a four-value resistor ladder, decoded by a 6-channel ADC scan.  The
  * lines are PA2, PA3, PA6, PA7 and PB0 (ADC channels 2 (or 14 on the other board
- * variant), 3, 6, 7 and 8), so those pins must stay in analog mode and must not
- * be driven or pulled by anything here; the twentieth button is PTT2 on PB9.
+ * variant), 3, 6, 7 and 8) and both of the ADC's other inputs are analog too
+ * (PB1 = channel 9); the twentieth button is PTT2 on PB9, a plain input.
+ *
+ * Those pins must stay analog, undriven and unpulled: driving or pulling a
+ * ladder line corrupts its level and sinks current through it (that is what made
+ * the radio warm up while a pin probe held the lines up).  main.c therefore sets
+ * them back to that default at boot, and nothing else touches them.
  *
  * Windows and key codes (the vendor's own calibration, reusable verbatim):
  *   (0, 0x07C] (0x384, 0x47C] (0x8B2, 0x9AA] (0xABB, 0xBB3]   -- every line
  *   PA2 additionally (0x4AA, 0x5A2] and (0x74E, 0x846], plus a digital read
  * A pin x window pairing is one key: see ra89r_findings.md ("Keypad") for the
  * full table, the scanner (0x08024324) and the per-key handlers. */
+#define KEYPAD_ANALOG_A_MASK  ((1u << 2) | (1u << 3) | (1u << 6) | (1u << 7))
+#define KEYPAD_ANALOG_B_MASK  ((1u << 0) | (1u << 1))
+#define KEYPAD_PTT2_PIN       (1u << 9)
 
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) talks to the
  * external SPI NOR flash (Winbond-class, id 0xEF16); the RF transceiver
