@@ -130,6 +130,10 @@ where possible (`firmware/tools/preview.c` for the screen), and merge into
 docs and integration changes (flasher, analysis scripts, this file) go straight
 onto `develop`.
 
+The initial import already contains the bring-up versions of the screen and UART
+drivers, so `driver/lcd` and `driver/uart` are where the *next* change to each of
+them goes; `driver/keypad` is still untouched.
+
 ## Firmware / flashing
 
 - **The bootloader only starts the application while `0x0805FFF0` holds `0x11`**
