@@ -201,49 +201,78 @@ of the same name) and driven on at boot; the console command `l` toggles it.
 
 The stock keypad is **not** an MCU GPIO matrix, which is worth recording because
 the sibling port tree uses exactly that (`UV-K1/K5V3`, `App/driver/keyboard.c`:
-4x4, cols PB3-PB6 driven, rows PB12-PB15 read).
+4x4, cols PB3-PB6 driven, rows PB12-PB15 read).  There are 20 buttons on this
+radio and they are read **through the ADC**, as a resistor ladder.
 
-What the stock image shows:
+How to reproduce the analysis (see "Loading the current decode into Ghidra"):
 
-* **No port-level access at all.**  A linear scan tracking the GPIO base register
-  finds every GPIO access going through the two single-bit helpers
-  (`GPIO_WriteBit` `0x08011B74`, `GPIO_ReadInputDataBit` `0x08011B64`) or the
-  `GPIO_Init` wrapper (`0x0801199C`); no `ldr`/`str` against a GPIO
-  `IDR`/`ODR`/`BSRR` was found, so nothing reads a whole port.
-* **Only 12 single-bit input reads**, on 7 lines: `PC13` (4 call sites:
-  `0x08005CCE`, `0x08013F3C`, `0x080218B4`, `0x080218F6`), `PA14` (3:
-  `0x08006144`, `0x0800657E`, `0x08019C92`), `PA13` (`0x08005FC2`), `PB9`
-  (`0x080169F8`), `PB10` (`0x0802192E`), `PA2` (`0x08014AE8` -- inside the LCD
-  module) and `PD0` (`0x080066E2`).
-* **No interrupt path either.**  Correcting the vector table for the
-  `IRQn + 16` offset: every `EXTI*` vector is the default handler
-  (`0x0800415F`), so keys are polled, if they are on the MCU at all.  (The real
-  handlers are DMA1 streams, `TIM3`/`TIM5`, `SPI1`, `USART1`, `SysTick`.)
-* Several of those lines are **bidirectional, read then driven** in the same
-  routine (`PA13` at `0x08005FC2`, `PA14` at `0x08006144`/`0x0800657E`, `PD0` at
-  `0x080066E2` + `0x08006858`) -- a handshake, not a button.
-* The `PB9` read feeds a 3-byte buffer into `0x08005724`, the same "set a field"
-  helper the LCD module uses, i.e. it samples a *config/strap* value.
+* **No port-level GPIO access at all.**  Every GPIO access goes through the two
+  single-bit helpers (`GPIO_WriteBit` `0x08011B74`, `GPIO_ReadInputDataBit`
+  `0x08011B64`) or the `GPIO_Init` wrapper (`0x0801199C`); no `ldr`/`str`
+  against a GPIO `IDR`/`ODR`/`BSRR` exists, so nothing reads a whole port.
+* **Only 17 single-bit input reads**, on 7 lines: `PC13`, `PA14`, `PA13`, `PB9`,
+  `PB10`, `PA2`, `PD0`.  Seven lines cannot scan 20 keys.
+* **No interrupt path either.**  With the vector table read at the correct
+  `IRQn + 16` offset, every `EXTI*` vector is the default handler
+  (`0x0800415F`) -- keys are polled.  (The real handlers are DMA1 streams,
+  `TIM3`/`TIM5`, `SPI1`, `USART1`, `SysTick`.)
 
-So the keypad is either not on the MCU's GPIO, or its scan routine is one of the
-functions the analyzer never reached (see the "Contracts that are easy to get
-wrong" note in `AGENTS.md` about code reached only via a RAM-built pointer).
+**The keypad is an ADC ladder.**  `FUN_08004E58` programs a regular scan of six
+channels -- `2` *or* `14`, then `3`, `6`, `7`, `8`, `9` (`FUN_080109E4` per
+channel) -- and `FUN_0801BE90`/`FUN_08005460` finish the job by starting a
+DMA-driven conversion (`FUN_08010DB8(inst, buffer, 0x30)`), with the results
+landing at `0x20000C28`.  The channel set maps to **PA2, PA3, PA6, PA7, PB0,
+PB1**, and those are exactly the pins the app configures as **analog**:
+`GPIO_Init` with mode `3`, mask `0xCC` (PA2/PA3/PA6/PA7) at `0x0800A8F4`'s
+neighbour and `GPIOB` mask `0x3` in `FUN_08014B00`.  The two variants
+(`FUN_0801BE90(0/1)`: channel 2 on PA2 vs channel 14 on PC4) look like the
+RA89R/RA89G or two board revisions.
 
-Candidates, most likely first:
+Still to pin down: **which channel carries the 20 buttons and the threshold ->
+key-code table** (the result buffer has no direct xref -- it is read through the
+ADC instance at `0x20000BB0`).  That is the next step; `FUN_08005460` is the
+entry point to follow.
 
-1. **Keys on the BK4815/BK4829 GPIO pins.**  `0x080137D4` reads RF register
-   `0x33`, rewrites a **six-bit field** from two masks and writes it back;
-   `0x08013790` does the same for register `0x75`.  A six-pin GPIO bank on the RF
-   chip is exactly where a key bank (or key/LED bank) would sit.
-2. **The RA89R has few keys.**  The UI offers `P1 Short`/`P2 Short`, `PTT Type`
-   and a `PTT` label, and the bootloader waits on **GPIOB pin 9** to leave update
-   mode -- consistent with a handful of keys plus a rotary, not a full keypad.
-3. A scan routine outside the current analysis (RAM-made pointer).
+**The digital key/PTT lines.**  `FUN_080218E8` (called from the main loop via
+`FUN_08021A38`) gates on `PC13` low, reads `PB10`, and drives `FUN_08021950`,
+which implements debounce (`counter == 8`) and long-press (up to 56000 ticks,
+compared against a configured timeout) and then posts a **key event** through
+`FUN_0800C550(..., 5)`.  `FUN_08021950` also reads **`PB9`** -- and `PB9` is
+exactly the line the **bootloader waits on** to leave update mode
+(`0x080005B0`: loop until `GPIOB` pin 9 reads high), i.e. the PTT that gates
+flashing.  So `PC13`/`PB9`/`PB10` are the handful of dedicated keys; everything
+else is on the ladder.
 
-Next probes, each bounded: decode the `0x33`/`0x75` RF-register writers and their
-callers; look for a value read back from the RF chip being compared against a key
-table; re-run `tools/ra89r_analyze.py` and inspect the `0x0801Cxxx` cluster that
-Ghidra flagged as never called.
+### Other chips on the board (from the same pass)
+
+| bus | pins | what it is |
+|---|---|---|
+| companion / PMIC | `PC14` clock, `PB2` data, `PD0` reset pulse | battery + charger gauge: `FUN_0800687C` returns the pack voltage (10-bit reading + 875/760/640, x 10000 uV), registers 2/3/5/7/10/11, polled from the main loop by `FUN_08017BB4` |
+| BK4815/BK4829 | bit-banged | register layer is `FUN_080220A0(reg, val)` write / `FUN_080180F0(reg)` read, used by the T/R path `FUN_08016228` |
+| SPI NOR | 16-bit serial: `FUN_08017FE4` (read) / `FUN_08018060` (write) | external flash |
+| LCD panel | `PA8`-`PA11` + `PB15` | see `ra89r_lcd.md` |
+| lamp | `PA1` + `PA5` | see "Backlight / lamp" above |
+
+### Loading the current decode into Ghidra
+
+The Ghidra project in `~/Repos/h8_re` holds programs laid out by the *old*
+decoder, so decompiling them gives shifted addresses.  Load the `ra89r.py`
+decode instead:
+
+```sh
+python3 ra89r.py decode FIRMWARE_RA89R_20260203_V49.icf work/FIRMWARE_RA89R_20260203_V49.bin
+cp work/FIRMWARE_RA89R_20260203_V49.bin work/stock_v49_raw.bin
+```
+
+then import `work/stock_v49_raw.bin` as a **raw binary** with language
+`ARM:LE:32:Cortex`, set its image base to **`0x08004000`**, and run
+auto-analysis (1177 functions).  Forcing the language at import time and
+rebasing afterwards is what matters: importing the same bytes as an ELF gives
+Ghidra's `ARM:LE:32:v8`, whose missing Cortex analyzers leave the program with a
+single function, and a raw import analysed *before* rebasing finds nothing
+because the vector table's pointers do not resolve.
+
+### UI strings (useful for the port)
 
 ### UI strings (useful for the port)
 
@@ -318,9 +347,12 @@ From the earlier revision's CPS decompilation (sources `cps_decompiled/` in
    UI has a "Carrier/Scrambler" debug page, but the 3-wire register layer was
    not identified in this pass (the `0x0800DCxx` region the earlier revision
    mentioned is EEPROM/config parsing, not RF).
-7. **Keypad** — recon done, mechanism unsolved: see "Keypad" above (not a GPIO
-   matrix; candidate is the BK4815/BK4829 GPIO bank).  **Audio (DAC/ADC),
-   squelch, battery** are still not analysed at all.
+7. **Keypad** — mechanism found: an **ADC resistor ladder** (6-channel scan on
+   the analog pins PA2/PA3/PA6/PA7/PB0/PB1) plus a few digital keys on
+   PC13/PB9/PB10 -- see "Keypad" above.  Still missing: which channel carries the
+   20 buttons and the threshold -> key-code table.  **Audio (DAC/ADC) mix,
+   squelch, battery** are still not analysed (though the battery gauge chip is
+   now mapped, see "Other chips on the board").
 8. ~~Bootloader upload protocol~~ — **done**: see `ra89r_bootloader.md` (frames,
    commands, baud table, record handling) with `tools/ra89r_flash.py` and
    `ra89r.py mkicf` as the working host-side implementation.  Remaining unknowns
