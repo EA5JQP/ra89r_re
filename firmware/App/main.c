@@ -17,6 +17,7 @@
 #include "driver/clock.h"
 #include "driver/fault.h"
 #include "driver/gpio.h"
+#include "driver/keypad.h"
 #include "driver/lcd_st7565.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
@@ -34,6 +35,38 @@ static uint8_t contrast = 0x19u;
 static int show_border;
 static int animate;
 static int heartbeat = 1;
+static int keypad_monitor;
+static int keypad_last = -2;            /* force a first print when enabled */
+
+/* ------------------------------------------------------------ keypad monitor */
+
+/* Prints the raw ADC level of every keypad line plus the decoded key whenever
+ * the result changes.  The raw value is the point: a press either lands inside
+ * the window the decode table expects, or it shows exactly where it does not. */
+static void keypad_monitor_step(void)
+{
+    const uint8_t *variants;
+    int code;
+    unsigned line;
+
+    if (!keypad_monitor)
+        return;
+
+    code = keypad_scan();
+    if (code == keypad_last)
+        return;
+    keypad_last = code;
+
+    uart_printf("[k %ums]", (unsigned)systick_millis());
+    for (line = 0; line < KEYPAD_LINE_COUNT; line++)
+        uart_printf(" %s=0x%03X", keypad_line_name(line), (unsigned)keypad_raw(line));
+    uart_printf(" PTT2=%u -> %s", keypad_ptt2_level() ? 1u : 0u, keypad_name(code));
+
+    variants = keypad_variants(code);
+    if (variants && (variants[1] != 0xFF || variants[2] != 0xFF))
+        uart_printf(" (long 0x%02X, extra 0x%02X)", variants[1], variants[2]);
+    uart_puts("\n");
+}
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -123,7 +156,8 @@ static void print_help(void)
               "          c clear  t test card   b border   f fill   p animation\n"
               "          v/V contrast up/down  l backlight on/off  q heartbeat\n"
               "          r re-init panel (standard, bootloader-proven)\n"
-              "          s re-init panel (stock app variant, 8 extra bytes)\n");
+              "          s re-init panel (stock app variant, 8 extra bytes)\n"
+              "          k keypad monitor (raw ADC per line + decoded key)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -200,6 +234,9 @@ int main(void)
     gpio_config_analog(KEYPAD_ANALOG_B_PORT, KEYPAD_ANALOG_B_MASK);
     gpio_config_input(KEYPAD_PTT2_PORT, KEYPAD_PTT2_PIN);
     uart_puts("keypad: PA2/PA3/PA6/PA7/PB0/PB1 analog, PB9 input (default state)\n");
+    keypad_init();
+    uart_printf("keypad: ADC up, %u analog lines (channels 2/3/6/7/8), PTT2 on PB9\n",
+                (unsigned)KEYPAD_LINE_COUNT);
 
     uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");    lcd_init();
     uart_puts("lcd: init done\n");
@@ -292,6 +329,12 @@ int main(void)
                 heartbeat = !heartbeat;
                 uart_printf("\nheartbeat %s\n", heartbeat ? "on" : "off");
                 break;
+            case 'k':
+                keypad_monitor = !keypad_monitor;
+                uart_printf("\nkeypad monitor %s -- press one button at a time\n",
+                            keypad_monitor ? "on" : "off");
+                keypad_last = -2;           /* force the next poll to print */
+                break;
             default:
                 break;
             }
@@ -320,6 +363,8 @@ int main(void)
                 uart_printf("[hb] uptime %us, panel variant %d, contrast 0x%02X\n",
                             (unsigned)(now / 1000u), lcd_variant(), contrast);
         }
+
+        keypad_monitor_step();
 
         animate_step(now);
     }
