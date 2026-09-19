@@ -257,11 +257,11 @@ int main(void)
     gpio_config_input(KEYPAD_PTT2_PORT, KEYPAD_PTT2_PIN);
     uart_puts("keypad: PA2/PA3/PA6/PA7/PB0/PB1 analog, PB9 input (default state)\n");
     if (keypad_init())
-        uart_printf("keypad: ADC up, %u analog lines (channels 2/3/6/7/8), PTT2 on PB9\n",
-                    (unsigned)KEYPAD_LINE_COUNT);
+        uart_printf("keypad: ADC scanning 6 channels through DMA (%u keypad lines), "
+                    "PTT2 on PB9\n", (unsigned)KEYPAD_LINE_COUNT);
     else
-        uart_puts("keypad: WARNING -- the ADC did not complete a conversion; the "
-                  "key monitor would report 0xFFFF for every line\n");
+        uart_puts("keypad: WARNING -- the ADC/DMA scan is NOT running; the key "
+                  "monitor would report zeros for every line\n");
 
     uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");    lcd_init();
     uart_puts("lcd: init done\n");

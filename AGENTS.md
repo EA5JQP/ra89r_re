@@ -147,7 +147,8 @@ driver/uart               console     -- working on hardware (115200, fault repo
 driver/backlight          lamp        -- working on hardware (GPIOA pin 1 + pin 5, 'l')
 driver/keypad             keys        -- current work: the 20 buttons are a 5-line
                                          analog matrix (PA2/PA3/PA6/PA7/PB0 + PB9);
-                                         discussed in ra89r_findings.md, no driver yet
+                                         reader + console monitor ('k') working on
+                                         hardware, not merged yet
 ```
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
@@ -162,8 +163,11 @@ carries something we cannot stand behind.  Tooling, docs and integration changes
 
 Screen, UART and backlight are confirmed working on the radio (panel shows the
 test card, console logs and answers commands at 115200, `l` switches the lamp),
-so changes to them are now incremental.  `driver/keypad` is the current work and
-has not been started.
+so changes to them are now incremental.  `driver/keypad` is the current work: the
+reader decodes all 20 buttons (verified on the radio with the `k` console monitor)
+and returns the K5V3/F4HWN `KEY_Code_e`, since the port target is that firmware;
+the ADC runs free-running through DMA like the stock application, so a poll is a
+memory read rather than a ~5 ms blocking conversion.  Not merged yet.
 
 ## Firmware / flashing
 

@@ -382,6 +382,25 @@ re-check on the radio (the console monitor prints the code beside the name).
 `App/driver/keypad.h` exposes the K5V3 enum so the port can use this reader
 unchanged.
 
+**Our reader copies the stock's ADC scheme.**  The vendor does not convert on
+demand -- the ADC scans six channels (2, 3, 6, 7, 8, 9) continuously into memory
+through DMA, and the accessor averages eight samples per channel out of that
+buffer.  `keypad.c` now does the same: `DMA1_Channel1` (this part has no DMA
+request-select register, so ADC1's request is hardwired there) in circular mode
+with 32-bit transfers, into a 48-word buffer shaped exactly like the stock's
+(one round of six channels = 24 bytes, the "sample stride 0x18" of its accessor),
+and a poll averages the last eight samples of each line.
+
+That matters for the port rather than for elegance: one conversion with the
+longest sample time is ~123 us, so a five-line scan that waited for its own
+conversions cost ~5 ms -- half of the 10 ms tick the K5V3 application polls the
+keypad on (`APP_TimeSlice10ms`, thresholds 20 ms / 400 ms).  Free-running, the
+same scan is background hardware and a poll is a memory read.  The stock's DMA
+configuration is `MINC|PSIZE32|MSIZE32|CIRC|very-high priority`; ours is
+identical.  **Not yet run on the radio** -- the `k` monitor is the check, and the
+raw values it prints should be unchanged (they are the same measurement, still
+averaged over eight samples).
+
 **Unrelated to the keypad, but found while reading the dispatcher:** keys
 `0x15`/`0x16` (and the held `0x23`/`0x25`) drive **`PC13` low**
 (`GPIO_WriteBit(GPIOC, 0x2000, 0)` in `FUN_08013F28`) -- the same line the PTT
