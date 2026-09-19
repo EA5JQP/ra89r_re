@@ -44,7 +44,7 @@ void lcd_write_data(uint8_t data)
 /* init                                                                    */
 /* ------------------------------------------------------------------------ */
 
-static int s_variant = LCD_INIT_STOCK;
+static int s_variant = LCD_INIT_STANDARD;
 
 int lcd_variant(void)
 {
@@ -53,8 +53,8 @@ int lcd_variant(void)
 
 int lcd_reinit(int variant)
 {
-    if (variant != LCD_INIT_SIMPLE)
-        variant = LCD_INIT_STOCK;
+    if (variant != LCD_INIT_STOCK_APP)
+        variant = LCD_INIT_STANDARD;
     s_variant = variant;
 
     gpio_config_output(LCD_CTRL_PORT, LCD_SCK_PIN | LCD_DC_PIN | LCD_CS_PIN | LCD_RST_PIN);
@@ -82,11 +82,10 @@ int lcd_reinit(int variant)
     lcd_write_cmd(0x25);            /* regulation ratio */
     lcd_write_cmd(0x81);            /* electronic volume (contrast) */
     lcd_write_cmd(0x19);
-    if (variant == LCD_INIT_STOCK) {
-        /* The stock firmware also sends these eight bytes.  They are not part of
-         * the standard ST7565 command set; the panel fitted in the RA89R
-         * evidently accepts them, so they are replayed for bring-up parity.
-         * `s` over the console re-inits without them. */
+    if (variant == LCD_INIT_STOCK_APP) {
+        /* Only the stock application sends these eight bytes; they are not
+         * ST7565 commands and the bootloader -- which drives this panel fine --
+         * omits them.  Kept behind `s` purely for comparison. */
         lcd_write_cmd(0xFF);
         lcd_write_cmd(0x64);
         lcd_write_cmd(0x72);
@@ -104,7 +103,7 @@ int lcd_reinit(int variant)
 
 void lcd_init(void)
 {
-    (void)lcd_reinit(LCD_INIT_STOCK);
+    (void)lcd_reinit(LCD_INIT_STANDARD);
 }
 
 void lcd_set_addr(uint8_t page, uint8_t column)

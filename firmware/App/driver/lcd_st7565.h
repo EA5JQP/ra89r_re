@@ -32,13 +32,20 @@
 
 extern uint8_t lcd_fb[LCD_PAGES][LCD_WIDTH];
 
-/* Init variants: the stock sequence (what the RA89R firmware sends) or the
- * standard ST7565 commands only, without the eight vendor-specific bytes.  If
- * the panel only works with one of them, that tells us which. */
-#define LCD_INIT_STOCK   0
-#define LCD_INIT_SIMPLE  1
+/* Init variants.
+ *
+ * LCD_INIT_STANDARD is the sequence the *bootloader* uses, and the bootloader
+ * demonstrably drives this panel (it shows "Update...." when the radio is in
+ * update mode), so it is the reference: standard ST7565 commands only, going
+ * straight from "0x81 0x19" to "0x40", "0xAF" (bootloader 0x08002440).
+ *
+ * LCD_INIT_STOCK_APP is what the stock *application* sends at 0x08014F42: the
+ * same commands plus eight bytes that are not in the ST7565 command set
+ * (0xFF 0x64 0x72 0xB4 0x90 0x98 0x70 0xFE).  Kept selectable for comparison. */
+#define LCD_INIT_STANDARD  0
+#define LCD_INIT_STOCK_APP 1
 
-/* Reset pulse plus the stock init sequence (variant LCD_INIT_STOCK). */
+/* Reset pulse plus the init sequence (variant LCD_INIT_STANDARD). */
 void lcd_init(void);
 /* Re-run the panel init with a different variant; returns the variant used. */
 int lcd_reinit(int variant);
