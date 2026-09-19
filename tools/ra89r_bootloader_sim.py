@@ -94,7 +94,12 @@ class Sim(object):
                 self.log("E0 ping dropped (muted: wrong baud emulation)")
                 return None
             self.log("E0 handshake -> announcement")
-            return ANNOUNCE + IDENTITY + bytes(4) + bytes([TERMINATOR])
+            reply = ANNOUNCE + IDENTITY + bytes(4) + bytes([TERMINATOR])
+            self.acks += 1
+            if self.garble_acks and self.acks % self.garble_acks == 0:
+                self.log("  (damaging the first byte of this announcement)")
+                reply = bytes([reply[0] ^ 0xA8]) + reply[1:]
+            return reply
 
         if cmd == CMD_BAUD:
             if self.ignore_baud:

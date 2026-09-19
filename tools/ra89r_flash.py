@@ -286,6 +286,23 @@ BAUD_CANDIDATES = [6, 5, 4, 2, 1, 0]           # fastest first, 9600 last
 BAUD_RISKY = {7: 512000, 8: 1024000}
 
 
+def link_quality(io, pings=3, timeout=0.35):
+    """How many clean E0 answers come back at the current rate.
+
+    The E0 handshake is idempotent (the bootloader only rebuilds and re-sends its
+    announcement), so this is a safe way to measure the link before spending a
+    whole image on it.
+    """
+    clean = 0
+    for _ in range(pings):
+        io.flush_input()
+        io.write(frame(CMD_HANDSHAKE, HANDSHAKE_PAYLOAD))
+        reply = io.read_reply(timeout, limit=32, terminator=TERMINATOR)
+        if reply.startswith(ANNOUNCE):
+            clean += 1
+    return clean
+
+
 def set_baud(io, index, args, verbose=True):
     """Ask the bootloader to switch baud, then find the rate it is really at.
 
@@ -306,18 +323,32 @@ def set_baud(io, index, args, verbose=True):
     time.sleep(args.baud_settle)
 
     order = [index] + [i for i in BAUD_CANDIDATES if i != index]
+    best = None
     for i in order:
         baud = BAUD_TABLE[i] if i < len(BAUD_TABLE) else None
         if not baud:
             continue
         io.set_baud(baud)
-        if ping(io):
+        if not ping(io):
+            continue
+        if best is None:
+            best = i
+        clean = link_quality(io, args.quality_pings)
+        if verbose:
+            print("  %d baud: %d/%d clean probes%s"
+                  % (baud, clean, args.quality_pings,
+                     "" if clean == args.quality_pings else " -- too noisy, "
+                     "step down"))
+        if clean == args.quality_pings:
             if verbose:
                 print("  talking at %d baud (index %d)" % (baud, i))
             return i
-    if verbose:
-        print("  no rate answered -- power-cycle the radio and retry with "
-              "--baud-index 0")
+    if best is not None:
+        print("  every rate was noisy; continuing at %d baud anyway (damaged "
+              "replies are retried)" % BAUD_TABLE[best])
+        io.set_baud(BAUD_TABLE[best])
+        return best
+    print("  no rate answered -- power-cycle the radio and retry with --baud 0")
     return None
 
 
@@ -491,6 +522,10 @@ def main(argv=None):
                          "7=512000, 8=1024000)")
     ap.add_argument("--baud-index", type=int,
                     help="deprecated alias for --baud <index>")
+    ap.add_argument("--quality-pings", type=int, default=3,
+                    help="clean E0 probes required at a rate before the image is "
+                         "sent at it (default 3; noisy links automatically step "
+                         "down)")
     ap.add_argument("--baud-settle", type=float, default=1.1,
                     help="seconds to wait after the baud command; the bootloader "
                          "itself delays 1000 ms (default 1.1)")
