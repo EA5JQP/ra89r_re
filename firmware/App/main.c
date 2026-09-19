@@ -61,7 +61,8 @@ static void print_diagnostics(void)
                                              : " (NOT SET: the bootloader will "
                                                "not start this app)");
     uart_printf("  lcd         variant %s, column offset %u\n",
-                (lcd_variant() == LCD_INIT_SIMPLE) ? "simple" : "stock",
+                (lcd_variant() == LCD_INIT_STOCK_APP) ? "stock-app (8 extra bytes)"
+                                                      : "standard (bootloader-proven)",
                 (unsigned)LCD_COLUMN_OFFSET);
     uart_printf("  uart        USART1 PB6/PB7 AF%u @ %u 8N1\n",
                 (unsigned)BOARD_UART_AF, (unsigned)BOARD_UART_BAUD);
@@ -116,8 +117,9 @@ static void print_help(void)
 {
     uart_puts("\ncommands: h help   i diagnostics   d dump screen as ASCII\n"
               "          c clear  t test card   b border   f fill   p animation\n"
-              "          v/V contrast up/down  r re-init panel (stock variant)\n"
-              "          s re-init panel (standard commands only)  q heartbeat\n");
+              "          v/V contrast up/down  q heartbeat\n"
+              "          r re-init panel (standard, bootloader-proven)\n"
+              "          s re-init panel (stock app variant, 8 extra bytes)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -164,7 +166,7 @@ int main(void)
                   "         the marker automatically)\n");
     }
 
-    uart_puts("lcd: reset + init (stock sequence) ...\n");
+    uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");
     lcd_init();
     uart_puts("lcd: init done\n");
     draw_test_card();
@@ -229,14 +231,14 @@ int main(void)
                 uart_printf("\ncontrast 0x%02X\n", contrast);
                 break;
             case 'r':
-                uart_printf("\npanel re-init (stock variant): %d\n",
-                            lcd_reinit(LCD_INIT_STOCK));
+                uart_printf("\npanel re-init (standard, bootloader-proven): %d\n",
+                            lcd_reinit(LCD_INIT_STANDARD));
                 lcd_set_contrast(contrast);
                 draw_test_card();
                 break;
             case 's':
-                uart_printf("\npanel re-init (standard commands only): %d\n",
-                            lcd_reinit(LCD_INIT_SIMPLE));
+                uart_printf("\npanel re-init (stock app variant): %d\n",
+                            lcd_reinit(LCD_INIT_STOCK_APP));
                 lcd_set_contrast(contrast);
                 draw_test_card();
                 break;
