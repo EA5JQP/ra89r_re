@@ -2,9 +2,9 @@
 
 Target: Retevis RA89R / RA89G (same family as TYT UV8800 / TH9000D) on a Puya
 PY32F403 (Cortex-M4F, 384 KB flash at `0x08000000`, 64 KB SRAM at `0x20000000`).
-This directory holds the stock `.icf`, the codec, the analysis tooling and the
-write-ups; larger reference material (the old decodes, the Ghidra project, the
-CPS sources) lives outside the workspace (see "External inputs").
+This directory holds the two stock `.icf` samples, the codec, the analysis tooling
+and the write-ups; larger reference material (the old decodes, the Ghidra project,
+the CPS sources) lives outside the workspace (see "Reference inputs").
 
 ## Layout and ownership
 
@@ -35,16 +35,20 @@ CPS sources) lives outside the workspace (see "External inputs").
 - `firmware/` — the RA89R custom firmware project (minimum viable bring-up:
   screen + UART), with its own README and `firmware/FLASHING.md` (the concrete
   flash procedure, including how to enter update mode and how to go back to
-  stock).  The build emits `build/<preset>/ra89r_fw.icf`, the file the
-  bootloader accepts.  It does **not** use the HAL/LL: the
-  drivers in `firmware/App/driver/` are register-level and only depend on the
-  CMSIS device header from `PY32F4xx_Firmware/`.  `firmware/tools/extract_fonts.py`
-  regenerates the stock font tables from a decoded image, and
-  `firmware/tools/preview.c` renders the screen layout on a PC (build it with
-  `-DLCD_HOST_TEST`, as documented in `firmware/README.md`) -- use it to check
-  layout changes instead of guessing.
-- `work/` — generated artifacts (`*.bin`, `*.meta`, `analysis/`). Rebuild them
-  from the stock `.icf` rather than editing them by hand.
+  stock).  The build emits `build/<preset>/ra89r_fw.icf` (wrapped by a POST_BUILD
+  step that calls `ra89r.py mkicf`), the file the bootloader accepts.  It does
+  **not** use the HAL/LL: the drivers in `firmware/App/driver/` are register-level
+  and only depend on the CMSIS device header from `PY32F4xx_Firmware/`.  Board
+  facts are split so the screen layout also builds on a PC:
+  `firmware/App/board_pins.h` holds the numeric pins/baud/clock and includes no
+  MCU header, `firmware/App/board.h` adds the peripheral instances (GPIOA,
+  USART1) and needs the device header.  `firmware/App/ui.c` is the hardware-free
+  layout, `firmware/tools/extract_fonts.py` regenerates the stock font tables from
+  a decoded image, and `firmware/tools/preview.c` renders the layout on a PC
+  (build it with `-DLCD_HOST_TEST`, as documented in `firmware/README.md`) -- use
+  it to check layout changes instead of guessing.
+- `work/` — generated artifacts (`*.bin`, `*.meta`, `analysis/`, `analysis_boot/`).
+  Rebuild them from the stock `.icf` rather than editing them by hand.
 - `bootloader.bin` — 16 KiB bootloader dumped from the radio over serial, mapped at
   `0x08000000` (SP `0x20003190`, reset `0x08000145`). It contains the record
   validator at `0x08000BE0` that `ra89r.py`'s check byte reproduces.
@@ -57,13 +61,14 @@ CPS sources) lives outside the workspace (see "External inputs").
 ## Verified commands
 
 ```sh
-python3 ra89r.py verify  FIRMWARE_RA89R_20260203_V49.icf   # baseline 0x66, 72 records
+python3 ra89r.py verify  FIRMWARE_RA89R_20260203_V49.icf          # baseline 0x66, 72 records
+python3 ra89r.py verify  Ra89G_R_UpDataFile20260401_V52_10W_Enable.icf  # same, the RA89G sample
 python3 ra89r.py verify  FW.icf              # validate every record's check byte
 python3 ra89r.py info    FW.icf              # one line per record: address, length, key
 python3 ra89r.py decode  FW.icf work/fw.bin  # writes work/fw.bin + work/fw.bin.meta
 python3 ra89r.py encode  work/fw.bin out.icf # uses the sidecar, or --like FW.icf
 
-python3 tools/ra89r_analyze.py work/fw.bin   # -> work/analysis/{listing,functions,...}
+python3 tools/ra89r_analyze.py work/FIRMWARE_RA89R_20260203_V49.bin  # -> work/analysis/
 
 python3 ra89r.py mkicf my_firmware.bin my_firmware.icf --base 0x08004000
 python3 tools/ra89r_flash.py --dry-run flash my_firmware.icf     # inspect frames
@@ -72,12 +77,26 @@ python3 tools/ra89r_flash.py --port /dev/ttyUSB0 flash my_firmware.icf
 ```
 
 Firmware build (needs the ARM GNU toolchain; the one installed here lives in
-`~/Apps/toolchains/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi`):
+`~/Apps/toolchains/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi` and is
+**not** on `PATH`, so `ARM_TOOLCHAIN_ROOT` is required):
 
 ```sh
 cd firmware
 export ARM_TOOLCHAIN_ROOT=~/Apps/toolchains/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi
 cmake --preset Debug && cmake --build build/Debug
+```
+
+Offline checks that need no radio (the flash and layout regressions):
+
+```sh
+# flasher against the bootloader test double (protocol + timing, on a PTY)
+python3 tools/ra89r_bootloader_sim.py --pty /tmp/ra89r-pty &
+python3 tools/ra89r_flash.py --port "$(cat /tmp/ra89r-pty)" flash firmware/build/Debug/ra89r_fw.icf
+
+# screen layout on a PC, then eyeball the ASCII art (see firmware/README.md)
+cd firmware && gcc -std=c11 -I App -I App/driver -DLCD_HOST_TEST \
+    tools/preview.c App/ui.c App/driver/lcd_st7565.c \
+    App/driver/font_8x16.c App/driver/font_5x7.c -o /tmp/preview && /tmp/preview
 ```
 
 Round-trip check (the fastest way to prove a change did not break the codec):
@@ -98,6 +117,11 @@ must not change the image size; edit the image in place and re-encode.
 - **Family baseline** is `0x66` (RA89R), `0x88` (UV8800), `0x90` (TH9000D); `ra89r.py`
   detects it by trying all 256 values. Stock RA89R V49 reports `baseline 0x66 -- all 72
   records valid` — that is the sanity check to run before any analysis.
+- **Two stock images ship here and both verify `0x66`/72 records**: the RA89R V49
+  (`FIRMWARE_RA89R_20260203_V49.icf`, 145,772 bytes) and the newer RA89G V52
+  10 W build (`Ra89G_R_UpDataFile20260401_V52_10W_Enable.icf`, 146,064 bytes).
+  They are different builds (83% of bytes differ at equal offsets), so use the
+  RA89G one only as a *cross-check* and compare by content, never by offset.
 - **Only size-preserving edits are representable**, and `encode` needs either the
   `<bin>.meta` sidecar from `decode` or `--like <original.icf>` (to copy the record
   layout). The sidecar is version-tagged (`MAGIC = b"RA89RMETA3"`); regenerate rather
@@ -120,16 +144,20 @@ main                      stable/import state
 develop                   integration: everything merged here
 driver/lcd                screen      -- working on hardware (init, fonts, layout)
 driver/uart               console     -- working on hardware (115200, fault reports)
-driver/backlight          lamp        -- GPIOA pin 1, on/off ('l' on the console)
+driver/backlight          lamp        -- GPIOA pin 1 (+ pin 5 on test); the driver is
+                                         NOT validated, unmerged work sits on the branch
 driver/keypad             keys        -- not started yet
 ```
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
 each driver self-contained under `firmware/App/driver/`, keep it host-testable
 where possible (`firmware/tools/preview.c` for the screen), and merge into
-`develop` with `git merge --no-ff` when the driver works on hardware.  Tooling,
-docs and integration changes (flasher, analysis scripts, this file) go straight
-onto `develop`.
+`develop` with `git merge --no-ff` **only after the change has been validated on
+the radio**.  Building, passing a host/simulator test, or looking right in the
+disassembly is not validation: unvalidated work stays on the
+`driver/<peripheral>` branch (several commits if needed) so `develop` never
+carries something we cannot stand behind.  Tooling, docs and integration changes
+(flasher, analysis scripts, this file) go straight onto `develop`.
 
 Screen and UART are confirmed working on the radio (panel shows the test card,
 console logs and answers commands at 115200), so changes to them are now
@@ -148,11 +176,15 @@ incremental.  `driver/keypad` is still untouched.
 - Flashing goes through the stock bootloader over the programming port (USART1,
   PB6/PB7, from 9600 baud): see `ra89r_bootloader.md`.  The bootloader itself
   refuses records in `0x08000000-0x08003FFF`; so does `tools/ra89r_flash.py`.
-- Nothing has been run on hardware yet, and the key combination that puts the
-  radio into update mode is not recovered — treat "does it run?" as unverified.
-- Hardware facts encoded in `firmware/App/board.h` (LCD pins, UART pins/baud) come
-  from the stock firmware, not from a board photo or schematic — check them
-  first if bring-up misbehaves.
+- **The bring-up firmware runs on the radio** (see the branch table above), so a
+  bring-up or flashing change can be checked against real behaviour, not only the
+  simulator.  Still missing: the documented **key combination for update mode**
+  (`firmware/FLASHING.md` §6, `ra89r_bootloader.md` §8 point 1), and the
+  backlight's on-level.
+- Board facts come from the stock firmware, not from a board photo or schematic:
+  the numeric values live in `firmware/App/board_pins.h` (which must stay free of
+  SDK includes so the PC preview can use it), the peripheral instances in
+  `firmware/App/board.h`.  Check them first if bring-up misbehaves.
 
 ## Port context
 
@@ -180,20 +212,25 @@ reasons that have nothing to do with the code):
 - `firmware/App/driver/fault.c` prints the Cortex-M fault status and the stacked
   registers on HardFault/BusFault/MemManage/UsageFault/NMI, then halts — a crash
   is never silent.
-- `firmware/App/main.c` prints a boot log (clock, reset cause, vector table,
-  app-valid marker, panel variant) before touching the panel, plus a heartbeat
-  every 5 s, and offers `i` diagnostics, `d` framebuffer dump, `r`/`s` panel
-  re-init variants (stock sequence vs standard commands only) and `v`/`V`
-  contrast.
+- `firmware/App/main.c` brings the console up **before** the panel, prints a boot
+  log (the CFGR/CR/FLASH_ACR and the USART1 CR1/CR2/CR3 the bootloader left,
+  clock, reset cause, app-valid marker) and then runs a command console: `i`
+  diagnostics, `d` framebuffer dump as ASCII, `r`/`s` panel re-init variants
+  (`r` = standard sequence, i.e. the bootloader-proven one **and the default**;
+  `s` = the stock application's variant, 8 extra bytes), `v`/`V` contrast,
+  `l` backlight on/off, `q` heartbeat on/off, plus `h`/`c`/`t`/`b`/`f`/`p`.
 - Console: USART1, PB6/PB7, **115200 8N1** — the same Kenwood jack the
   bootloader uses at 9600.  If the console is silent too, the application is not
   running; check `probe` (still in the bootloader?) and the marker byte.
 
-## External inputs (not in this workspace)
+## Reference inputs (also outside the tooling)
 
-- `FIRMWARE_RA89R_20260203_V49.icf` (this directory) — the stock firmware, identical
-  to the copy in `~/Repos/ra_re/`; treat both as read-only inputs and never edit the
-  `.icf` in place.
+- `FIRMWARE_RA89R_20260203_V49.icf` (this directory) — the stock RA89R firmware,
+  identical to the copy in `~/Repos/ra_re/`; treat both as read-only inputs and
+  never edit the `.icf` in place.
+- `Ra89G_R_UpDataFile20260401_V52_10W_Enable.icf` (this directory) — the RA89G
+  V52 "10 W enable" distributor build of the same family; the second codec sample
+  and the cross-check for anything the two models disagree on.
 - `~/Repos/ra_re/` also holds the old decoder (`tyt decompiler.py`), the shifted
   decoded images, the CPS installer and `cps_decompiled/`; `~/Repos/h8_re` holds the
   Ghidra project with the RA89R programs (also in shifted coordinates).
