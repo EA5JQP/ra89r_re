@@ -286,10 +286,18 @@ int main(void)
                 uart_printf("\nheartbeat %s\n", heartbeat ? "on" : "off");
                 break;
             case 'w':
-                if (pinwatch_is_active())
+                if (pinwatch_is_active()) {
                     pinwatch_stop();
-                else
+                    /* the watcher released the lamp and panel pins; put back the
+                     * parts of the board this firmware owns */
+                    BACKLIGHT_Init();
+                    lcd_reinit(lcd_variant());
+                    draw_test_card();
+                    uart_puts("[k] panel and lamp re-initialised (the RF/PMIC buses "
+                              "still need a reset)\n");
+                } else {
                     pinwatch_arm();
+                }
                 break;
             case 'W':
                 pinwatch_sweep(5);
