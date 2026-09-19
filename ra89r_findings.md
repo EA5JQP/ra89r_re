@@ -161,6 +161,22 @@ These match the CPS "Frequency Range" presets (see below), and no code path
 compares a live frequency against them in-line — the ranges are CPS/EEPROM data,
 so a band change is an EEPROM/`CPS` edit, not a flash patch.
 
+### Backlight
+
+**GPIOA pin 1** (mask `0x2`), plain push-pull output, level 1 = on:
+
+* the stock **bootloader** blinks exactly this pin when it enters update mode
+  (`0x08000582`: clear -> 100 ms -> set -> 100 ms, three times), i.e. it is the
+  lamp a user can see; the pin is configured as an output in its init path.
+* the stock **application** drives the same pin from ~78 sites and offers the
+  menu items `Back Light` (`0x08027191`) and `Rx.Light` (`0x08026D43`), so this is
+  the display backlight, with a timeout setting in the UI.
+* No PWM/DMA-to-BSRR path was found in this build (unlike the UV-K1/K5V3, whose
+  backlight is dimmed with TIM7+DMA), so on/off is all this radio needs.
+
+Implemented as `firmware/App/driver/backlight.{c,h}` (API mirrors the K1 driver
+of the same name) and driven on at boot; the console command `l` toggles it.
+
 ### UI strings (useful for the port)
 
 * `0x08022344..0x080225D0` — Bluetooth AT commands (`AT+GMR?`, `AT+BAUD=`,

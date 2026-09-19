@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include "board.h"
+#include "driver/backlight.h"
 #include "driver/clock.h"
 #include "driver/fault.h"
 #include "driver/gpio.h"
@@ -67,6 +68,8 @@ static void print_diagnostics(void)
                 (unsigned)LCD_COLUMN_OFFSET);
     uart_printf("  uart        USART1 PB6/PB7 AF%u @ %u 8N1\n",
                 (unsigned)BOARD_UART_AF, (unsigned)BOARD_UART_BAUD);
+    uart_printf("  backlight   GPIOA pin 1, now %s\n",
+                BACKLIGHT_IsOn() ? "on" : "off");
 }
 
 static void lcd_set_contrast(uint8_t value)
@@ -118,7 +121,7 @@ static void print_help(void)
 {
     uart_puts("\ncommands: h help   i diagnostics   d dump screen as ASCII\n"
               "          c clear  t test card   b border   f fill   p animation\n"
-              "          v/V contrast up/down  q heartbeat\n"
+              "          v/V contrast up/down  l backlight on/off  q heartbeat\n"
               "          r re-init panel (standard, bootloader-proven)\n"
               "          s re-init panel (stock app variant, 8 extra bytes)\n");
 }
@@ -191,6 +194,9 @@ int main(void)
     uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");
     lcd_init();
     uart_puts("lcd: init done\n");
+
+    BACKLIGHT_Init();
+    uart_puts("backlight: on (GPIOA pin 1)\n");
     draw_test_card();
     uart_puts("lcd: test card drawn\n");
     uart_puts("boot complete. 'h' for commands, 'd' dumps the screen over this\n"
@@ -263,6 +269,15 @@ int main(void)
                             lcd_reinit(LCD_INIT_STOCK_APP));
                 lcd_set_contrast(contrast);
                 draw_test_card();
+                break;
+            case 'l':
+                if (BACKLIGHT_IsOn()) {
+                    BACKLIGHT_TurnOff();
+                    uart_puts("\nbacklight off\n");
+                } else {
+                    BACKLIGHT_TurnOn();
+                    uart_puts("\nbacklight on\n");
+                }
                 break;
             case 'q':
                 heartbeat = !heartbeat;

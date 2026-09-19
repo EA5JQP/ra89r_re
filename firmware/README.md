@@ -11,8 +11,9 @@ brought over from the UV-K1/K5V3 port tree
 | MCU | Puya PY32F403xD, Cortex-M4F, 384K flash, 64K SRAM |
 | Clock | HSI, 8 MHz (the part's reset default; no PLL yet) |
 | Placement | application linked at **0x08004000**; the stock bootloader keeps 0x08000000-0x08003FFF |
-| Screen | 128x64 ST7565-family, **bit-banged**: SDA PB15, SCLK PA8, DC PA10, CS PA11, RST PA9 |
-| Console | **USART1 on PB6/PB7 (AF2)**, 115200 8N1 — the radio's programming port |
+| Screen | 128x64 ST7565-family, **bit-banged**: SDA PB15, SCLK PA8, DC PA10, CS PA11, RST PA9 — *working on hardware* |
+| Backlight | **GPIOA pin 1**, plain output, level 1 = on (the stock bootloader blinks it) |
+| Console | **USART1 on PB6/PB7 (AF2)**, 115200 8N1 — the radio's programming port, *working on hardware* |
 | Fonts | the stock 8x16 and 5x7 bitmaps, lifted byte-for-byte from the stock firmware |
 
 ## Layout
@@ -124,6 +125,7 @@ the stacked registers on the console instead of dying silently
 | `p` | animated bar on/off |
 | `r` / `s` | re-init the panel: standard sequence (the bootloader's, now the default) / stock-app sequence (eight extra bytes) |
 | `v` / `V` | contrast up / down (`0x81`, value) |
+| `l` | backlight on/off (GPIOA pin 1) |
 | `q` | heartbeat lines on the console (every 5 s) on/off |
 | other printable keys | echoed to the UART and shown on the display |
 
