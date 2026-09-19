@@ -62,6 +62,7 @@ typedef struct {
 } kp_line_t;
 
 static void keypad_init_ptt2(void);
+static uint16_t adc_sample(unsigned channel);
 
 static void adc_calibrate(void)
 {
@@ -95,7 +96,13 @@ static uint16_t s_raw[KEYPAD_LINE_COUNT];
  * the longest settling time the part offers (SMP field 7). */
 #define SAMPLE_TIME 7u
 
-void keypad_init(void)
+/* SWSTART as the regular-channel trigger source (EXTSEL = 0b111).  This is not
+ * optional: with EXTSEL left at 0 (TIM1_CC1) a SWSTART write starts nothing, the
+ * EOC flag never sets and every read times out.  The stock driver writes the same
+ * value -- 0xE0000 into CR2 (it clears bits 17..20 first, mask 0xFFE1F7FD). */
+#define EXTSEL_SWSTART (7u << ADC_CR2_EXTSEL_Pos)
+
+bool keypad_init(void)
 {
     unsigned i;
 
@@ -103,7 +110,7 @@ void keypad_init(void)
     (void)RCC->APB2ENR;
 
     ADC1->CR1 = 0;                          /* 12-bit, no scan, no interrupts */
-    ADC1->CR2 = 0;                          /* software trigger, right aligned */
+    ADC1->CR2 = EXTSEL_SWSTART;             /* software start as the trigger */
     for (i = 0; i < KEYPAD_LINE_COUNT; i++) {
         unsigned ch = lines[i].channel;
         unsigned sh = (ch % 10u) * 3u;
@@ -120,6 +127,10 @@ void keypad_init(void)
     adc_calibrate();
 
     keypad_init_ptt2();
+
+    /* Prove it converts: a conversion that never finishes is otherwise silent
+     * (every read would just report 0xFFFF). */
+    return adc_sample(lines[0].channel) != 0xFFFFu;
 }
 
 static void keypad_init_ptt2(void)
