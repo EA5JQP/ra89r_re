@@ -22,10 +22,11 @@
  *  - digits, PTT and PTT2 were read straight off the radio with the monitor;
  *  - UP / DOWN: the stock list widget uses their held codes 0x21 / 0x22 as
  *    list-up / list-down;
- *  - F (0x14): its held code 0x20 is the menu (FUN_0800C41C), and 0x14 is the
- *    only function code that reaches the menu;
- *  - AB (0x17): its held/extra codes land on the "invalid / back" beep
- *    (FUN_0801880c(0x38) in every menu context), i.e. the back-out key;
+ *  - F (0x17) and AB (0x14): the radio settled these.  An earlier guess bound
+ *    them the other way round from the stock handlers (0x14's held code 0x20 is
+ *    the menu, and 0x17's held/extra codes land on the invalid/back beep), but
+ *    pressing the owner's MENU key reads PA6 at 0x000 -- the A tap, code 0x17 --
+ *    steadily, so 0x17 is their MENU/F and 0x14 is their AB;
  *  - SIDE1 / SIDE2 (4-6 / 7-9): these are the only codes with three press
  *    types, which is what the CPS's "Side1 / Side2 Short/Long" settings name;
  *  - * (0x18) and # (0x19): the remaining pair, placed by where they sit in the
@@ -58,10 +59,10 @@ static const kp_window_t windows[] = {
     W(PA3, 0x0ABB, 0x0BB3, 0x18, 0x1E, 0x24, KEY_STAR),
 
     /* PA6 = rank 2 (channel 6): four function keys. */
-    W(PA6, 0x0000, 0x007C, 0x17, 0x1D, 0x23, KEY_EXIT),
+    W(PA6, 0x0000, 0x007C, 0x17, 0x1D, 0x23, KEY_MENU),
     W(PA6, 0x0384, 0x047C, 0x15, 0x1B, 0x21, KEY_UP),    /* held 0x21 = up */
     W(PA6, 0x08B2, 0x09AA, 0x16, 0x1C, 0x22, KEY_DOWN),  /* held 0x22 = down */
-    W(PA6, 0x0ABB, 0x0BB3, 0x14, 0x1A, 0x20, KEY_MENU),
+    W(PA6, 0x0ABB, 0x0BB3, 0x14, 0x1A, 0x20, KEY_EXIT),
 
     /* PA7 = rank 3 (channel 7): digits 3, 2, 1 and 4. */
     W(PA7, 0x0000, 0x007C, 0x0D, 0xFF, 0xFF, KEY_3),
@@ -98,22 +99,26 @@ static void keypad_init_ptt2(void);
  * that waited for its own conversions cost ~5 ms -- half of the 10 ms tick the
  * K5V3 application polls the keypad on.  Free-running, a read is a memory access.
  *
- * The layout is the stock's: 32-bit slots (its DMA runs with PSIZE/MSIZE = 32 bit
- * and memory increment), so a channel is 4 bytes from the next, and one round of
- * the six channels is 24 bytes -- the "sample stride 0x18" the stock's accessor
- * uses.  Buffer index = round * KP_CHANNELS + channel.
+ * The buffer holds **one round** of the six channels, and the reader takes the
+ * newest value of each line rather than the eight-round average the stock uses.
+ * That is deliberate, and it was measured rather than reasoned: with the stock's
+ * longer window the press and release *edges* mis-read, because the window still
+ * holds pre-press samples and their fraction of a tap level lands inside a
+ * neighbouring window -- pressing one key reported its neighbours as keys.  The
+ * stock can afford the long window because its own 4-consecutive rule debounces
+ * on top; here the debouncing is the application layer's job (the K5V3's
+ * APP_TimeSlice10ms counts stable polls), which wants the opposite input: the
+ * level as it is now, at most one round (~740 us) old.
  *
- * Channel 6 (PB1) is scanned too and unused by the keypad: it is the channel the
- * stock's S-meter reads, and keeping it makes the buffer identical to the stock's.
+ * 32-bit slots, as the stock's DMA (PSIZE/MSIZE = 32 bit) -- a channel is 4 bytes
+ * from the next.  Channel 6 (PB1) is scanned and unused by the keypad: it is what
+ * the stock's S-meter reads, and scanning it keeps the sequence the vendor's.
  */
-#define KP_CHANNELS 6u
-#define KP_SAMPLES  8u                          /* what the stock averages over */
-#define KP_TOTAL    (KP_CHANNELS * KP_SAMPLES)  /* 48 transfers = the stock's 0x30 */
+#define KP_CHANNELS 6u                          /* channels per round = DMA count */
 
 /* 480 cycles -- the ladders are high impedance, so the sample capacitor needs
- * the longest settling time the part offers (SMP field 7).  Free-running, the
- * cost of that is background: 48 conversions per round is about 6 ms, so the
- * buffer is always newer than the 10 ms tick that reads it. */
+ * the longest settling time the part offers (SMP field 7).  Free-running, that
+ * costs nothing: one round of six conversions takes ~740 us in the background. */
 #define SAMPLE_TIME 7u
 
 /* SWSTART as the regular-channel trigger source (EXTSEL = 0b111).  This is not
@@ -130,8 +135,8 @@ static const kp_line_t lines[KEYPAD_LINE_COUNT] = {
 /* the six scanned channels, in sequence order (the first five are the lines) */
 static const uint8_t channels[KP_CHANNELS] = { 2, 3, 6, 7, 8, 9 };
 
-/* DMA target: one 32-bit slot per conversion, round-major */
-static uint32_t s_dma[KP_TOTAL];
+/* DMA target: one 32-bit slot per channel, overwritten every round */
+static uint32_t s_dma[KP_CHANNELS];
 
 static uint16_t s_raw[KEYPAD_LINE_COUNT];
 
@@ -161,6 +166,12 @@ bool keypad_init(void)
     unsigned i;
     uint32_t sqr = 0;
     bool any = false;
+
+    /* ADCCLK = PCLK2/2.  Worth setting rather than inheriting: we never touch
+     * RCC_CFGR's ADCPRE elsewhere, so its value is whatever the bootloader left,
+     * and the sample time (hence how the levels compare with the stock windows)
+     * depends on it. */
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_ADCPRE) | RCC_CFGR_ADCPRE_DIV2;
 
     RCC->APB2ENR |= RCC_APB2ENR_ADC1EN | RCC_APB2ENR_SYSCFGEN;
     (void)RCC->APB2ENR;
@@ -198,7 +209,7 @@ bool keypad_init(void)
     DMA1_Channel1->CCR = 0;
     DMA1_Channel1->CPAR = (uint32_t)&ADC1->DR;
     DMA1_Channel1->CMAR = (uint32_t)s_dma;
-    DMA1_Channel1->CNDTR = KP_TOTAL;
+    DMA1_Channel1->CNDTR = KP_CHANNELS;
     DMA1->IFCR = DMA_IFCR_CGIF1;
     DMA1_Channel1->CCR = DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_PSIZE_1 |
                          DMA_CCR_MSIZE_1 | DMA_CCR_PL;
@@ -220,7 +231,7 @@ bool keypad_init(void)
         if ((uint32_t)(systick_millis() - t0) > 5u)
             return false;                   /* the transfers are not moving */
     }
-    for (i = 0; i < KP_TOTAL; i++)
+    for (i = 0; i < KP_CHANNELS; i++)
         any = any || (s_dma[i] & 0xFFFu) != 0u;
     return any;
 }
@@ -231,17 +242,11 @@ static void keypad_init_ptt2(void)
      * beyond making sure its port clock is on for the read. */
     gpio_port_clock(KEYPAD_PTT2_PORT);
 }
-/* Average of the last KP_SAMPLES conversions of one channel -- the stock's
- * accessor (0x08024260) averaged the same way, and the windows were measured
- * with that filtering.  Non-blocking: it only touches the DMA buffer. */
+/* Newest conversion of one line.  Non-blocking: it is a memory read, and at most
+ * one round old -- the DMA writes all six slots and wraps. */
 static uint16_t line_value(unsigned line)
 {
-    uint32_t sum = 0;
-    unsigned i;
-
-    for (i = 0; i < KP_SAMPLES; i++)
-        sum += s_dma[i * KP_CHANNELS + line] & 0xFFFu;
-    return (uint16_t)(sum / KP_SAMPLES);
+    return (uint16_t)(s_dma[line] & 0xFFFu);
 }
 
 /* ------------------------------------------------------------------------- */
