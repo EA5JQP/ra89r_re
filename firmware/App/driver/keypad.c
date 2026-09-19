@@ -10,47 +10,55 @@
 
 /* One row per key, exactly as extracted from the stock handlers (each row is
  * one of them, 0x080146A0..0x08014B00): the window a line's level must fall in
- * -- exclusive low, inclusive high -- and the codes that window produces.  A
- * window with 0xFF for the second and third code is a key the stock app only
- * reports as a short press (the digits). */
+ * -- exclusive low, inclusive high -- the codes that window produces, and the
+ * K5V3 key it is.  code[0] is what the stock app posts at the 4th in-window
+ * sample (a short press), code[1] when held to the 40th, code[2] on release;
+ * 0xFF = the window has no such code (the digits, for instance).
+ *
+ * `key` is KEY_INVALID for the codes whose stock action is not conclusive yet:
+ * those buttons are unlabelled in the firmware, so the mapping has to be read
+ * off the radio (press it, note the code).  UP and DOWN are settled because the
+ * stock dispatcher uses their *held* codes (0x21 / 0x22) as list-up / list-down. */
 typedef struct {
     uint8_t line;
     uint16_t lo, hi;
-    uint8_t code[3];            /* short, long, extra-long; 0xFF = none */
+    uint8_t code[3];            /* short, held, long; 0xFF = none */
+    KEY_Code_t key;
 } kp_window_t;
 
-#define W(line, lo, hi, c0, c1, c2) { KEYPAD_LINE_##line, lo, hi, { c0, c1, c2 } }
+#define W(line, lo, hi, c0, c1, c2, k) \
+    { KEYPAD_LINE_##line, lo, hi, { c0, c1, c2 }, k }
 
 static const kp_window_t windows[] = {
     /* PA2 = ADC rank 0 (channel 2): the programmable keys plus PTT1, which is
      * the key that pulls this line fully low and is also read digitally. */
-    W(PA2, 0x0000, 0x007C, 0x64, 0xFF, 0xFF),
-    W(PA2, 0x04AA, 0x05A2, 0x04, 0x05, 0x06),
-    W(PA2, 0x074E, 0x0846, 0x07, 0x08, 0x09),
+    W(PA2, 0x0000, 0x007C, 0x64, 0xFF, 0xFF, KEY_PTT),
+    W(PA2, 0x04AA, 0x05A2, 0x04, 0x05, 0x06, KEY_INVALID),/* TODO: P1/P2/SIDE ? */
+    W(PA2, 0x074E, 0x0846, 0x07, 0x08, 0x09, KEY_INVALID),/* TODO */
 
     /* PA3 = rank 1 (channel 3): digits 9 and 0, plus two function keys. */
-    W(PA3, 0x0000, 0x007C, 0x13, 0xFF, 0xFF),
-    W(PA3, 0x0384, 0x047C, 0x19, 0x1F, 0x25),
-    W(PA3, 0x08B2, 0x09AA, 0x0A, 0xFF, 0xFF),
-    W(PA3, 0x0ABB, 0x0BB3, 0x18, 0x1E, 0x24),
+    W(PA3, 0x0000, 0x007C, 0x13, 0xFF, 0xFF, KEY_9),
+    W(PA3, 0x0384, 0x047C, 0x19, 0x1F, 0x25, KEY_INVALID),/* TODO */
+    W(PA3, 0x08B2, 0x09AA, 0x0A, 0xFF, 0xFF, KEY_0),
+    W(PA3, 0x0ABB, 0x0BB3, 0x18, 0x1E, 0x24, KEY_INVALID),/* TODO (0x18 -> volume) */
 
     /* PA6 = rank 2 (channel 6): four function keys. */
-    W(PA6, 0x0000, 0x007C, 0x17, 0x1D, 0x23),
-    W(PA6, 0x0384, 0x047C, 0x15, 0x1B, 0x21),
-    W(PA6, 0x08B2, 0x09AA, 0x16, 0x1C, 0x22),
-    W(PA6, 0x0ABB, 0x0BB3, 0x14, 0x1A, 0x20),
+    W(PA6, 0x0000, 0x007C, 0x17, 0x1D, 0x23, KEY_INVALID),/* TODO */
+    W(PA6, 0x0384, 0x047C, 0x15, 0x1B, 0x21, KEY_UP),    /* held 0x21 = up */
+    W(PA6, 0x08B2, 0x09AA, 0x16, 0x1C, 0x22, KEY_DOWN),  /* held 0x22 = down */
+    W(PA6, 0x0ABB, 0x0BB3, 0x14, 0x1A, 0x20, KEY_INVALID),/* TODO (long 0x20 = select/menu) */
 
     /* PA7 = rank 3 (channel 7): digits 3, 2, 1 and 4. */
-    W(PA7, 0x0000, 0x007C, 0x0D, 0xFF, 0xFF),
-    W(PA7, 0x0384, 0x047C, 0x0C, 0xFF, 0xFF),
-    W(PA7, 0x08B2, 0x09AA, 0x0B, 0xFF, 0xFF),
-    W(PA7, 0x0ABB, 0x0BB3, 0x0E, 0xFF, 0xFF),
+    W(PA7, 0x0000, 0x007C, 0x0D, 0xFF, 0xFF, KEY_3),
+    W(PA7, 0x0384, 0x047C, 0x0C, 0xFF, 0xFF, KEY_2),
+    W(PA7, 0x08B2, 0x09AA, 0x0B, 0xFF, 0xFF, KEY_1),
+    W(PA7, 0x0ABB, 0x0BB3, 0x0E, 0xFF, 0xFF, KEY_4),
 
     /* PB0 = rank 4 (channel 8): digits 6, 5, 8 and 7. */
-    W(PB0, 0x0000, 0x007C, 0x10, 0xFF, 0xFF),
-    W(PB0, 0x0384, 0x047C, 0x0F, 0xFF, 0xFF),
-    W(PB0, 0x08B2, 0x09AA, 0x12, 0xFF, 0xFF),
-    W(PB0, 0x0ABB, 0x0BB3, 0x11, 0xFF, 0xFF),
+    W(PB0, 0x0000, 0x007C, 0x10, 0xFF, 0xFF, KEY_6),
+    W(PB0, 0x0384, 0x047C, 0x0F, 0xFF, 0xFF, KEY_5),
+    W(PB0, 0x08B2, 0x09AA, 0x12, 0xFF, 0xFF, KEY_8),
+    W(PB0, 0x0ABB, 0x0BB3, 0x11, 0xFF, 0xFF, KEY_7),
 };
 
 #define NWINDOWS (sizeof(windows) / sizeof(windows[0]))
@@ -183,7 +191,7 @@ static uint16_t adc_sample(unsigned channel)
  * level is near full scale, so 96 counts is safe. */
 #define WINDOW_MARGIN 0x60
 
-static const uint8_t *window_for(uint8_t line, uint16_t value)
+static const kp_window_t *window_for(uint8_t line, uint16_t value)
 {
     unsigned i;
 
@@ -192,24 +200,40 @@ static const uint8_t *window_for(uint8_t line, uint16_t value)
             continue;
         if ((int32_t)value > (int32_t)windows[i].lo - WINDOW_MARGIN &&
             (int32_t)value <= (int32_t)windows[i].hi + WINDOW_MARGIN)
-            return windows[i].code;
+            return &windows[i];
     }
     return 0;
 }
 
-int keypad_scan(void)
+static int s_stock = KEYPAD_NONE;
+
+KEY_Code_t keypad_poll(void)
 {
-    const uint8_t *code = 0;
+    const kp_window_t *win = 0;
     unsigned line;
 
     for (line = 0; line < KEYPAD_LINE_COUNT; line++) {
         uint16_t v = adc_sample(lines[line].channel);
 
         s_raw[line] = v;
-        if (!code)
-            code = window_for((uint8_t)line, v);
+        if (!win)
+            win = window_for((uint8_t)line, v);
     }
-    return code ? (int)code[0] : KEYPAD_NONE;
+
+    if (win) {
+        s_stock = (int)win->code[0];
+        return win->key;
+    }
+
+    s_stock = KEYPAD_NONE;
+    /* PB9 is low while PTT2 is held; it moves no analog line, so it can only be
+     * reported when no ladder key is down. */
+    return keypad_ptt2_level() ? KEY_INVALID : KEY_PTT2;
+}
+
+int keypad_stock_code(void)
+{
+    return s_stock;
 }
 
 uint16_t keypad_raw(unsigned line)
@@ -233,7 +257,34 @@ const uint8_t *keypad_variants(int code)
     return 0;
 }
 
-const char *keypad_name(int code)
+const char *keypad_name(KEY_Code_t key)
+{
+    switch (key) {
+    case KEY_0: return "0";
+    case KEY_1: return "1";
+    case KEY_2: return "2";
+    case KEY_3: return "3";
+    case KEY_4: return "4";
+    case KEY_5: return "5";
+    case KEY_6: return "6";
+    case KEY_7: return "7";
+    case KEY_8: return "8";
+    case KEY_9: return "9";
+    case KEY_MENU: return "MENU";
+    case KEY_UP: return "UP";
+    case KEY_DOWN: return "DOWN";
+    case KEY_EXIT: return "EXIT";
+    case KEY_STAR: return "*";
+    case KEY_F: return "F";
+    case KEY_PTT: return "PTT";
+    case KEY_SIDE2: return "SIDE2";
+    case KEY_SIDE1: return "SIDE1";
+    case KEY_PTT2: return "PTT2";
+    default: return "?";            /* a code that is not mapped yet */
+    }
+}
+
+const char *keypad_stock_name(int code)
 {
     static char buf[20];
 
