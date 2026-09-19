@@ -288,14 +288,28 @@ timeout) and also samples **`PB9`**; a `PB9` high keeps the hold timer running.
 two PTTs individually (`PC13`, `PB10`) and `PB9` is the combined line the
 bootloader gates on.
 
-**Open question.**  The full set of functions that touch the key struct is ten,
-and every one is UI-side; the full set of *event* posters (`FUN_0800C550`
-callers) is six, and none scans a keypad.  So either the digit/function codes
-are framework-level (shared with the keypad models of this family -- plausible,
-the UI strings are common) and this radio physically has only a handful of keys,
-or the scanner lives in code the analysis never reached.  Before hunting
-further, confirm the button count on the hardware (keypad layout or the CPS key
-list).
+**The button set (from the radio's owner).**  Twenty buttons: `PTT1`, `PTT2`,
+`SIDE1`, `SIDE2`, `F`, `UP`, `DOWN`, `AB`, `1`-`9`, `*`, `0`, `#`.  That is the
+same set as the `UV-K1/K5V3` keyboard enum, i.e. the UI is a sibling codebase --
+which is why it handles digits and function codes even though the stock image
+shows no MCU-side scanner for them.  The CPS agrees the radio has a real keypad
+(its key-lock options separate `按键` from `侧键`).
+
+**So the wiring is an open question that needs the hardware.**  Three independent
+checks say the buttons are *not* on an MCU GPIO matrix: no port-register access
+exists anywhere in the image, there is no EXTI handler, and the pin budget has
+no room for the nine lines a 20-key matrix needs.  `driver/keypad` therefore
+carries a console diagnostic (`App/driver/pinwatch.c`) to settle it on the radio:
+
+* `w` parks every spare pin as an input with a pull-up and prints, with pin names
+  and levels, whatever moves when a button is pressed -- for a matrix, a ladder,
+  direct keys, or (if nothing moves) proof that the buttons hang off a chip;
+* `W` runs an open-drain sweep (each pin pulled low in turn, nothing else driven)
+  and reports which lines follow, which is what a matrix responds to.
+
+The full set of functions that touch the key struct is ten, and all are UI-side;
+the full set of *event* posters (`FUN_0800C550` callers) is six, none of which
+scans a keypad -- hence the probe.
 
 ### Other chips on the board (from the same pass)
 
