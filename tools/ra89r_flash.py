@@ -258,6 +258,14 @@ def wait_ack(io, timeout, what):
         return True
     if data == ACK_FAIL:
         return False
+    # damage can clip the head ('\xf8ASS') or the tail ('PA\xff\xff'); the first
+    # two bytes still say which verdict it was
+    if len(data) == 4 and data[:2] in (ACK_PASS[:2], ACK_FAIL[:2]):
+        io.garbled += 1
+        verdict = data[:2] == ACK_PASS[:2]
+        print("  %s: damaged reply %r -> %s" % (what, data,
+                                                "PASS" if verdict else "FAIL"))
+        return verdict
     if len(data) == 4 and data[1:] in (ACK_PASS[1:], ACK_FAIL[1:]):
         io.garbled += 1
         verdict = data[1:] == ACK_PASS[1:]
