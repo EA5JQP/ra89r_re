@@ -362,13 +362,31 @@ only because it samples once per pass rather than the stock's 8-sample average;
 the bands are far apart -- narrowest gap 273 counts -- and the idle level is
 above the top band).
 
-**Which button is which.**  `PTT1` = code `100` (`PA2`), `PTT2` = `PB9`, the
-digits are the `10`-`19` codes, and `UP` = `0x15` / `DOWN` = `0x16` as above.
-The other six buttons (`SIDE1`, `SIDE2`, `F`, `AB`, `*`, `#`) are the six codes
-`0x14`, `0x17`, `0x18`, `0x19`, `4`, `7` -- the binary does not say which is
-which (the stock UI sends them all to the same handlers), so they are read off
-the radio with the console monitor.  `App/driver/keypad.h` exposes the
-K5V3/F4HWN `KEY_Code_e` so the port can use this reader unchanged.
+**Which button is which.**  The port uses the K5V3/F4HWN `KEY_Code_e`, with the
+owner's naming: the RA89R's `F` is `KEY_MENU`, `AB` is `KEY_EXIT`, `#` is
+`KEY_F`, and its `SIDE1`/`SIDE2` are `KEY_SIDE1`/`KEY_SIDE2`.
+
+| code(s) | line | K5V3 key | how it was settled |
+|---|---|---|---|
+| `10`-`19` | `PA7`/`PB0`/`PA3` | `KEY_0`-`KEY_9` | measured with the monitor |
+| `100` / `PB9` | `PA2` / `PB9` | `KEY_PTT` / `KEY_PTT2` | measured with the monitor |
+| `0x15` / `0x16` | `PA6` | `KEY_UP` / `KEY_DOWN` | the list widget uses their held codes `0x21`/`0x22` as list-up/down |
+| `0x14` | `PA6` | `KEY_MENU` | its held code `0x20` is the menu (`FUN_0800C41C`), and it is the only function code that reaches it |
+| `0x17` | `PA6` | `KEY_EXIT` | its held/extra codes land on the invalid/back beep (`FUN_0801880c(0x38)` in every menu context) |
+| `4`-`6` / `7`-`9` | `PA2` | `KEY_SIDE1` / `KEY_SIDE2` | the only codes with three press types = the CPS's "Side1/Side2 Short/Long" settings |
+| `0x18` / `0x19` | `PA3` | `KEY_STAR` / `KEY_F` | the remaining pair, by keypad row position (`9 * 0 #`) |
+
+The last row is a placement by elimination -- the two symbols are in the same
+keypad row and nothing in the binary distinguishes them -- so it is the one to
+re-check on the radio (the console monitor prints the code beside the name).
+`App/driver/keypad.h` exposes the K5V3 enum so the port can use this reader
+unchanged.
+
+**Unrelated to the keypad, but found while reading the dispatcher:** keys
+`0x15`/`0x16` (and the held `0x23`/`0x25`) drive **`PC13` low**
+(`GPIO_WriteBit(GPIOC, 0x2000, 0)` in `FUN_08013F28`) -- the same line the PTT
+path *reads*.  Not explained, and worth revisiting with the PTT / bootloader
+work.
 
 The button set is the same as the `UV-K1/K5V3` keyboard enum (`PTT1`, `PTT2`,
 `SIDE1`, `SIDE2`, `F`, `UP`, `DOWN`, `AB`, `0`-`9`, `*`, `#`), i.e. the UI is a
