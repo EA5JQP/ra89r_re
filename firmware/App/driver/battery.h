@@ -33,6 +33,8 @@ bool battery_bus_ok(void);
  * none of it when this was written, so each stage is reported separately: which
  * one (if any) acknowledges is the whole diagnostic. */
 unsigned battery_bus_scale_count(void);
+unsigned battery_bus_scale_value(unsigned index);
+bool battery_scale_acked(unsigned index);
 unsigned battery_stage_count(void);
 const char *battery_stage_name(unsigned index);
 bool battery_stage_ok(unsigned index);

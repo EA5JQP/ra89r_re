@@ -218,6 +218,12 @@ static void battery_report(void)
                 battery_data_pin_ok() ? "ok" : "STUCK",
                 (unsigned)battery_bus_rate_khz());
 
+    uart_puts("battery: address ack per scale:");
+    for (i = 0; i < battery_bus_scale_count(); i++)
+        uart_printf(" %u=%s", (unsigned)battery_bus_scale_value(i),
+                    battery_scale_acked(i) ? "ack" : "--");
+    uart_puts("\n");
+
     for (i = 0; i < battery_stage_count(); i++)
         uart_printf("  %s: %s\n", battery_stage_name(i),
                     battery_stage_ok(i) ? "ack" : "--");
@@ -306,6 +312,7 @@ int main(void)
                   "monitor would report zeros for every line\n");
 
     /* Companion gauge chip: two-wire bus on PC14/PB2 (see driver/battery.c). */
+    uart_puts("battery: reset pulse, then the stock's bring-up at each bus speed ...\n");
     battery_init();
     battery_report();
 

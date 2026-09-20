@@ -20,9 +20,10 @@
  *
  * The stock runs from the PLL its bootloader leaves running (CR = 0x0040e583,
  * PLLON) while this firmware forces HSI at 8 MHz, so the same call sites give a
- * slower bus here.  That cannot be resolved by reading, so battery_init() replays
- * the stock's whole boot bring-up at each delay scaling and keeps the first one
- * the chip answers: one flash settles both the speed and the configuration.
+ * slower bus here.  That cannot be resolved by reading, so battery_init() probes
+ * the chip's address at each delay scaling and, at the first speed that answers,
+ * replays the stock's whole boot bring-up.  One flash settles both the speed and
+ * the configuration.
  *
  * The bring-up itself is the stock's, not a guess.  The main routine (FUN_08024448)
  * calls FUN_080167F0 **once** before entering its poll loop; that reaches
@@ -55,11 +56,16 @@ static unsigned s_scale = 21u;              /* the stock's own inner count */
  * declared with a count of five and held six entries, so the compiler silently
  * dropped the zero-delay entry and the fastest end of the sweep -- the end the
  * gauge was most likely waiting for -- was never actually tried. */
-static const unsigned scales[] = { 21u, 8u, 4u, 2u, 1u, 0u };
+static const unsigned scales[] = { 21u, 16u, 12u, 8u, 6u, 4u, 3u, 2u, 1u, 0u };
 
 unsigned battery_bus_scale_count(void)
 {
     return (unsigned)(sizeof scales / sizeof scales[0]);
+}
+
+unsigned battery_bus_scale_value(unsigned index)
+{
+    return index < battery_bus_scale_count() ? scales[index] : 0u;
 }
 
 static void delay(unsigned n)
@@ -284,6 +290,7 @@ static const char *const stage_names[STAGE_COUNT] = {
 };
 
 static bool stage_ok[STAGE_COUNT];
+static bool scale_acked[sizeof scales / sizeof scales[0]];
 static bool s_bus_ok;
 
 unsigned battery_stage_count(void) { return STAGE_COUNT; }
@@ -311,6 +318,32 @@ unsigned battery_stage_acks(void)
 bool battery_bus_ok(void)
 {
     return s_bus_ok;
+}
+
+/* Whether the chip acknowledged its own address byte at this speed.  A gauge that
+ * does not answer that cannot be handed a configuration either -- every byte of
+ * the sequence would go unacknowledged -- so this is the gate the sweep uses. */
+bool battery_scale_acked(unsigned index)
+{
+    return index < battery_bus_scale_count() ? scale_acked[index] : false;
+}
+
+/* One address-byte probe (start, 0x80, then the acknowledge clock).  Cheap on
+ * purpose: it is what keeps the deaf case fast.  Without it the sweep runs the
+ * whole ~100-byte sequence at every speed, and with no acknowledges every byte
+ * waits out the stock's full 250-poll timeout -- several seconds of silence at
+ * boot, which is indistinguishable from a hang. */
+static bool bus_address_acked(void)
+{
+    bool ack;
+
+    bus_start();
+    ack = bus_write_byte(0x80u);
+    bus_stop();
+    delay(20);
+    clk(0);
+    dat(1);
+    return ack;
 }
 
 /* The stock's boot sequence for a non-zero battery type (FUN_0800D35C and the
@@ -485,13 +518,15 @@ void battery_init(void)
         return;                 /* a bus pin is not ours; no speed will help */
 
     /* The stock configures the gauge once at boot, before the first poll, and
-     * never reads it unconfigured.  A probe that only sends the address byte
-     * cannot tell "wrong speed" from "not configured yet", so it is the whole
-     * bring-up that is swept -- first speed that answers wins. */
+     * never reads it unconfigured -- so if the chip answers its address at some
+     * speed, the full bring-up runs there.  A chip that answers nothing cannot be
+     * configured at all (every byte would go unacknowledged), which is what makes
+     * the address probe a valid gate rather than a shortcut. */
     for (i = 0; i < battery_bus_scale_count() && !s_bus_ok; i++) {
         s_scale = scales[i];
-        if (gauge_bringup(8100000u))    /* 8.1 V, this radio's own reading */
-            s_bus_ok = true;
+        scale_acked[i] = bus_address_acked();
+        if (scale_acked[i])
+            s_bus_ok = gauge_bringup(8100000u);  /* 8.1 V, this radio's own reading */
     }
 }
 
