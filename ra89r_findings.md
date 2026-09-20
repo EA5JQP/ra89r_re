@@ -436,6 +436,28 @@ the value is in the low 12 bits.  **Not yet run on the radio** -- the `k` monito
 raw values it prints should be unchanged (they are the same measurement, still
 averaged over eight samples).
 
+### Status LED -- a receive/transmit indicator, driven by the RF chip
+
+The radio has one, and it is green while receiving and red while transmitting (the
+owner's observation).  The settings agree twice over: the CPS exposes `Rx.Light`,
+`Light`, `LED Mode` and `Led Type`, and the firmware's own menu strings include
+`RX.LIGHT` and `LIGHT`.
+
+It is **not** on an MCU pin that can be driven for it:
+
+* The stock's TX/RX path `FUN_08016228` writes only RF transceiver registers --
+  `FUN_080220A0(0x6042|0x6142|0x6740, 0x47)`, `(0xbff1, 0x30)`, `(0x3be|0x3ff,
+  0x13)`, and `FUN_08022082(0x203, 0xc)` on the receive side -- and touches no
+  GPIO.
+* Driving `GPIOA` pins 0 and 1 as outputs, at either level, produces nothing, and
+  the bootloader's PA1 blink (three times, after it blinks the PA5 backlight) is
+  invisible on this board.
+
+So the indicator is most likely a register bit on the RF transceiver, and it comes
+with the RF bring-up rather than with a lamp driver.  The other things those two
+pins might be -- a second lamp line this variant does not fit, or a companion-chip
+output -- are not worth chasing further.
+
 **Unrelated to the keypad, but found while reading the dispatcher:** keys
 `0x15`/`0x16` (and the held `0x23`/`0x25`) drive **`PC13` low**
 (`GPIO_WriteBit(GPIOC, 0x2000, 0)` in `FUN_08013F28`) -- the same line the PTT
