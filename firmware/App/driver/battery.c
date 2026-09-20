@@ -14,9 +14,11 @@
  *               word acknowledged with the line high -- then stop
  *   0x0800D138  the data pin's direction: output (arg 1) or released (arg 0)
  *
- * The stock's delay helper (0x0802422A) is taken as one microsecond per unit, so
- * the timing below is its timing.  The bus is slow and forgiving; being slow is
- * the safe direction.
+ * The stock's delay helper is 0x0802422A: a *fixed* loop of (n+1) x 21 iterations,
+ * i.e. a cycle count rather than a time, so this mirrors its loop and lets the same
+ * call sites give the same cycle counts.  At the 8 MHz this firmware runs on that
+ * is slower in absolute time than the stock's PLL clock, which is the safe
+ * direction for a bit-banged bus (there is no minimum clock rate).
  *
  * Not implemented: the stock also *writes* configuration to the chip and pulses
  * its reset line (PD0) at boot.  Reads alone are enough for a voltage reading --
@@ -27,19 +29,21 @@
 
 #include "board.h"
 #include "driver/gpio.h"
+#include "driver/systick.h"
 
 #define CLK_PORT BATTERY_CLK_PORT
 #define CLK_PIN  BATTERY_CLK_PIN
 #define DAT_PORT BATTERY_DATA_PORT
 #define DAT_PIN  BATTERY_DATA_PIN
 
-/* ~1 us per unit at the 8 MHz this firmware runs on. */
-static void delay(unsigned units)
+/* The stock's own delay helper (0x0802422A): (n+1) x 21 iterations.  The inner
+ * counter is volatile so the compiler cannot drop the loop, as it did not in the
+ * stock image.  One unit here is ~30 us at 8 MHz. */
+static void delay(unsigned n)
 {
-    while (units--) {
-        for (volatile unsigned i = 0; i < 2u; i++)
+    for (unsigned i = 0; i <= n; i++)
+        for (volatile unsigned j = 0; j < 21u; j++)
             ;
-    }
 }
 
 static void clk(int level)
@@ -66,9 +70,22 @@ void battery_init(void)
 {
     gpio_port_clock(CLK_PORT);
     gpio_port_clock(DAT_PORT);
+    gpio_port_clock(BATTERY_RESET_PORT);
 
     gpio_config_output(CLK_PORT, CLK_PIN);
     gpio_config_input(DAT_PORT, DAT_PIN);
+
+    /* The gauge's reset line, PD0.  The stock drives it low for 10 ms and
+     * releases it high (0x08006850 -- GPIO_WriteBit(GPIOD, 1, 0), a delay,
+     * GPIO_WriteBit(GPIOD, 1, 1)) instead of leaving the pin alone, and a
+     * floating reset input is the obvious reason a gauge would answer nothing at
+     * all.  Its delay helper (0x080241F8) is not read here; for a reset pulse
+     * being generous is harmless, so this just waits 10 ms each way. */
+    gpio_config_output(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
+    gpio_clear(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
+    systick_delay_ms(10);
+    gpio_set(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
+    systick_delay_ms(10);       /* let it come up before the first access */
 
     clk(0);
     dat(1);                     /* released (it is an input), left high like I2C idle */
@@ -195,6 +212,11 @@ bool battery_voltage_mv(uint32_t *mv)
     if (!battery_read(BATTERY_REG_VOLTAGE, &raw))
         return false;
     if (!battery_read(BATTERY_REG_GAIN, &gain_reg))
+        return false;
+
+    /* 0x3FF is every bit of the 10-bit field set: a floating or absent bus, not a
+     * voltage.  (0 is left alone -- a flat pack is a real reading.) */
+    if (raw == 0x3FFu)
         return false;
 
     /* The offset is selected by the top two bits of the second byte read. */

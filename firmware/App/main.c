@@ -270,11 +270,17 @@ int main(void)
     {
         uint32_t mv;
 
+        uint16_t raw = 0, gain = 0;
+
+        battery_read(BATTERY_REG_VOLTAGE, &raw);
+        battery_read(BATTERY_REG_GAIN, &gain);
         if (battery_voltage_mv(&mv))
             uart_printf("battery: pack %u mV (%u.%02u V)\n",
                         (unsigned)mv, (unsigned)(mv / 1000u), (unsigned)((mv % 1000u) / 10u));
         else
-            uart_puts("battery: no response from the gauge chip\n");
+            uart_printf("battery: no reading (reg %u=0x%04X reg %u=0x%04X)\n",
+                        (unsigned)BATTERY_REG_VOLTAGE, (unsigned)raw,
+                        (unsigned)BATTERY_REG_GAIN, (unsigned)gain);
     }
 
     uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");    lcd_init();
@@ -377,10 +383,13 @@ int main(void)
                 for (i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
                     uint16_t v;
 
+                    /* The value is reported either way: a silent bus reads as
+                     * 0xFFFF/0x0000, which says far more than "no acknowledge". */
+                    v = 0;
                     if (battery_read(regs[i], &v))
                         uart_printf(" %u=0x%04X", (unsigned)regs[i], (unsigned)v);
                     else
-                        uart_printf(" %u=no-ack", (unsigned)regs[i]);
+                        uart_printf(" %u=0x%04X!", (unsigned)regs[i], (unsigned)v);
                 }
                 if (battery_voltage_mv(&mv))
                     uart_printf("  pack %u mV\n", (unsigned)mv);
