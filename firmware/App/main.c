@@ -14,6 +14,7 @@
 
 #include "board.h"
 #include "driver/backlight.h"
+#include "driver/battery.h"
 #include "driver/clock.h"
 #include "driver/fault.h"
 #include "driver/gpio.h"
@@ -179,7 +180,8 @@ static void print_help(void)
               "          v/V contrast up/down  l backlight on/off  q heartbeat\n"
               "          r re-init panel (standard, bootloader-proven)\n"
               "          s re-init panel (stock app variant, 8 extra bytes)\n"
-              "          k keypad monitor (raw ADC per line + decoded key)\n");
+              "          k keypad monitor (raw ADC per line + decoded key)\n"
+              "          u battery gauge (registers 2/3/5/7/10/11 + pack voltage)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -262,6 +264,18 @@ int main(void)
     else
         uart_puts("keypad: WARNING -- the ADC/DMA scan is NOT running; the key "
                   "monitor would report zeros for every line\n");
+
+    /* Companion gauge chip: two-wire bus on PC14/PB2 (see driver/battery.c). */
+    battery_init();
+    {
+        uint32_t mv;
+
+        if (battery_voltage_mv(&mv))
+            uart_printf("battery: pack %u mV (%u.%02u V)\n",
+                        (unsigned)mv, (unsigned)(mv / 1000u), (unsigned)((mv % 1000u) / 10u));
+        else
+            uart_puts("battery: no response from the gauge chip\n");
+    }
 
     uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");    lcd_init();
     uart_puts("lcd: init done\n");
@@ -354,6 +368,26 @@ int main(void)
                 heartbeat = !heartbeat;
                 uart_printf("\nheartbeat %s\n", heartbeat ? "on" : "off");
                 break;
+            case 'u': {
+                static const uint8_t regs[] = { 2, 3, 5, 7, 10, 11 };
+                unsigned i;
+                uint32_t mv;
+
+                uart_puts("battery:");
+                for (i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
+                    uint16_t v;
+
+                    if (battery_read(regs[i], &v))
+                        uart_printf(" %u=0x%04X", (unsigned)regs[i], (unsigned)v);
+                    else
+                        uart_printf(" %u=no-ack", (unsigned)regs[i]);
+                }
+                if (battery_voltage_mv(&mv))
+                    uart_printf("  pack %u mV\n", (unsigned)mv);
+                else
+                    uart_puts("  pack ?\n");
+                break;
+            }
             case 'k':
                 keypad_monitor = !keypad_monitor;
                 uart_printf("\nkeypad monitor %s -- press one button at a time\n",

@@ -42,10 +42,11 @@
  * init is byte-for-byte the bootloader's.  So this build drives both and lets
  * the hardware decide.
  *
- * Note for whoever resolves it: the stock *application* configures PA4 and PA5
- * as DAC outputs (0x0800A8F4 -> DAC1 at 0x40007400, called from the boot path at
- * 0x0801D748), so if pin 5 does turn out to be lamp-related, that DAC usage has
- * to be understood before the pin can be repurposed. */
+ * Resolved (see ra89r_findings.md, "Beeper"): PA5 is a DAC output, not a lamp
+ * line.  The stock configures PA4 and PA5 as DAC_OUT1/2 (0x0800A8F4) and drives
+ * the beep as a synthesised tone through it, while PA1 is driven as a plain GPIO
+ * -- so this driver's use of PA5 is wrong and it should end up on PA1 alone,
+ * which needs re-hearing on the radio before it is changed. */
 #define BACKLIGHT_AUX_PIN       (1u << 5)
 #define BACKLIGHT_AUX_ON_LEVEL  1
 
@@ -56,7 +57,8 @@
 #define BOARD_UART_AF       2u           /* GPIO_AF2_USART1 */
 #define BOARD_UART_BAUD     115200u
 
-/* Keypad -- not read by this firmware, but parked back to its default state.
+/* Keypad -- read by App/driver/keypad.c; these pins are parked back to their
+ * default (analog) state here so nothing drives or pulls a ladder.
  *
  * The stock application reads 19 of the 20 buttons as analog levels: five lines,
  * each with a four-value resistor ladder, decoded by a 6-channel ADC scan.  The
@@ -77,6 +79,15 @@
 #define KEYPAD_ANALOG_A_MASK  ((1u << 2) | (1u << 3) | (1u << 6) | (1u << 7))
 #define KEYPAD_ANALOG_B_MASK  ((1u << 0) | (1u << 1))
 #define KEYPAD_PTT2_PIN       (1u << 9)
+
+/* Companion gauge chip -- pack voltage and charger status.  Two-wire bus on
+ * PC14 (clock) and PB2 (data), plus a reset line on PD0 that the stock pulses at
+ * boot; the stock polls registers 2, 3, 5, 7, 10 and 11 (0x08007158) and derives
+ * the pack voltage from register 11 with a per-battery offset chosen by
+ * register 5 (0x0800687C).  See ra89r_findings.md ("Battery gauge"). */
+#define BATTERY_CLK_PIN      (1u << 14)
+#define BATTERY_DATA_PIN     (1u << 2)
+#define BATTERY_RESET_PIN    (1u << 0)
 
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) talks to the
  * external SPI NOR flash (Winbond-class, id 0xEF16); the RF transceiver

@@ -493,11 +493,46 @@ output.  The stock drives PA1 as a GPIO and treats PA5 as the DAC, so the lamp
 probably only needs PA1; but that driver was validated with both pins driven, so
 any change there has to be re-heard on the radio rather than assumed.
 
+### Battery gauge -- a two-wire bus on PC14 (clock) and PB2 (data)
+
+The pack voltage comes from a companion gauge chip, not from an ADC channel.  Its
+bus is bit-banged and I2C-shaped, but not standard I2C, so the stock's own
+functions are the specification:
+
+| address | what it does |
+|---|---|
+| `0x08006EF0` | start: clock low, data high, clock high, then data **low** while the clock is high |
+| `0x08006F4C` | stop: clock low, data low, clock high, then data **high** |
+| `0x0800705C` | write a byte, MSB first; then release the line and poll it (up to 250 times) for the chip pulling it low -- its acknowledge |
+| `0x08006E78` | read a byte, MSB first, sampled while the clock is high |
+| `0x08007158` | read a register: start, `0x80`, then `(reg << 1) \| 1`, then 16-bit words (first byte = the high half, the master drives the acknowledge, the last word is acknowledged with the line high), stop |
+| `0x0800D138` | the data pin's direction: output (1) or released (0) |
+
+Registers the stock polls: `2`, `3`, `5`, `7`, `10` and `11`.  The pack voltage
+(`0x0800687C`) is:
+
+```
+raw    = reg11: ((first byte) & 3) << 8 | (second byte)      -- 10 bits
+gain   = reg5:  (second byte) >> 6
+offset = gain == 0 ? 875 : (gain == 1 or gain == 2) ? 760 : 640
+pack   = (raw + offset) * 10000 uV                           -- 10 mV per count
+```
+
+which spans 7.6-17.8 V over a full-scale reading, i.e. a pack range, with the
+offset selecting the divider or battery variant.
+
+`App/driver/battery.c` mirrors all of the above, with the stock's delay helper
+(`FUN_0802422A(n)`) taken as n microseconds.  **Not implemented:** the stock also
+*writes* configuration to the chip and pulses its reset line (`PD0`) at boot.  If a
+read comes back without an acknowledge, that reset pulse is the first thing to
+try.  `u` on the console dumps the six registers plus the voltage, and the boot
+log prints the voltage once.
+
 ### Other chips on the board (from the same pass)
 
 | bus | pins | what it is |
 |---|---|---|
-| companion / PMIC | `PC14` clock, `PB2` data, `PD0` reset pulse | battery + charger gauge: `FUN_0800687C` returns the pack voltage (10-bit reading + 875/760/640, x 10000 uV), registers 2/3/5/7/10/11, polled from the main loop by `FUN_08017BB4` |
+| companion / PMIC | `PC14` clock, `PB2` data, `PD0` reset pulse | battery + charger gauge -- see "Battery gauge" above for the protocol; `FUN_0800687C` returns the pack voltage, registers 2/3/5/7/10/11, polled from the main loop by `FUN_08017BB4` |
 | BK4815/BK4829 | bit-banged | register layer is `FUN_080220A0(reg, val)` write / `FUN_080180F0(reg)` read (used by the T/R path `FUN_08016228`); reg `0x67` is the RSSI (squelch decision in `FUN_080052B8`, debug string `RSSI R67 %d`), `0x65`/`0x63` are read alongside it |
 | SPI NOR | 16-bit serial: `FUN_08017FE4` (read) / `FUN_08018060` (write) | external flash |
 | LCD panel | `PA8`-`PA11` + `PB15` | see `ra89r_lcd.md` |
