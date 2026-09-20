@@ -73,7 +73,14 @@ void battery_init(void)
     gpio_port_clock(BATTERY_RESET_PORT);
 
     gpio_config_output(CLK_PORT, CLK_PIN);
-    gpio_config_input(DAT_PORT, DAT_PIN);
+    /* The data pin idles as an *output*, driven high -- not released.  That is
+     * what the stock's byte write leaves behind (it ends with FUN_0800D138(1),
+     * i.e. back to an output) and what the stop condition ends on, so every
+     * transfer starts with the pin able to drive.  Leaving it an input here was
+     * the bug that made the chip deaf: the start condition and the first byte's
+     * bits went nowhere, the data line never moved, and every register read back
+     * as a floating 0x3FF with no acknowledge. */
+    gpio_config_output(DAT_PORT, DAT_PIN);
 
     /* The gauge's reset line, PD0.  The stock drives it low for 10 ms and
      * releases it high (0x08006850 -- GPIO_WriteBit(GPIOD, 1, 0), a delay,
@@ -88,11 +95,12 @@ void battery_init(void)
     systick_delay_ms(10);       /* let it come up before the first access */
 
     clk(0);
-    dat(1);                     /* released (it is an input), left high like I2C idle */
+    dat(1);                     /* idle high */
 }
 
 static void bus_start(void)
 {
+    dat_output();
     clk(0);
     delay(1);
     dat(1);
@@ -121,6 +129,7 @@ static bool bus_write_byte(uint8_t v)
     unsigned i, t;
     bool ack = false;
 
+    dat_output();               /* never assume: before this we may have been listening */
     clk(0);
     for (i = 0; i < 8u; i++) {
         dat((v & 0x80u) ? 1 : 0);

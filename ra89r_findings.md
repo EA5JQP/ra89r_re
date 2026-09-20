@@ -521,8 +521,27 @@ pack   = (raw + offset) * 10000 uV                           -- 10 mV per count
 which spans 7.6-17.8 V over a full-scale reading, i.e. a pack range, with the
 offset selecting the divider or battery variant.
 
-`App/driver/battery.c` mirrors all of the above, with the stock's delay helper
-(`FUN_0802422A(n)`) taken as n microseconds.  **Not implemented:** the stock also
+**The data pin idles as an *output*, driven high.**  The stock's byte write ends by
+restoring the output direction (`FUN_0800D138(1)`) and its stop condition ends on
+data high; only a *read* releases the line.  Getting that wrong makes the bus
+silently deaf -- the start condition and the first byte go nowhere, the chip never
+answers, and every read comes back as a floating `0x3FF` with no acknowledge.
+
+Two more things the stock's poll does, which a plain read does not need but which
+are worth knowing:
+
+* **Registers 2 and 3 are read-modify-written**, to clear latched status:
+  `FUN_08006952` reads register 2 and sets bits 1, 2 and 0; `FUN_08006982` reads it
+  and clears bit 0; `FUN_080069A6` reads register 3 and clears bits 0-6.
+* **`PD0` is bidirectional, not a plain reset.**  `FUN_080066CC` *reads* it
+  (`GPIO_ReadInputDataBit(GPIOD, 1)`) and only pulses it while that reads high, so
+  it behaves like a status line with a handshake pulse; the pulse itself is
+  `FUN_08006850` (low, 10 ms, high).
+
+`App/driver/battery.c` mirrors the transfer and the data-pin behaviour above.  Its
+delay mirrors the stock's helper loop (`FUN_0802422A`, `(n+1) x 21` iterations)
+rather than a time, so the timings here are slower than the stock's because this
+firmware runs at 8 MHz -- the safe direction on a bus with no minimum rate.  **Not implemented:** the stock also
 *writes* configuration to the chip and pulses its reset line (`PD0`) at boot.  If a
 read comes back without an acknowledge, that reset pulse is the first thing to
 try.  `u` on the console dumps the six registers plus the voltage, and the boot
