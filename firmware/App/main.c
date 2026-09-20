@@ -312,7 +312,8 @@ int main(void)
                   "monitor would report zeros for every line\n");
 
     /* Companion gauge chip: two-wire bus on PC14/PB2 (see driver/battery.c). */
-    uart_puts("battery: reset pulse, then the stock's bring-up at each bus speed ...\n");
+    uart_puts("battery: reset pulse, then the stock's configuration at three bus "
+              "speeds plus an address sweep (this takes about a second) ...\n");
     battery_init();
     battery_report();
 

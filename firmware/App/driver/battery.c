@@ -20,10 +20,10 @@
  *
  * The stock runs from the PLL its bootloader leaves running (CR = 0x0040e583,
  * PLLON) while this firmware forces HSI at 8 MHz, so the same call sites give a
- * slower bus here.  That cannot be resolved by reading, so battery_init() probes
- * the chip's address at each delay scaling and, at the first speed that answers,
- * replays the stock's whole boot bring-up.  One flash settles both the speed and
- * the configuration.
+ * slower bus here.  That cannot be resolved by reading, so battery_init() sends
+ * the configuration unconditionally at three speeds -- the stock never waits for
+ * an acknowledge, and a gauge can need a long run of clock edges before it wakes
+ * -- and then probes the chip's address at every scaling as the diagnostic.
  *
  * The bring-up itself is the stock's, not a guess.  The main routine (FUN_08024448)
  * calls FUN_080167F0 **once** before entering its poll loop; that reaches
@@ -57,6 +57,11 @@ static unsigned s_scale = 21u;              /* the stock's own inner count */
  * dropped the zero-delay entry and the fastest end of the sweep -- the end the
  * gauge was most likely waiting for -- was never actually tried. */
 static const unsigned scales[] = { 21u, 16u, 12u, 8u, 6u, 4u, 3u, 2u, 1u, 0u };
+
+/* The speeds the stock's configuration is sent at unconditionally: its own inner
+ * count, a rate near the stock's (its PLL clock is faster than our 8 MHz, so the
+ * equivalent scale is smaller), and the fastest this bus can go. */
+static const unsigned attempts[] = { 21u, 4u, 0u };
 
 unsigned battery_bus_scale_count(void)
 {
@@ -292,6 +297,7 @@ static const char *const stage_names[STAGE_COUNT] = {
 static bool stage_ok[STAGE_COUNT];
 static bool scale_acked[sizeof scales / sizeof scales[0]];
 static bool s_bus_ok;
+static unsigned s_win_scale;    /* the speed that answered; 0 (fastest) if none */
 
 unsigned battery_stage_count(void) { return STAGE_COUNT; }
 
@@ -320,19 +326,18 @@ bool battery_bus_ok(void)
     return s_bus_ok;
 }
 
-/* Whether the chip acknowledged its own address byte at this speed.  A gauge that
- * does not answer that cannot be handed a configuration either -- every byte of
- * the sequence would go unacknowledged -- so this is the gate the sweep uses. */
+/* Whether the chip acknowledged its own address byte at this speed.  This is the
+ * diagnostic: with the configuration going out unconditionally (see
+ * battery_init), it says whether any speed reaches the chip at all. */
 bool battery_scale_acked(unsigned index)
 {
     return index < battery_bus_scale_count() ? scale_acked[index] : false;
 }
 
 /* One address-byte probe (start, 0x80, then the acknowledge clock).  Cheap on
- * purpose: it is what keeps the deaf case fast.  Without it the sweep runs the
- * whole ~100-byte sequence at every speed, and with no acknowledges every byte
- * waits out the stock's full 250-poll timeout -- several seconds of silence at
- * boot, which is indistinguishable from a hang. */
+ * purpose: it is the sweep's diagnostic, and it keeps the deaf case fast -- the
+ * full ~100-byte sequence at every speed spends the stock's whole 250-poll
+ * timeout on each byte and takes tens of seconds. */
 static bool bus_address_acked(void)
 {
     bool ack;
@@ -517,17 +522,42 @@ void battery_init(void)
     if (!s_clk_ok || !s_data_ok)
         return;                 /* a bus pin is not ours; no speed will help */
 
-    /* The stock configures the gauge once at boot, before the first poll, and
-     * never reads it unconfigured -- so if the chip answers its address at some
-     * speed, the full bring-up runs there.  A chip that answers nothing cannot be
-     * configured at all (every byte would go unacknowledged), which is what makes
-     * the address probe a valid gate rather than a shortcut. */
-    for (i = 0; i < battery_bus_scale_count() && !s_bus_ok; i++) {
+    /* 1. The stock's configuration goes out whether or not anything answers:
+     *    FUN_0800D35C never checks an ACK before writing the 68-byte block, and a
+     *    gauge can need a long run of clock edges before it wakes up and starts
+     *    acknowledging at all.  Skipping the sequence when the address probe is
+     *    silent would therefore skip it exactly when the chip is asleep. */
+    for (i = 0; i < sizeof attempts / sizeof attempts[0] && !s_bus_ok; i++) {
+        s_scale = attempts[i];
+        if (gauge_bringup(8100000u)) {      /* 8.1 V, this radio's own reading */
+            s_bus_ok = true;
+            s_win_scale = attempts[i];
+        }
+    }
+
+    /* 2. The diagnostic sweep: one address probe per scaling, so the console can
+     *    say whether any speed reaches the chip even when step 1 did not. */
+    for (i = 0; i < battery_bus_scale_count(); i++) {
         s_scale = scales[i];
         scale_acked[i] = bus_address_acked();
-        if (scale_acked[i])
-            s_bus_ok = gauge_bringup(8100000u);  /* 8.1 V, this radio's own reading */
     }
+
+    /* 3. If a probe answered and nothing has been acknowledged yet, run the whole
+     *    sequence there. */
+    if (!s_bus_ok) {
+        for (i = 0; i < battery_bus_scale_count(); i++) {
+            if (scale_acked[i]) {
+                s_scale = scales[i];
+                if (gauge_bringup(8100000u)) {
+                    s_bus_ok = true;
+                    s_win_scale = scales[i];
+                }
+                break;
+            }
+        }
+    }
+
+    s_scale = s_win_scale;      /* for the reads that follow; 0 = fastest if deaf */
 }
 
 bool battery_voltage_mv(uint32_t *mv)
