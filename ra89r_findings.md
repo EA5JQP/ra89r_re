@@ -373,7 +373,7 @@ owner's naming: the RA89R's `F` is `KEY_MENU`, `AB` is `KEY_EXIT`, `#` is
 | `0x15` / `0x16` | `PA6` | `KEY_UP` / `KEY_DOWN` | the list widget uses their held codes `0x21`/`0x22` as list-up/down |
 | `0x14` | `PA6` | `KEY_MENU` | the stock's menu is on its held code `0x20` (`FUN_0800C41C`), and an owner sweep of every key confirms F is this code |
 | `0x17` | `PA6` | `KEY_EXIT` | the stock's invalid/back beep is on its held/extra codes, and the same sweep confirms AB is this code |
-| `4`-`6` / `7`-`9` | `PA2` | `KEY_SIDE1` / `KEY_SIDE2` | the only codes with three press types = the CPS's "Side1/Side2 Short/Long" settings |
+| `4`-`6` / `7`-`9` | `PA2` | `KEY_SIDE1` / `KEY_SIDE2` | the only codes with three press types = the CPS's "Side1/Side2 Short/Long" settings.  *Which of the two is which has not been read off the radio* -- that order comes from the vendor's code order, the same class of evidence that got F and AB backwards |
 | `0x18` / `0x19` | `PA3` | `KEY_STAR` / `KEY_F` | the remaining pair, by keypad row position (`9 * 0 #`) |
 
 This pair was briefly bound the other way round, from a *spoken* label in a
