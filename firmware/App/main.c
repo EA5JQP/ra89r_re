@@ -341,12 +341,29 @@ int main(void)
                 lcd_set_contrast(contrast);
                 draw_test_card();
                 break;
-            case 'l':
-                /* Cycle every state: the radio is what says which pin is which
-                 * colour, and the log names the state so it can answer. */
-                led_set((led_colour_t)((led_get() + 1) % LED_STATE_COUNT));
-                uart_printf("\nled: %s\n", led_name(led_get()));
+            case 'l': {
+                /* Drive one pin combination per press.  The radio is what says
+                 * which pin does what, and the log names each state so it can
+                 * answer -- including PA5, which the old lamp driver drove and
+                 * which the bootloader blinks. */
+                static const struct {
+                    uint32_t mask;
+                    const char *name;
+                } test[] = {
+                    { LED_PIN_B, "PA1 (red?)" },
+                    { LED_PIN_A, "PA0 (green?)" },
+                    { LED_PIN_A | LED_PIN_B, "PA0+PA1" },
+                    { LED_AUX_PIN, "PA5 (the old lamp driver's other pin)" },
+                    { LED_PIN_B | LED_AUX_PIN, "PA1+PA5 (exactly the old lamp state)" },
+                    { 0u, "off" },
+                };
+                static unsigned step;
+
+                led_drive_pins(test[step].mask);
+                uart_printf("\nled: %s\n", test[step].name);
+                step = (step + 1u) % (sizeof(test) / sizeof(test[0]));
                 break;
+            }
             case 'q':
                 heartbeat = !heartbeat;
                 uart_printf("\nheartbeat %s\n", heartbeat ? "on" : "off");

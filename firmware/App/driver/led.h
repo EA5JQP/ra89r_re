@@ -16,6 +16,8 @@
 #ifndef DRIVER_LED_H
 #define DRIVER_LED_H
 
+#include <stdint.h>
+
 typedef enum {
     LED_OFF = 0,
     LED_RED,
@@ -27,6 +29,13 @@ typedef enum {
 void led_init(void);
 void led_set(led_colour_t colour);
 led_colour_t led_get(void);
+
+/* Raw test entry: drive exactly these GPIOA pins high and the rest low.  PA5 is
+ * included because the *bootloader* blinks it (0x08000A74, five times, low then
+ * high) right before it blinks PA1 -- and the old "backlight" driver, which the
+ * radio did visibly respond to, drove PA1 *and* PA5.  Since PA0/PA1 alone do
+ * nothing, PA5 is the one remaining difference. */
+void led_drive_pins(uint32_t mask);
 
 /* "off", "red", "green", "both" -- for the console and the boot log. */
 const char *led_name(led_colour_t colour);

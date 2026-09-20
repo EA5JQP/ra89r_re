@@ -40,10 +40,24 @@
  * a different pin, still unidentified -- an open item, not a solved one.
  *
  * Level 1 = lit is assumed, and which pin is which colour is still to be
- * measured; the console cycles the four states so the radio can settle both. */
+ * measured; the console cycles the states so the radio can settle both. */
 #define LED_PIN_A           (1u << 0)   /* PA0 */
 #define LED_PIN_B           (1u << 1)   /* PA1 */
 #define LED_ON_LEVEL        1
+
+/* PA5, which the *bootloader* also blinks (five times, right before PA1 -- the
+ * PA5 block is entered from the blink sequence at 0x0800057A) and which the stock
+ * configures as DAC_OUT2 in AF mode.  Listed here only so the LED test can drive
+ * it: it is the one difference between the old lamp driver the radio responded to
+ * and the LED driver it does not. */
+#define LED_AUX_PIN         (1u << 5)
+
+/* PA5, which the *bootloader* also blinks (five times, right before PA1 --
+ * 0x08000A74 from the blink block at 0x0800057A) and which the stock configures
+ * as DAC_OUT2 in AF mode.  Kept here only so the LED test can drive it: it is the
+ * one difference between the old lamp driver the radio responded to and the LED
+ * driver it does not. */
+#define LED_AUX_PIN         (1u << 5)
 
 /* programming UART: USART1 on PB6 (TX) / PB7 (RX), AF2 -- the stock
  * bootloader's port, the radio's Kenwood-style jack */

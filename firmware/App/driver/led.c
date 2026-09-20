@@ -42,9 +42,17 @@ const char *led_name(led_colour_t colour)
     }
 }
 
+void led_drive_pins(uint32_t mask)
+{
+    uint32_t all = LED_PIN_A | LED_PIN_B | LED_AUX_PIN;
+
+    gpio_write(LED_PORT, all & ~mask, 0);
+    gpio_write(LED_PORT, mask, 1);
+}
+
 void led_init(void)
 {
     gpio_port_clock(LED_PORT);
-    gpio_config_output(LED_PORT, LED_PIN_A | LED_PIN_B);
+    gpio_config_output(LED_PORT, LED_PIN_A | LED_PIN_B | LED_AUX_PIN);
     led_set(LED_OFF);
 }
