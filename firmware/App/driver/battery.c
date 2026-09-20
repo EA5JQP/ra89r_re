@@ -48,10 +48,13 @@ static const unsigned scales[BATTERY_SCALE_COUNT] = { 21u, 8u, 4u, 2u, 1u };
 static bool s_bus_ok;
 static bool s_clk_ok;
 static bool s_data_ok;
+static unsigned s_bringup_acks;
 
 static void bus_start(void);
 static void bus_stop(void);
 static bool bus_write_byte(uint8_t v);
+static bool bus_write_reg16(uint8_t reg, uint16_t value);
+static void gauge_bringup(uint32_t uv);
 
 static void delay(unsigned n)
 {
@@ -182,8 +185,10 @@ void battery_init(void)
     clk(0);
     dat(1);
 
-    if (s_clk_ok && s_data_ok)
+    if (s_clk_ok && s_data_ok) {
+        gauge_bringup(8100000u);    /* 8.1 V, this radio's own reading */
         bus_probe();
+    }
 }
 
 static void bus_start(void)
@@ -264,6 +269,64 @@ static uint8_t bus_read_byte(void)
         delay(8);
     }
     return v;
+}
+
+/* A 16-bit register write, as FUN_08007240 does it: the same start and 0x80, the
+ * register as an address byte with rw = 0, then the two bytes low-first (which is
+ * the packing FUN_08007284 does), then the stop and the clock low. */
+static bool bus_write_reg16(uint8_t reg, uint16_t value)
+{
+    bool acked;
+
+    bus_start();
+    acked = bus_write_byte(0x80u);
+    if (!bus_write_byte((uint8_t)((reg & 0x7Fu) << 1)))
+        acked = false;
+    if (!bus_write_byte((uint8_t)(value & 0xFFu)))
+        acked = false;
+    if (!bus_write_byte((uint8_t)(value >> 8)))
+        acked = false;
+    bus_stop();
+    clk(0);
+    dat(1);
+    return acked;
+}
+
+unsigned battery_bringup_acks(void)
+{
+    return s_bringup_acks;
+}
+
+/* The write-back the stock does after every poll (FUN_08006F9C): the measured
+ * voltage in register 5 (gain) and twice in register 3 (capacity, the second with
+ * bit 15 set).  It is replayed here as a bring-up step, with the 8.1 V this
+ * radio's stock firmware reports -- the stock gets its value for this from
+ * FUN_0800F440, before the gauge is readable, so hardcoding a known-good one is
+ * what it does too.  The point of the experiment is the acknowledge: if these
+ * writes are answered, the bus and the write path work. */
+static void gauge_bringup(uint32_t uv)
+{
+    uint32_t count = uv / 10000u;
+    uint32_t off;
+    uint16_t sel, n, v;
+
+    if (count < 0x2F8u) {
+        off = 0x280u;
+        sel = 0xC0u | 0x1Fu;
+    } else {
+        off = 0x2F8u;
+        sel = 0x40u | 0x1Fu;
+    }
+    n = (uint16_t)(count - off);
+
+    s_bringup_acks = 0;
+    if (bus_write_reg16(5, (uint16_t)((10u << 8) | sel)))
+        s_bringup_acks++;
+    v = (uint16_t)((((n >> 8) & 3u) << 8) | (n & 0xFFu));
+    if (bus_write_reg16(3, v))
+        s_bringup_acks++;
+    if (bus_write_reg16(3, (uint16_t)(v | 0x8000u)))
+        s_bringup_acks++;
 }
 
 bool battery_read(uint8_t reg, uint16_t *value)

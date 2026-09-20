@@ -39,6 +39,10 @@ bool battery_data_pin_ok(void);
  * never changed: the stock drives PC14 without configuring it. */
 bool battery_lse_on(void);
 
+/* How many of the three bring-up writes (registers 5, 3, 3) the chip
+ * acknowledged -- 3 means the write path and the bus are working. */
+unsigned battery_bringup_acks(void);
+
 /* Read one 16-bit register.  Returns false if the chip did not acknowledge. */
 bool battery_read(uint8_t reg, uint16_t *value);
 
