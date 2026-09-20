@@ -17,6 +17,7 @@
 #include "driver/clock.h"
 #include "driver/fault.h"
 #include "driver/gpio.h"
+#include "driver/keypad.h"
 #include "driver/lcd_st7565.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
@@ -34,6 +35,60 @@ static uint8_t contrast = 0x19u;
 static int show_border;
 static int animate;
 static int heartbeat = 1;
+static int keypad_monitor;
+static int keypad_last = -2;            /* force a first print when enabled */
+static int keypad_ptt2_last = -1;
+static int keypad_stock_last = -2;
+
+/* ------------------------------------------------------------ keypad monitor */
+
+/* Prints the raw ADC level of every keypad line plus the decoded key whenever
+ * the result changes.  The raw value is the point: a press either lands inside
+ * the window the decode table expects, or it shows exactly where it does not. */
+static void keypad_monitor_step(void)
+{
+    const uint8_t *variants;
+    KEY_Code_t key;
+    int stock, ptt2;
+    unsigned line;
+
+    if (!keypad_monitor)
+        return;
+
+    key = keypad_poll();
+    stock = keypad_stock_code();
+    /* PTT2 moves no analog line, so it has to be part of the change test or a
+     * press of it would print nothing at all. */
+    ptt2 = keypad_ptt2_level() ? 1 : 0;
+    if ((int)key == keypad_last && ptt2 == keypad_ptt2_last && stock == keypad_stock_last)
+        return;
+    keypad_last = (int)key;
+    keypad_ptt2_last = ptt2;
+    keypad_stock_last = stock;
+
+    uart_printf("[k %ums]", (unsigned)systick_millis());
+    for (line = 0; line < KEYPAD_LINE_COUNT; line++)
+        uart_printf(" %s=0x%03X", keypad_line_name(line), (unsigned)keypad_raw(line));
+    uart_printf(" PTT2=%d -> ", ptt2);
+
+    if (key == KEY_INVALID && stock == KEYPAD_NONE) {
+        uart_puts("nothing\n");
+        return;
+    }
+    uart_printf("%s", keypad_name(key));
+    if (key == KEY_INVALID) {
+        /* Decoded from the ladder but not mapped to a K5V3 key yet: the stock
+         * code is what identifies the button. */
+        uart_printf(" (stock %s -- which button is it?)", keypad_stock_name(stock));
+    } else if (stock != KEYPAD_NONE) {
+        variants = keypad_variants(stock);
+        uart_printf(" (stock 0x%02X", stock);
+        if (variants && variants[1] != 0xFF)
+            uart_printf(", held 0x%02X, long 0x%02X", variants[1], variants[2]);
+        uart_puts(")");
+    }
+    uart_puts("\n");
+}
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -123,7 +178,8 @@ static void print_help(void)
               "          c clear  t test card   b border   f fill   p animation\n"
               "          v/V contrast up/down  l backlight on/off  q heartbeat\n"
               "          r re-init panel (standard, bootloader-proven)\n"
-              "          s re-init panel (stock app variant, 8 extra bytes)\n");
+              "          s re-init panel (stock app variant, 8 extra bytes)\n"
+              "          k keypad monitor (raw ADC per line + decoded key)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -191,8 +247,23 @@ int main(void)
                   "        then not landing where we read it.\n");
     }
 
-    uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");
-    lcd_init();
+    /* Keypad lines back to their default state before anything else touches
+     * GPIO: the five ladder inputs (plus the ADC's other analog input) analog,
+     * undriven and unpulled, and PTT2 a plain input.  A ladder line that is
+     * driven or pulled has its level corrupted -- and sinks current through the
+     * ladder -- so nothing else in this firmware may touch these pins. */
+    gpio_config_analog(KEYPAD_ANALOG_A_PORT, KEYPAD_ANALOG_A_MASK);
+    gpio_config_analog(KEYPAD_ANALOG_B_PORT, KEYPAD_ANALOG_B_MASK);
+    gpio_config_input(KEYPAD_PTT2_PORT, KEYPAD_PTT2_PIN);
+    uart_puts("keypad: PA2/PA3/PA6/PA7/PB0/PB1 analog, PB9 input (default state)\n");
+    if (keypad_init())
+        uart_printf("keypad: ADC scanning 6 channels through DMA (%u keypad lines), "
+                    "PTT2 on PB9\n", (unsigned)KEYPAD_LINE_COUNT);
+    else
+        uart_puts("keypad: WARNING -- the ADC/DMA scan is NOT running; the key "
+                  "monitor would report zeros for every line\n");
+
+    uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");    lcd_init();
     uart_puts("lcd: init done\n");
 
     BACKLIGHT_Init();
@@ -283,6 +354,12 @@ int main(void)
                 heartbeat = !heartbeat;
                 uart_printf("\nheartbeat %s\n", heartbeat ? "on" : "off");
                 break;
+            case 'k':
+                keypad_monitor = !keypad_monitor;
+                uart_printf("\nkeypad monitor %s -- press one button at a time\n",
+                            keypad_monitor ? "on" : "off");
+                keypad_last = -2;           /* force the next poll to print */
+                break;
             default:
                 break;
             }
@@ -311,6 +388,8 @@ int main(void)
                 uart_printf("[hb] uptime %us, panel variant %d, contrast 0x%02X\n",
                             (unsigned)(now / 1000u), lcd_variant(), contrast);
         }
+
+        keypad_monitor_step();
 
         animate_step(now);
     }

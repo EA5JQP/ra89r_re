@@ -65,3 +65,8 @@ void gpio_config_input(GPIO_TypeDef *port, uint32_t mask)
 {
     configure(port, mask, 0u /* input */, 0u, 0u, 0u, 0u);
 }
+
+void gpio_config_analog(GPIO_TypeDef *port, uint32_t mask)
+{
+    configure(port, mask, 3u /* analog */, 0u, 0u, 0u, 0u);
+}

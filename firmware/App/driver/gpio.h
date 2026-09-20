@@ -18,6 +18,12 @@ void gpio_config_output(GPIO_TypeDef *port, uint32_t mask);
 /* Configure every pin set in mask as a floating input. */
 void gpio_config_input(GPIO_TypeDef *port, uint32_t mask);
 
+/* Configure every pin set in mask as an analog input: no drive, no pull, no
+ * alternate function.  This is the reset-default state of a pin, and it is what
+ * an analog signal (an ADC input, or a key ladder) needs -- driving or pulling
+ * such a line corrupts the level and, for a ladder, sinks current through it. */
+void gpio_config_analog(GPIO_TypeDef *port, uint32_t mask);
+
 static inline void gpio_set(GPIO_TypeDef *port, uint32_t mask)
 {
     port->BSRR = mask;

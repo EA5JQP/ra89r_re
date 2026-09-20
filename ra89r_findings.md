@@ -197,7 +197,12 @@ backlight is dimmed with TIM7+DMA), so on/off is all this radio needs.
 Implemented as `firmware/App/driver/backlight.{c,h}` (API mirrors the K1 driver
 of the same name) and driven on at boot; the console command `l` toggles it.
 
-### Keypad (recon -- mechanism not yet solved)
+### Keypad (SOLVED: a 5-line analog key matrix)
+
+**Read this section bottom-up.**  The intermediate conclusion in its middle
+("the keys are NOT on the ADC") was itself wrong and is withdrawn; the answer is
+the "SOLVED: a 5-line analog key matrix" block further down.  Neither the
+"recon" title this section used to carry nor that paragraph should be quoted.
 
 The stock keypad is **not** an MCU GPIO matrix, which is worth recording because
 the sibling port tree uses exactly that (`UV-K1/K5V3`, `App/driver/keyboard.c`:
@@ -322,6 +327,120 @@ The `PA6`/`PA3` function slots carry codes `0x14`-`0x19` (20..25) plus `+6` /
 `+0xC` variants (26../32..) = the navigation/menu keys with long / extra-long
 presses.  Handler addresses are `0x080146A0`-`0x08014B00`; the per-key bytes are
 `0x85, 0x86, 0x88, 0x8A`-`0x99` (19 of them) and `PB9` makes the twentieth.
+
+**How a press becomes a code.**  Each handler calls
+`FUN_08005724(counter, buf3, in_window)` with `buf3 = {short, held, long}` (`0xFF`
+= unused), which turns the *how long* into the *which code*:
+
+| counter reaches | action |
+|---|---|
+| `4` | post `buf3[0]` -- the **short press** code |
+| `0x28` (40) | post `buf3[1]` -- the **held / repeat** code |
+| on release, while `4 <= counter < 0x28` | post `buf3[2]` -- the **long press** code |
+
+The counter is the per-key byte at `0x20009F80+5..+0x19`, incremented once per
+scan pass while its key stays in-window (`>= 0xF0` clamps to `0xEF`) and reset
+when it leaves.  So one button owns three codes -- e.g. `{0x15, 0x1B, 0x21}` is a
+single key whose short press is `0x15`, whose hold repeat is `0x1B` and whose
+long press is `0x21` -- and since `0x21` is what the menu list uses as "step up",
+that button is **UP** (and `{0x16,0x1C,0x22}` is **DOWN**).
+
+**Measured on the radio** (console monitor in `App/driver/keypad.c`; idle level
+`0xFF6`-`0xFF8`, i.e. the ladders idle near full scale):
+
+| line | levels measured while pressed | keys |
+|---|---|---|
+| `PA7` | `0x000` `0x3E9` `0x923` `0xBCE` | 3, 2, 1, 4 |
+| `PB0` | `0x000` `0x3EC` `0x91F` `0xB2D` | 6, 5, 8, 7 |
+| `PA6` | `0x000` `0x3F0` `0x91B` `0xB2A` | `0x17`, `0x15` (UP), `0x16` (DOWN), `0x14` |
+| `PA3` | `0x000` `0x3F5` `0x91D` `0xB2A` | 9, `0x19`, 0, `0x18` |
+| `PA2` | `0x000` `0x533` `0x7DB` | `100` (PTT1), codes `4`-`6`, codes `7`-`9` |
+
+Every measured level falls inside the vendor's window, so the stock calibration
+transfers to this board unchanged (the reader widens each window by 96 counts
+only because it samples once per pass rather than the stock's 8-sample average;
+the bands are far apart -- narrowest gap 273 counts -- and the idle level is
+above the top band).
+
+**Which button is which.**  The port uses the K5V3/F4HWN `KEY_Code_e`, with the
+owner's naming: the RA89R's `F` is `KEY_MENU`, `AB` is `KEY_EXIT`, `#` is
+`KEY_F`, and its `SIDE1`/`SIDE2` are `KEY_SIDE1`/`KEY_SIDE2`.
+
+| code(s) | line | K5V3 key | how it was settled |
+|---|---|---|---|
+| `10`-`19` | `PA7`/`PB0`/`PA3` | `KEY_0`-`KEY_9` | measured with the monitor |
+| `100` / `PB9` | `PA2` / `PB9` | `KEY_PTT` / `KEY_PTT2` | measured with the monitor |
+| `0x15` / `0x16` | `PA6` | `KEY_UP` / `KEY_DOWN` | the list widget uses their held codes `0x21`/`0x22` as list-up/down |
+| `0x17` | `PA6` | `KEY_MENU` | measured: pressing the owner's MENU key holds `PA6` at `0x000` (the A tap) steadily |
+| `0x14` | `PA6` | `KEY_EXIT` | the other of the pair, by elimination |
+| `4`-`6` / `7`-`9` | `PA2` | `KEY_SIDE1` / `KEY_SIDE2` | the only codes with three press types = the CPS's "Side1/Side2 Short/Long" settings |
+| `0x18` / `0x19` | `PA3` | `KEY_STAR` / `KEY_F` | the remaining pair, by keypad row position (`9 * 0 #`) |
+
+Two of these came off the radio against an earlier *inference* from the stock's
+handlers, which had them the other way round: `0x14`'s held code `0x20` is the
+menu (`FUN_0800C41C`) and `0x17`'s held/extra codes land on the invalid/back beep
+(`FUN_0801880c(0x38)` in every menu context), which reads as "0x14 = MENU".  The
+radio disagrees: the key the owner presses as MENU holds `PA6` at the A tap
+(steady `0x000` for 250 ms in the monitor log), i.e. code `0x17`.  The radio wins.
+Worth knowing when the port assigns functions: whatever the stock does with these
+two keys, its own *menu* is on the `0x14` key's long press.
+
+The `*` / `#` pair is the one still placed by elimination -- `0x18` and `0x19` sit
+in the same keypad row and nothing in the binary separates them -- so it is what
+to re-check first (the console monitor prints the code beside the name).
+`App/driver/keypad.h` exposes the K5V3 enum so the port can use this reader
+unchanged.
+
+**Our reader copies the stock's ADC scheme.**  The vendor does not convert on
+demand -- the ADC scans six channels (2, 3, 6, 7, 8, 9) continuously into memory
+through DMA, and the accessor averages eight samples per channel out of that
+buffer.  `keypad.c` now does the same: `DMA1_Channel1` in circular mode
+with 32-bit transfers, into a 48-word buffer shaped exactly like the stock's
+(one round of six channels = 24 bytes, the "sample stride 0x18" of its accessor),
+and a poll averages the last eight samples of each line.
+
+That matters for the port rather than for elegance: one conversion with the
+longest sample time is ~123 us, so a five-line scan that waited for its own
+conversions cost ~5 ms -- half of the 10 ms tick the K5V3 application polls the
+keypad on (`APP_TimeSlice10ms`, thresholds 20 ms / 400 ms).  Free-running, the
+same scan is background hardware and a poll is a memory read.
+
+**One round, not eight.**  The buffer therefore holds a *single* round of the six
+channels and a poll takes the newest value of each line, where the stock averages
+eight rounds.  Measured reason: with the eight-round window the press and release
+*edges* mis-read.  The window still holds pre-press samples, so the average is a
+*fraction* of the tap level, and a fraction lands inside a neighbouring window --
+one key press was reported as its neighbours (`0x9FF` and `0x3FF` = 5/8 and 2/8 of
+an idle `0xFFF`, decoded as the neighbouring two keys; the steady state, all eight
+samples, decoded correctly).  The stock tolerates the long window because its own
+4-consecutive rule debounces on top; here debouncing belongs to the application
+layer, which wants the instantaneous level.
+
+Also set explicitly: `RCC_CFGR.ADCPRE = PCLK2/2`.  Nothing else in the firmware
+touches it, so its value was whatever the bootloader left, and the sample time --
+hence how levels compare with the stock windows -- depends on it.  The stock's DMA
+configuration is `MINC|PSIZE32|MSIZE32|CIRC|very-high priority`; ours is
+identical.
+
+**This part maps DMA requests in `SYSCFG`, not with a `CSELR`.**  A channel's
+request is a 7-bit field in `SYSCFG->CFGR[2..4]` (DMA1 channels 1-4 at the bottom
+of `CFGR[2]`, 8 bits apart); `ADC1` is map value `0`
+(`LL_SYSCFG_DMA_MAP_ADC1`), i.e. the reset default.  Write it anyway: the SDK's
+own ADC+DMA example (`Projects/PY32F403-STK/Example_LL/ADC/ADC_MultiChannelSingleConversion_TriggerSW_DMA`)
+writes it explicitly, and so does the vendor's DMA driver -- `FUN_080111D8`, the
+function the stock ADC power-up calls, sits right next to the `0x40010000`
+literal.  Relevant to any future DMA user (the port's SPI/RF paths), not just the
+keypad.  Also worth knowing from that example: it runs its DMA 16-bit
+(`LL_DMA_PDATAALIGN_HALFWORD`) while the stock uses 32-bit slots -- either works,
+the value is in the low 12 bits.  **Not yet run on the radio** -- the `k` monitor is the check, and the
+raw values it prints should be unchanged (they are the same measurement, still
+averaged over eight samples).
+
+**Unrelated to the keypad, but found while reading the dispatcher:** keys
+`0x15`/`0x16` (and the held `0x23`/`0x25`) drive **`PC13` low**
+(`GPIO_WriteBit(GPIOC, 0x2000, 0)` in `FUN_08013F28`) -- the same line the PTT
+path *reads*.  Not explained, and worth revisiting with the PTT / bootloader
+work.
 
 The button set is the same as the `UV-K1/K5V3` keyboard enum (`PTT1`, `PTT2`,
 `SIDE1`, `SIDE2`, `F`, `UP`, `DOWN`, `AB`, `0`-`9`, `*`, `#`), i.e. the UI is a
