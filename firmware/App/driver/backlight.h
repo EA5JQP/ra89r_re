@@ -1,19 +1,13 @@
-/* LCD backlight.
+/* LCD backlight -- GPIOA pin 5.
  *
- * RA89R: GPIOA pin 1, a plain push-pull output, level 1 = on.  The stock
- * bootloader blinks exactly this pin when it enters update mode (block at
- * 0x08000582: mask 0x2 on GPIOA, off -> 100 ms -> on -> 100 ms, three times)
- * and leaves it high while it shows the "Update..." screen, so high is the
- * steady "lamp on" state.
+ * Confirmed on the radio by eye: driving this pin lights the panel.  The
+ * bootloader blinks the same pin on entering update mode (0x08000AD2: low for
+ * 100 ms, then high, five times, ending lit), and the stock application also
+ * configures it as DAC_OUT2 -- so the stock is probably dimming the backlight
+ * through the DAC.  Plain on/off is what this radio needs today; a brightness
+ * ramp through the DAC would be the refinement.
  *
- * This build also drives GPIOA pin 5 (BACKLIGHT_AUX_PIN): the bootloader blinks
- * that pin five times just before the pin-1 blink (0x08000AD2), and the panel
- * stayed dark on the radio although pin 1 was driven high.  Driving both is the
- * test; see board_pins.h.
- *
- * The API mirrors App/driver/backlight.{c,h} of the UV-K1/K5V3 port tree, where
- * the same signal is dimmed with a TIM+DMA PWM; this radio is wired for plain
- * on/off, so only the level is driven here (no brightness ramp yet).
+ * The API keeps the shape of the UV-K1/K5V3 port tree's backlight driver.
  */
 #ifndef DRIVER_BACKLIGHT_H
 #define DRIVER_BACKLIGHT_H

@@ -30,24 +30,28 @@
 #define LCD_CS_PIN          (1u << 11)
 #define LCD_RST_PIN         (1u << 9)
 
-/* LCD backlight: GPIOA pin 1.  The stock bootloader blinks this pin when it
- * enters update mode (0x08000582) and leaves it high while it shows the
- * "Update..." screen; level 1 = on (the blink goes 0 -> 1 and ends there). */
-#define BACKLIGHT_PIN       (1u << 1)
+/* LCD backlight: GPIOA pin 5.  Confirmed on the radio: driving it lights the
+ * panel, and the bootloader blinks it five times when it enters update mode
+ * (0x08000AD2, low for 100 ms then high, ending lit).
+ *
+ * Note the pin is also DAC_OUT2 in the stock application (FUN_0800A8F4 configures
+ * PA4 and PA5 as DAC outputs), which is why this is driven as a plain on/off
+ * output here and not through the DAC: the stock may well be dimming the
+ * backlight through it, and that is a later refinement, not a blocker.
+ *
+ * The old driver also drove PA1 on the theory that one of the two was the lamp.
+ * PA1 does nothing visible, so it is not driven any more. */
+#define BACKLIGHT_PIN       (1u << 5)
 #define BACKLIGHT_ON_LEVEL  1
 
-/* Second lamp control line, same port: the stock bootloader also blinks GPIOA
- * pin 5, five times (0x08000AD2), immediately before the pin-1 blink -- and the
- * panel stays dark on our firmware although pin 1 is driven high and the panel
- * init is byte-for-byte the bootloader's.  So this build drives both and lets
- * the hardware decide.
- *
- * Note for whoever resolves it: the stock *application* configures PA4 and PA5
- * as DAC outputs (0x0800A8F4 -> DAC1 at 0x40007400, called from the boot path at
- * 0x0801D748), so if pin 5 does turn out to be lamp-related, that DAC usage has
- * to be understood before the pin can be repurposed. */
-#define BACKLIGHT_AUX_PIN       (1u << 5)
-#define BACKLIGHT_AUX_ON_LEVEL  1
+/* GPIOA pins 0 and 1: configured as outputs by the stock (FUN_080138FC), and the
+ * bootloader blinks PA1 three times right after the PA5 blink.  Driving either at
+ * either level produces nothing visible on the radio, so what they are is still
+ * open -- a status LED driven by the companion chip, or a lamp line this board
+ * does not fit.  Kept as documentation only; the LED test drives them. */
+#define LED_PIN_A           (1u << 0)   /* PA0 */
+#define LED_PIN_B           (1u << 1)   /* PA1 */
+#define LED_ON_LEVEL        1
 
 /* programming UART: USART1 on PB6 (TX) / PB7 (RX), AF2 -- the stock
  * bootloader's port, the radio's Kenwood-style jack */
