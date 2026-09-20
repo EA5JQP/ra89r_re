@@ -43,7 +43,11 @@
  * the stock image).  The scale is the bus speed and is found at init. */
 static unsigned s_scale = 21u;              /* the stock's own inner count */
 
-static const unsigned scales[BATTERY_SCALE_COUNT] = { 21u, 8u, 4u, 2u, 1u };
+static const unsigned scales[BATTERY_SCALE_COUNT] = { 21u, 8u, 4u, 2u, 1u, 0u };
+/* The last entry is zero delay: the transfer's own code overhead is what bounds
+ * the fastest rate (~50 kHz at 8 MHz, comparable to the stock's ~57 kHz at the PLL
+ * clock its compiler assumed).  If the gauge has a maximum clock-low time it will
+ * only answer at that end, and this is the entry that reaches it. */
 
 static bool s_bus_ok;
 static bool s_clk_ok;
@@ -108,6 +112,37 @@ static void bus_probe(void)
 unsigned battery_bus_scale(void)
 {
     return s_scale;
+}
+
+/* What the fastest scaling really achieves, measured rather than assumed: the log
+ * then says whether the sweep covers the stock's own rate.  Counts clock cycles
+ * for a bounded window, so it costs a few milliseconds at boot. */
+static unsigned s_rate_khz;
+
+unsigned battery_bus_rate_khz(void)
+{
+    return s_rate_khz;
+}
+
+static void measure_bus_rate(void)
+{
+    unsigned save = s_scale;
+    uint32_t t0, t1;
+    unsigned cycles = 0;
+
+    s_scale = 0;
+    t0 = systick_millis();
+    do {
+        clk(1);
+        clk(0);
+        cycles++;
+        t1 = systick_millis();
+    } while (cycles < 1000u && (t1 - t0) < 20u);
+
+    if (t1 > t0)
+        s_rate_khz = (unsigned)((cycles / (t1 - t0)) / 2u);   /* two toggles per cycle */
+    s_scale = save;
+    clk(0);
 }
 
 bool battery_bus_ok(void)
@@ -184,6 +219,7 @@ void battery_init(void)
     s_data_ok = pin_toggles(DAT_PORT, DAT_PIN);
     clk(0);
     dat(1);
+    measure_bus_rate();
 
     if (s_clk_ok && s_data_ok) {
         gauge_bringup(8100000u);    /* 8.1 V, this radio's own reading */

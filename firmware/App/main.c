@@ -278,7 +278,8 @@ int main(void)
                     battery_lse_on() ? "ON" : "off",
                     battery_clk_pin_ok() ? "ok" : "STUCK",
                     battery_data_pin_ok() ? "ok" : "STUCK");
-        uart_printf("battery: bring-up writes acked %u/3\n",
+        uart_printf("battery: bus ~%u kHz max, bring-up writes acked %u/3\n",
+                    (unsigned)battery_bus_rate_khz(),
                     (unsigned)battery_bringup_acks());
         if (!battery_clk_pin_ok() || !battery_data_pin_ok())
             uart_puts("battery: a bus pin is not ours; the gauge cannot answer\n");
@@ -406,7 +407,8 @@ int main(void)
                     battery_lse_on() ? "ON" : "off",
                     battery_clk_pin_ok() ? "ok" : "STUCK",
                     battery_data_pin_ok() ? "ok" : "STUCK");
-        uart_printf("battery: bring-up writes acked %u/3\n",
+        uart_printf("battery: bus ~%u kHz max, bring-up writes acked %u/3\n",
+                    (unsigned)battery_bus_rate_khz(),
                     (unsigned)battery_bringup_acks());
         if (!battery_clk_pin_ok() || !battery_data_pin_ok())
             uart_puts("battery: a bus pin is not ours; the gauge cannot answer\n");

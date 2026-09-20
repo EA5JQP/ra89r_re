@@ -27,6 +27,7 @@ void battery_init(void);
 #define BATTERY_SCALE_COUNT 5u
 
 unsigned battery_bus_scale(void);
+unsigned battery_bus_rate_khz(void);
 bool battery_bus_ok(void);
 
 /* Whether each bus pin could be driven and read back at the level it was set to.
