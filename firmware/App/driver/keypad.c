@@ -22,11 +22,13 @@
  *  - digits, PTT and PTT2 were read straight off the radio with the monitor;
  *  - UP / DOWN: the stock list widget uses their held codes 0x21 / 0x22 as
  *    list-up / list-down;
- *  - F (0x17) and AB (0x14): the radio settled these.  An earlier guess bound
- *    them the other way round from the stock handlers (0x14's held code 0x20 is
- *    the menu, and 0x17's held/extra codes land on the invalid/back beep), but
- *    pressing the owner's MENU key reads PA6 at 0x000 -- the A tap, code 0x17 --
- *    steadily, so 0x17 is their MENU/F and 0x14 is their AB;
+ *  - F (0x14) and AB (0x17): settled twice over.  The stock handlers put the
+ *    menu on 0x14 (held code 0x20 -> FUN_0800C41C) and the invalid/back beep on
+ *    0x17 (its held/extra codes), and the owner's sweep of every key agrees:
+ *    F is 0x14 (its window is the D tap) and AB is 0x17 (the A tap).  This pair
+ *    was briefly bound the other way round on the strength of a spoken label in a
+ *    single-key test -- not evidence.  A sweep of *every* key settles a mapping;
+ *    that should have been the first test, not the last;
  *  - SIDE1 / SIDE2 (4-6 / 7-9): these are the only codes with three press
  *    types, which is what the CPS's "Side1 / Side2 Short/Long" settings name;
  *  - * (0x18) and # (0x19): the remaining pair, placed by where they sit in the
@@ -59,10 +61,10 @@ static const kp_window_t windows[] = {
     W(PA3, 0x0ABB, 0x0BB3, 0x18, 0x1E, 0x24, KEY_STAR),
 
     /* PA6 = rank 2 (channel 6): four function keys. */
-    W(PA6, 0x0000, 0x007C, 0x17, 0x1D, 0x23, KEY_MENU),
+    W(PA6, 0x0000, 0x007C, 0x17, 0x1D, 0x23, KEY_EXIT),
     W(PA6, 0x0384, 0x047C, 0x15, 0x1B, 0x21, KEY_UP),    /* held 0x21 = up */
     W(PA6, 0x08B2, 0x09AA, 0x16, 0x1C, 0x22, KEY_DOWN),  /* held 0x22 = down */
-    W(PA6, 0x0ABB, 0x0BB3, 0x14, 0x1A, 0x20, KEY_EXIT),
+    W(PA6, 0x0ABB, 0x0BB3, 0x14, 0x1A, 0x20, KEY_MENU),
 
     /* PA7 = rank 3 (channel 7): digits 3, 2, 1 and 4. */
     W(PA7, 0x0000, 0x007C, 0x0D, 0xFF, 0xFF, KEY_3),
