@@ -371,19 +371,19 @@ owner's naming: the RA89R's `F` is `KEY_MENU`, `AB` is `KEY_EXIT`, `#` is
 | `10`-`19` | `PA7`/`PB0`/`PA3` | `KEY_0`-`KEY_9` | measured with the monitor |
 | `100` / `PB9` | `PA2` / `PB9` | `KEY_PTT` / `KEY_PTT2` | measured with the monitor |
 | `0x15` / `0x16` | `PA6` | `KEY_UP` / `KEY_DOWN` | the list widget uses their held codes `0x21`/`0x22` as list-up/down |
-| `0x17` | `PA6` | `KEY_MENU` | measured: pressing the owner's MENU key holds `PA6` at `0x000` (the A tap) steadily |
-| `0x14` | `PA6` | `KEY_EXIT` | the other of the pair, by elimination |
-| `4`-`6` / `7`-`9` | `PA2` | `KEY_SIDE1` / `KEY_SIDE2` | the only codes with three press types = the CPS's "Side1/Side2 Short/Long" settings |
+| `0x14` | `PA6` | `KEY_MENU` | the stock's menu is on its held code `0x20` (`FUN_0800C41C`), and an owner sweep of every key confirms F is this code |
+| `0x17` | `PA6` | `KEY_EXIT` | the stock's invalid/back beep is on its held/extra codes, and the same sweep confirms AB is this code |
+| `4`-`6` / `7`-`9` | `PA2` | `KEY_SIDE1` / `KEY_SIDE2` | the only codes with three press types = the CPS's "Side1/Side2 Short/Long" settings.  *Which of the two is which has not been read off the radio* -- that order comes from the vendor's code order, the same class of evidence that got F and AB backwards |
 | `0x18` / `0x19` | `PA3` | `KEY_STAR` / `KEY_F` | the remaining pair, by keypad row position (`9 * 0 #`) |
 
-Two of these came off the radio against an earlier *inference* from the stock's
-handlers, which had them the other way round: `0x14`'s held code `0x20` is the
-menu (`FUN_0800C41C`) and `0x17`'s held/extra codes land on the invalid/back beep
-(`FUN_0801880c(0x38)` in every menu context), which reads as "0x14 = MENU".  The
-radio disagrees: the key the owner presses as MENU holds `PA6` at the A tap
-(steady `0x000` for 250 ms in the monitor log), i.e. code `0x17`.  The radio wins.
-Worth knowing when the port assigns functions: whatever the stock does with these
-two keys, its own *menu* is on the `0x14` key's long press.
+This pair was briefly bound the other way round, from a *spoken* label in a
+single-key test ("pressing KEY_MENU" holding `PA6` at the A tap, code `0x17`),
+which contradicted the stock handlers.  The label was wrong, not the handlers: the
+owner's sweep of every key -- press each, read the code -- shows F is `0x14` (the
+D tap, whose held code `0x20` is the menu, `FUN_0800C41C`) and AB is `0x17` (the
+A tap, whose held/extra codes land on the invalid/back beep, `FUN_0801880c(0x38)`
+in every menu context).  Both readings now agree, and the lesson is worth keeping:
+a per-key sweep settles a mapping; a single spoken label does not.
 
 The `*` / `#` pair is the one still placed by elimination -- `0x18` and `0x19` sit
 in the same keypad row and nothing in the binary separates them -- so it is what
