@@ -30,34 +30,28 @@
 #define LCD_CS_PIN          (1u << 11)
 #define LCD_RST_PIN         (1u << 9)
 
-/* Status LED: GPIOA pins 0 and 1, one per colour (red/green).  The stock's pin
- * setup (FUN_080138FC) configures GPIOA mask 3 as plain outputs, right next to
- * PC15 and PD0, and the firmware carries a "Led Type" menu entry (string
- * 0x08026F8C) with the CPS exposing an "LED Mode" setting.
+/* LCD backlight: GPIOA pin 5.  Confirmed on the radio: driving it lights the
+ * panel, and the bootloader blinks it five times when it enters update mode
+ * (0x08000AD2, low for 100 ms then high, ending lit).
  *
- * This is what the old "backlight" driver was actually driving: PA1 alone never
- * lit the panel, and PA5 is DAC_OUT2 (the beeper).  The panel's own backlight is
- * a different pin, still unidentified -- an open item, not a solved one.
+ * Note the pin is also DAC_OUT2 in the stock application (FUN_0800A8F4 configures
+ * PA4 and PA5 as DAC outputs), which is why this is driven as a plain on/off
+ * output here and not through the DAC: the stock may well be dimming the
+ * backlight through it, and that is a later refinement, not a blocker.
  *
- * Level 1 = lit is assumed, and which pin is which colour is still to be
- * measured; the console cycles the states so the radio can settle both. */
+ * The old driver also drove PA1 on the theory that one of the two was the lamp.
+ * PA1 does nothing visible, so it is not driven any more. */
+#define BACKLIGHT_PIN       (1u << 5)
+#define BACKLIGHT_ON_LEVEL  1
+
+/* GPIOA pins 0 and 1: configured as outputs by the stock (FUN_080138FC), and the
+ * bootloader blinks PA1 three times right after the PA5 blink.  Driving either at
+ * either level produces nothing visible on the radio, so what they are is still
+ * open -- a status LED driven by the companion chip, or a lamp line this board
+ * does not fit.  Kept as documentation only; the LED test drives them. */
 #define LED_PIN_A           (1u << 0)   /* PA0 */
 #define LED_PIN_B           (1u << 1)   /* PA1 */
 #define LED_ON_LEVEL        1
-
-/* PA5, which the *bootloader* also blinks (five times, right before PA1 -- the
- * PA5 block is entered from the blink sequence at 0x0800057A) and which the stock
- * configures as DAC_OUT2 in AF mode.  Listed here only so the LED test can drive
- * it: it is the one difference between the old lamp driver the radio responded to
- * and the LED driver it does not. */
-#define LED_AUX_PIN         (1u << 5)
-
-/* PA5, which the *bootloader* also blinks (five times, right before PA1 --
- * 0x08000A74 from the blink block at 0x0800057A) and which the stock configures
- * as DAC_OUT2 in AF mode.  Kept here only so the LED test can drive it: it is the
- * one difference between the old lamp driver the radio responded to and the LED
- * driver it does not. */
-#define LED_AUX_PIN         (1u << 5)
 
 /* programming UART: USART1 on PB6 (TX) / PB7 (RX), AF2 -- the stock
  * bootloader's port, the radio's Kenwood-style jack */

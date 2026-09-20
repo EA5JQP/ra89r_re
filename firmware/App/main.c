@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include "board.h"
+#include "driver/backlight.h"
 #include "driver/led.h"
 #include "driver/clock.h"
 #include "driver/fault.h"
@@ -123,7 +124,8 @@ static void print_diagnostics(void)
                 (unsigned)LCD_COLUMN_OFFSET);
     uart_printf("  uart        USART1 PB6/PB7 AF%u @ %u 8N1\n",
                 (unsigned)BOARD_UART_AF, (unsigned)BOARD_UART_BAUD);
-    uart_printf("  led         GPIOA pins 0/1, state %s\n", led_name(led_get()));
+    uart_printf("  backlight   GPIOA pin 5, now %s\n",
+                BACKLIGHT_IsOn() ? "on" : "off");
 }
 
 static void lcd_set_contrast(uint8_t value)
@@ -175,7 +177,7 @@ static void print_help(void)
 {
     uart_puts("\ncommands: h help   i diagnostics   d dump screen as ASCII\n"
               "          c clear  t test card   b border   f fill   p animation\n"
-              "          v/V contrast up/down  l LED off/red/green/both  q heartbeat\n"
+              "          v/V contrast up/down  l backlight on/off  L PA0/PA1 led test  q heartbeat\n"
               "          r re-init panel (standard, bootloader-proven)\n"
               "          s re-init panel (stock app variant, 8 extra bytes)\n"
               "          k keypad monitor (raw ADC per line + decoded key)\n");
@@ -265,9 +267,11 @@ int main(void)
     uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");    lcd_init();
     uart_puts("lcd: init done\n");
 
+    BACKLIGHT_Init();
+    uart_puts("backlight: on (GPIOA pin 5 -- confirmed on the radio)\n");
     led_init();
-    uart_printf("led: status LED on GPIOA pins 0/1, %s "
-                "(colour mapping provisional)\n", led_name(led_get()));
+    uart_puts("led: PA0/PA1 driven, nothing visible on this radio; "
+              "'L' steps the test combinations\n");
     draw_test_card();
     uart_puts("lcd: test card drawn\n");
     uart_puts("boot complete. 'h' for commands, 'd' dumps the screen over this\n"
@@ -341,20 +345,25 @@ int main(void)
                 lcd_set_contrast(contrast);
                 draw_test_card();
                 break;
-            case 'l': {
-                /* Drive one pin combination per press.  The radio is what says
-                 * which pin does what, and the log names each state so it can
-                 * answer -- including PA5, which the old lamp driver drove and
-                 * which the bootloader blinks. */
+            case 'l':
+                if (BACKLIGHT_IsOn()) {
+                    BACKLIGHT_TurnOff();
+                    uart_puts("\nbacklight off\n");
+                } else {
+                    BACKLIGHT_TurnOn();
+                    uart_puts("\nbacklight on\n");
+                }
+                break;
+            case 'L': {
+                /* PA0/PA1 do nothing visible on this radio; this is here so that
+                 * if they are ever identified, the test is one key away. */
                 static const struct {
                     uint32_t mask;
                     const char *name;
                 } test[] = {
-                    { LED_PIN_B, "PA1 (red?)" },
-                    { LED_PIN_A, "PA0 (green?)" },
+                    { LED_PIN_B, "PA1" },
+                    { LED_PIN_A, "PA0" },
                     { LED_PIN_A | LED_PIN_B, "PA0+PA1" },
-                    { LED_AUX_PIN, "PA5 (the old lamp driver's other pin)" },
-                    { LED_PIN_B | LED_AUX_PIN, "PA1+PA5 (exactly the old lamp state)" },
                     { 0u, "off" },
                 };
                 static unsigned step;
