@@ -14,7 +14,7 @@
 #include "board_pins.h"
 
 /* GPIO ports used by the drivers */
-#define BACKLIGHT_PORT      GPIOA
+#define LED_PORT            GPIOA
 #define LCD_DATA_PORT       GPIOB
 #define LCD_CTRL_PORT       GPIOA
 #define BOARD_UART_PORT     GPIOB
