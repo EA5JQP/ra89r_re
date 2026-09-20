@@ -6,7 +6,7 @@
  * six ADC channels, stores a per-key hold counter and posts the key's code at
  * the 4th in-window sample (0x08005724) -- and the windows below are its own
  * calibration, copied verbatim, so a reading can be compared with the stock
- * decode directly (see ra89r_findings.md, "Keypad").
+ * decode directly (see ra89r_keypad.md).
  *
  * This module only *reads*: the ADC samples the ladder, nothing drives or pulls
  * those pins (that is what warmed the radio up while a pin probe held them up).

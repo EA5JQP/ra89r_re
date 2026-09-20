@@ -20,6 +20,19 @@ the CPS sources) lives outside the workspace (see "Reference inputs").
   the evidence from `bootloader.bin` and from the decompiled CPS updater.
 - `ra89r_lcd.md` — the screen/display driver write-up (panel, pin map, init
   sequence, addressing, fonts, port notes).
+- `ra89r_battery.md` — the companion gauge chip: the bus, the protocol, the voltage
+  arithmetic, the configuration block, and the full troubleshooting log (what has
+  been eliminated and how, so it is not re-derived).
+- `ra89r_led.md` — the status LED (a transmit/receive indicator, driven by the RF
+  chip, *not* an MCU pin) and the backlight (GPIOA pin 5), with the pin searches
+  that came up empty and the pin map that settled them.
+
+**Every feature gets its own `ra89r_<feature>.md`**, next to the code, holding more
+than a summary: the protocol or register semantics, the evidence for each hardware
+claim, what has already been ruled out with the evidence that ruled it out, and what
+is still open.  `ra89r_findings.md` stays the cross-cutting write-up (hardware
+identification, address map, UI strings); a feature doc is where a feature's own
+detail lives once it has one, including its dead ends.
 - `tools/ra89r_flash.py` — host-side flasher implementing the bootloader protocol
   (`probe` and `flash` subcommands, `--dry-run` to inspect frames, `--baud auto`
   picks the fastest rate the bootloader answers at).  Needs `pyserial`; refuses
@@ -142,14 +155,26 @@ narrow, testable interface) as the model, and merged back into **`develop`**:
 ```
 main                      stable/import state
 develop                   integration: everything merged here
-driver/lcd                screen      -- working on hardware (init, fonts, layout)
-driver/uart               console     -- working on hardware (115200, fault reports)
-driver/backlight          lamp        -- working on hardware (GPIOA pin 1 + pin 5, 'l')
-driver/keypad             keys        -- current work: the 20 buttons are a 5-line
-                                         analog matrix (PA2/PA3/PA6/PA7/PB0 + PB9);
-                                         reader + console monitor ('k') working on
-                                         hardware, not merged yet
+driver/lcd                screen      -- merged; working on hardware (init, fonts, layout)
+driver/uart               console     -- merged; working on hardware (115200, faults)
+driver/backlight          lamp        -- merged; GPIOA pin 5 (the panel backlight), 'l'
+driver/keypad             keys        -- merged; 20 buttons, K5V3 KEY_Code_e, 'k' monitor
+driver/led                LED         -- merged, parked: PA0/PA1 do nothing visible;
+                                         the LED is an RF-chip indicator, see ra89r_led.md
+driver/battery            gauge       -- OPEN, unmerged: the bus is silent for us
+                                         although the stock reads it; see ra89r_battery.md
 ```
+
+The two open features have their own write-ups, and they are the places to start:
+
+| feature | doc | state |
+|---|---|---|
+| keypad | `ra89r_keypad.md` | done: 20 buttons, validated on the radio |
+| backlight | `ra89r_led.md` | done: GPIOA pin 5, confirmed on the radio |
+| status LED | `ra89r_led.md` | identified as an RF-chip indicator; needs the RF bring-up |
+| battery gauge | `ra89r_battery.md` | protocol decoded and implemented; the chip never answers |
+| beeper | `ra89r_beeper.md` | traced (TIM4 + a tone generator, its pin is PA4); not written |
+| RF transceiver | -- | not started; it would also deliver the status LED |
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
 each driver self-contained under `firmware/App/driver/`, keep it host-testable
@@ -161,16 +186,25 @@ disassembly is not validation: unvalidated work stays on the
 carries something we cannot stand behind.  Tooling, docs and integration changes
 (flasher, analysis scripts, this file) go straight onto `develop`.
 
-Screen, UART and backlight are confirmed working on the radio (panel shows the
-test card, console logs and answers commands at 115200, `l` switches the lamp),
-so changes to them are now incremental.  `driver/keypad` is the current work: the
-reader decodes all 20 buttons (verified on the radio with the `k` console monitor)
-and returns the K5V3/F4HWN `KEY_Code_e`, since the port target is that firmware;
-the ADC runs free-running through DMA like the stock application, so a poll is a
-memory read rather than a ~5 ms blocking conversion.  Not merged yet.
+Screen, UART, backlight and keypad are merged and confirmed on the radio: the panel
+shows the test card, the console logs and answers commands at 115200, `l` switches the
+backlight (GPIOA pin 5), and the keypad reader decodes all 20 buttons and returns the
+K5V3/F4HWN `KEY_Code_e` the port needs, with its ADC running free-running through DMA
+like the stock application and a `k` console monitor to re-check any button.
+
+Two features are not finished and are parked on their own branches, each with a doc:
+the **battery gauge** (protocol decoded, chip silent -- `ra89r_battery.md`) and the
+**status LED** (identified as an RF-chip indicator, so it comes with the RF bring-up --
+`ra89r_led.md`).  The **beeper** is traced but not written (TIM4 plus a tone generator,
+its pin is PA4 = `DAC_OUT1`).  The **RF transceiver** has not been started.
 
 ## Firmware / flashing
 
+- **Known discrepancy, unresolved:** on the radio this firmware reports
+  `app-valid marker at 0x0805FFF0 = 0xff (expected 0x11)`, while `tools/ra89r_flash.py`
+  writes `0x11` there by default.  Either the read or the write is landing somewhere
+  else.  It matters because a cleared marker is what leaves the radio sitting in the
+  bootloader; one power cycle tells which of the two it is.
 - **The bootloader only starts the application while `0x0805FFF0` holds `0x11`**
   (ra89r_bootloader.md §4c).  It clears that byte when it enters update mode, so
   a flashing tool must set it again or the radio reboots into the bootloader
