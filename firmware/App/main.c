@@ -208,7 +208,7 @@ static void animate_step(uint32_t ms)
  * any) the chip acknowledges is the whole diagnostic. */
 static void battery_report(void)
 {
-    unsigned i;
+    unsigned i, s;
     uint32_t mv;
     uint16_t v = 0;
 
@@ -218,11 +218,13 @@ static void battery_report(void)
                 battery_data_pin_ok() ? "ok" : "STUCK",
                 (unsigned)battery_bus_rate_khz());
 
-    uart_puts("battery: address ack per scale:");
-    for (i = 0; i < battery_bus_scale_count(); i++)
-        uart_printf(" %u=%s", (unsigned)battery_bus_scale_value(i),
-                    battery_scale_acked(i) ? "ack" : "--");
-    uart_puts("\n");
+    for (s = 0; s < battery_pd0_count(); s++) {
+        uart_printf("battery: address ack, reset line %s:", battery_pd0_name(s));
+        for (i = 0; i < battery_bus_scale_count(); i++)
+            uart_printf(" %u=%s", (unsigned)battery_bus_scale_value(i),
+                        battery_scale_acked(s, i) ? "ack" : "--");
+        uart_puts("\n");
+    }
 
     for (i = 0; i < battery_stage_count(); i++)
         uart_printf("  %s: %s\n", battery_stage_name(i),
@@ -235,8 +237,8 @@ static void battery_report(void)
     if (!battery_clk_pin_ok() || !battery_data_pin_ok()) {
         uart_puts("battery: a bus pin is not ours; the gauge cannot answer\n");
     } else if (!battery_bus_ok()) {
-        uart_printf("battery: the gauge never acknowledged (tried %u bus speeds)\n",
-                    (unsigned)battery_bus_scale_count());
+        uart_printf("battery: the gauge never acknowledged (%u reset-line states x %u bus speeds)\n",
+                    (unsigned)battery_pd0_count(), (unsigned)battery_bus_scale_count());
     } else if (battery_voltage_mv(&mv)) {
         uart_printf("battery: pack %u mV (%u.%02u V)\n",
                     (unsigned)mv, (unsigned)(mv / 1000u),
@@ -312,8 +314,8 @@ int main(void)
                   "monitor would report zeros for every line\n");
 
     /* Companion gauge chip: two-wire bus on PC14/PB2 (see driver/battery.c). */
-    uart_puts("battery: reset pulse, then the stock's configuration at three bus "
-              "speeds plus an address sweep (this takes about a second) ...\n");
+    uart_puts("battery: pins + address sweep over reset-line state and bus speed "
+              "(about a second) ...\n");
     battery_init();
     battery_report();
 

@@ -20,10 +20,9 @@
  *
  * The stock runs from the PLL its bootloader leaves running (CR = 0x0040e583,
  * PLLON) while this firmware forces HSI at 8 MHz, so the same call sites give a
- * slower bus here.  That cannot be resolved by reading, so battery_init() sends
- * the configuration unconditionally at three speeds -- the stock never waits for
- * an acknowledge, and a gauge can need a long run of clock edges before it wakes
- * -- and then probes the chip's address at every scaling as the diagnostic.
+ * slower bus here.  That cannot be resolved by reading, so battery_init() probes
+ * the chip's address over the two unknowns -- the reset/handshake line's state and
+ * the delay scaling -- and runs the rest only at a combination that answers.
  *
  * The bring-up itself is the stock's, not a guess.  The main routine (FUN_08024448)
  * calls FUN_080167F0 **once** before entering its poll loop; that reaches
@@ -58,10 +57,14 @@ static unsigned s_scale = 21u;              /* the stock's own inner count */
  * gauge was most likely waiting for -- was never actually tried. */
 static const unsigned scales[] = { 21u, 16u, 12u, 8u, 6u, 4u, 3u, 2u, 1u, 0u };
 
-/* The speeds the stock's configuration is sent at unconditionally: its own inner
- * count, a rate near the stock's (its PLL clock is faster than our 8 MHz, so the
- * equivalent scale is smaller), and the fastest this bus can go. */
-static const unsigned attempts[] = { 21u, 4u, 0u };
+/* The reset/handshake line at GPIOD pin 0 is not understood.  The stock only
+ * pulses it conditionally (FUN_080167F0 guards FUN_0801D69C) and *after* the
+ * battery-type handling, and its gauge state lives in .bss -- zero at boot -- so
+ * on a default boot the stock may never drive this pin at all.  Driving it was
+ * this driver's own choice, so every state is tried. */
+enum { PD0_OPEN = 0, PD0_LOW, PD0_HIGH, PD0_PULSE, PD0_STATES };
+
+static const char *const pd0_names[PD0_STATES] = { "open", "low", "high", "pulse" };
 
 unsigned battery_bus_scale_count(void)
 {
@@ -295,7 +298,7 @@ static const char *const stage_names[STAGE_COUNT] = {
 };
 
 static bool stage_ok[STAGE_COUNT];
-static bool scale_acked[sizeof scales / sizeof scales[0]];
+static bool scale_acked[PD0_STATES][sizeof scales / sizeof scales[0]];
 static bool s_bus_ok;
 static unsigned s_win_scale;    /* the speed that answered; 0 (fastest) if none */
 
@@ -326,12 +329,24 @@ bool battery_bus_ok(void)
     return s_bus_ok;
 }
 
-/* Whether the chip acknowledged its own address byte at this speed.  This is the
- * diagnostic: with the configuration going out unconditionally (see
- * battery_init), it says whether any speed reaches the chip at all. */
-bool battery_scale_acked(unsigned index)
+unsigned battery_pd0_count(void)
 {
-    return index < battery_bus_scale_count() ? scale_acked[index] : false;
+    return PD0_STATES;
+}
+
+const char *battery_pd0_name(unsigned state)
+{
+    return state < PD0_STATES ? pd0_names[state] : "?";
+}
+
+/* Whether the chip acknowledged its own address byte with this reset-line state at
+ * this speed.  This is the diagnostic: it says whether anything reaches the chip
+ * at all, and which of the two unknowns (line state, speed) matters. */
+bool battery_scale_acked(unsigned state, unsigned index)
+{
+    return state < PD0_STATES && index < battery_bus_scale_count()
+               ? scale_acked[state][index]
+               : false;
 }
 
 /* One address-byte probe (start, 0x80, then the acknowledge clock).  Cheap on
@@ -478,11 +493,43 @@ static bool s_data_ok;
 bool battery_clk_pin_ok(void) { return s_clk_ok; }
 bool battery_data_pin_ok(void) { return s_data_ok; }
 
+/* Put the reset/handshake line into one of the states battery_init sweeps. */
+static void set_pd0(unsigned state)
+{
+    switch (state) {
+    case PD0_OPEN:
+        gpio_config_input(BATTERY_RESET_PORT, BATTERY_RESET_PIN);   /* released */
+        break;
+    case PD0_LOW:
+        gpio_config_output(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
+        gpio_clear(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
+        break;
+    case PD0_HIGH:
+        gpio_config_output(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
+        gpio_set(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
+        break;
+    default:    /* the low-10ms-then-high pulse the doc read out of FUN_0801D69C */
+        gpio_config_output(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
+        gpio_clear(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
+        systick_delay_ms(10);
+        gpio_set(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
+        break;
+    }
+    systick_delay_ms(50);       /* let whatever it gates settle */
+}
+
 void battery_init(void)
 {
-    unsigned i;
+    unsigned s, i;
 
     s_lse_on = (RCC->BDCR & (RCC_BDCR_LSEON | RCC_BDCR_LSERDY)) != 0u;
+    s_bus_ok = false;
+    s_win_scale = 0u;
+    for (s = 0; s < PD0_STATES; s++)
+        for (i = 0; i < battery_bus_scale_count(); i++)
+            scale_acked[s][i] = false;
+    for (i = 0; i < STAGE_COUNT; i++)
+        stage_ok[i] = false;
 
     gpio_port_clock(CLK_PORT);
     gpio_port_clock(DAT_PORT);
@@ -498,15 +545,9 @@ void battery_init(void)
      * as a floating 0x3FF with no acknowledge. */
     gpio_config_output(DAT_PORT, DAT_PIN);
 
-    /* The gauge's reset line, PD0.  The stock drives it low, waits and releases
-     * it high (FUN_0801D69C: FUN_08011B74(GPIOD, 1, 0), FUN_080241F8(10),
-     * ... FUN_08011B74(GPIOD, 1)), instead of leaving the pin alone, and a
-     * floating reset input is the obvious reason a gauge would answer nothing. */
-    gpio_config_output(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
-    gpio_clear(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
-    systick_delay_ms(10);
-    gpio_set(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
-    systick_delay_ms(100);      /* a gauge takes a moment to come up */
+    /* The reset/handshake line is left as the hardware reset left it; set_pd0()
+     * drives the other states from the sweep below. */
+    gpio_config_input(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
 
     clk(0);
     dat(1);                     /* idle high */
@@ -522,36 +563,21 @@ void battery_init(void)
     if (!s_clk_ok || !s_data_ok)
         return;                 /* a bus pin is not ours; no speed will help */
 
-    /* 1. The stock's configuration goes out whether or not anything answers:
-     *    FUN_0800D35C never checks an ACK before writing the 68-byte block, and a
-     *    gauge can need a long run of clock edges before it wakes up and starts
-     *    acknowledging at all.  Skipping the sequence when the address probe is
-     *    silent would therefore skip it exactly when the chip is asleep. */
-    for (i = 0; i < sizeof attempts / sizeof attempts[0] && !s_bus_ok; i++) {
-        s_scale = attempts[i];
-        if (gauge_bringup(8100000u)) {      /* 8.1 V, this radio's own reading */
-            s_bus_ok = true;
-            s_win_scale = attempts[i];
-        }
-    }
-
-    /* 2. The diagnostic sweep: one address probe per scaling, so the console can
-     *    say whether any speed reaches the chip even when step 1 did not. */
-    for (i = 0; i < battery_bus_scale_count(); i++) {
-        s_scale = scales[i];
-        scale_acked[i] = bus_address_acked();
-    }
-
-    /* 3. If a probe answered and nothing has been acknowledged yet, run the whole
-     *    sequence there. */
-    if (!s_bus_ok) {
+    /* The gauge is read *unconfigured*.  The stock's 68-byte configuration sits
+     * behind FUN_080167F0's `state[8] == 1`, and that byte is in .bss (its scatter
+     * entry, 0x08023930, is a zero-fill), so on a default boot the stock never
+     * runs it and never polls before a runtime trigger.  The configuration is
+     * therefore not the difference, and the sweep is just an address probe over
+     * the two unknowns: the reset-line state and the bus speed.  Whatever answers
+     * first gets the full sequence and the reads. */
+    for (s = 0; s < PD0_STATES && !s_bus_ok; s++) {
+        set_pd0(s);
         for (i = 0; i < battery_bus_scale_count(); i++) {
-            if (scale_acked[i]) {
-                s_scale = scales[i];
-                if (gauge_bringup(8100000u)) {
-                    s_bus_ok = true;
-                    s_win_scale = scales[i];
-                }
+            s_scale = scales[i];
+            scale_acked[s][i] = bus_address_acked();
+            if (scale_acked[s][i]) {
+                s_win_scale = scales[i];
+                s_bus_ok = gauge_bringup(8100000u);  /* 8.1 V, this radio's reading */
                 break;
             }
         }
