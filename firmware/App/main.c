@@ -274,7 +274,11 @@ int main(void)
 
         battery_read(BATTERY_REG_VOLTAGE, &raw);
         battery_read(BATTERY_REG_GAIN, &gain);
-        if (!battery_bus_ok())
+        if (!battery_clk_pin_ok() || !battery_data_pin_ok())
+            uart_printf("battery: bus pin(s) not ours -- clk %s, data %s\n",
+                        battery_clk_pin_ok() ? "ok" : "STUCK",
+                        battery_data_pin_ok() ? "ok" : "STUCK");
+        else if (!battery_bus_ok())
             uart_printf("battery: the gauge never acknowledged (tried %u bus speeds)\n",
                         BATTERY_SCALE_COUNT);
         else if (battery_voltage_mv(&mv))
@@ -394,7 +398,11 @@ int main(void)
                     else
                         uart_printf(" %u=0x%04X!", (unsigned)regs[i], (unsigned)v);
                 }
-                if (!battery_bus_ok())
+                if (!battery_clk_pin_ok() || !battery_data_pin_ok())
+            uart_printf("battery: bus pin(s) not ours -- clk %s, data %s\n",
+                        battery_clk_pin_ok() ? "ok" : "STUCK",
+                        battery_data_pin_ok() ? "ok" : "STUCK");
+        else if (!battery_bus_ok())
             uart_printf("battery: the gauge never acknowledged (tried %u bus speeds)\n",
                         BATTERY_SCALE_COUNT);
         else if (battery_voltage_mv(&mv))

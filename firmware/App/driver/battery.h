@@ -29,6 +29,12 @@ void battery_init(void);
 unsigned battery_bus_scale(void);
 bool battery_bus_ok(void);
 
+/* Whether each bus pin could be driven and read back at the level it was set to.
+ * A pin owned by something else (the LSE oscillator on PC14, an alternate
+ * function, a short) fails this, and then no bus speed will help. */
+bool battery_clk_pin_ok(void);
+bool battery_data_pin_ok(void);
+
 /* Read one 16-bit register.  Returns false if the chip did not acknowledge. */
 bool battery_read(uint8_t reg, uint16_t *value);
 

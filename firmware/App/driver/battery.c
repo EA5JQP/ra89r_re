@@ -46,6 +46,8 @@ static unsigned s_scale = 21u;              /* the stock's own inner count */
 static const unsigned scales[BATTERY_SCALE_COUNT] = { 21u, 8u, 4u, 2u, 1u };
 
 static bool s_bus_ok;
+static bool s_clk_ok;
+static bool s_data_ok;
 
 static void bus_start(void);
 static void bus_stop(void);
@@ -110,8 +112,45 @@ bool battery_bus_ok(void)
     return s_bus_ok;
 }
 
+static bool pin_toggles(GPIO_TypeDef *port, uint32_t pin)
+{
+    unsigned lo, hi;
+
+    gpio_clear(port, pin);
+    delay(5);
+    lo = gpio_read(port, pin) ? 1u : 0u;
+    gpio_set(port, pin);
+    delay(5);
+    hi = gpio_read(port, pin) ? 1u : 0u;
+    return lo == 0u && hi == 1u;
+}
+
+bool battery_clk_pin_ok(void) { return s_clk_ok; }
+bool battery_data_pin_ok(void) { return s_data_ok; }
+
+/* PC14 is OSC32_IN.  Nothing in this firmware configures the LSE, so it is
+ * whatever the bootloader left -- and if the oscillator is running, the pin
+ * belongs to it, which would make the clock line never move and the chip deaf at
+ * every speed.  Same class of inherited-state bug as the ADC prescaler, so turn it
+ * off explicitly.  Writing BDCR needs the backup-domain protection lifted, and the
+ * PWR clock to reach it. */
+static void lse_off(void)
+{
+    unsigned t;
+
+    RCC->APB1ENR |= RCC_APB1ENR_PWREN;
+    (void)RCC->APB1ENR;
+    PWR->CR |= PWR_CR_DBP;
+    RCC->BDCR &= ~RCC_BDCR_LSEON;
+    for (t = 0; t < 20u && (RCC->BDCR & RCC_BDCR_LSERDY); t++)
+        systick_delay_ms(1);
+    PWR->CR &= ~PWR_CR_DBP;
+}
+
 void battery_init(void)
 {
+    lse_off();
+
     gpio_port_clock(CLK_PORT);
     gpio_port_clock(DAT_PORT);
     gpio_port_clock(BATTERY_RESET_PORT);
@@ -141,7 +180,15 @@ void battery_init(void)
     clk(0);
     dat(1);                     /* idle high */
 
-    bus_probe();
+    /* Prove the pins are ours before blaming the chip: reading back an output
+     * returns the level the pin is actually at. */
+    s_clk_ok = pin_toggles(CLK_PORT, CLK_PIN);
+    s_data_ok = pin_toggles(DAT_PORT, DAT_PIN);
+    clk(0);
+    dat(1);
+
+    if (s_clk_ok && s_data_ok)
+        bus_probe();
 }
 
 static void bus_start(void)
