@@ -76,7 +76,7 @@
  * Windows and key codes (the vendor's own calibration, reusable verbatim):
  *   (0, 0x07C] (0x384, 0x47C] (0x8B2, 0x9AA] (0xABB, 0xBB3]   -- every line
  *   PA2 additionally (0x4AA, 0x5A2] and (0x74E, 0x846], plus a digital read
- * A pin x window pairing is one key: see ra89r_findings.md ("Keypad") for the
+ * A pin x window pairing is one key: see ra89r_keypad.md for the
  * full table, the scanner (0x08024324) and the per-key handlers. */
 #define KEYPAD_ANALOG_A_MASK  ((1u << 2) | (1u << 3) | (1u << 6) | (1u << 7))
 #define KEYPAD_ANALOG_B_MASK  ((1u << 0) | (1u << 1))

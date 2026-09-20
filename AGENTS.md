@@ -169,13 +169,12 @@ The two open features have their own write-ups, and they are the places to start
 
 | feature | doc | state |
 |---|---|---|
-| keypad | `ra89r_findings.md`, "Keypad" | done: 20 buttons, validated on the radio |
+| keypad | `ra89r_keypad.md` | done: 20 buttons, validated on the radio |
 | backlight | `ra89r_led.md` | done: GPIOA pin 5, confirmed on the radio |
 | status LED | `ra89r_led.md` | identified as an RF-chip indicator; needs the RF bring-up |
 | battery gauge | `ra89r_battery.md` | protocol decoded and implemented; the chip never answers |
-| beeper | `ra89r_led.md` (the DAC note) | traced (TIM4 + a tone generator); PA4 is its pin |
-| RF transceiver | -- | not started |
-| LCD backlight vs panel | see above | *the backlight is solved*; nothing else pending there |
+| beeper | `ra89r_beeper.md` | traced (TIM4 + a tone generator, its pin is PA4); not written |
+| RF transceiver | -- | not started; it would also deliver the status LED |
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
 each driver self-contained under `firmware/App/driver/`, keep it host-testable
