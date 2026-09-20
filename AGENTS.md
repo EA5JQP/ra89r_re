@@ -237,6 +237,24 @@ reasons that have nothing to do with the code):
   decoded images, the CPS installer and `cps_decompiled/`; `~/Repos/h8_re` holds the
   Ghidra project with the RA89R programs (also in shifted coordinates).
 
+## Remote
+
+`origin` is `git@github.com:EA5JQP/ra89r_re.git` and every branch is pushed there
+(`main`, `develop`, `driver/*`), so work in progress is backed up without having
+to merge it first.  `PY32F4xx_Firmware/` is a **submodule** -- a reference to the
+upstream `OpenPuya/PY32F4xx_Firmware`, with the URL in `.gitmodules` -- so
+nothing of its ~150 MB is uploaded, and a clone needs
+`git clone --recurse-submodules` (a plain clone leaves that directory empty).
+
+On this host the sandbox mounts `/etc/ssh/*` owned by `nobody`, so ssh refuses to
+read its own system config ("Bad owner or permissions on
+/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf") and every push fails until that
+is bypassed:
+
+```sh
+GIT_SSH_COMMAND="ssh -F /dev/null -o BatchMode=yes" git push origin --all
+```
+
 ## Working rules
 
 - Keep scratch output in `/tmp`.  Generated artifacts live under `work/` and
