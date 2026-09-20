@@ -274,7 +274,10 @@ int main(void)
 
         battery_read(BATTERY_REG_VOLTAGE, &raw);
         battery_read(BATTERY_REG_GAIN, &gain);
-        if (battery_voltage_mv(&mv))
+        if (!battery_bus_ok())
+            uart_printf("battery: the gauge never acknowledged (tried %u bus speeds)\n",
+                        BATTERY_SCALE_COUNT);
+        else if (battery_voltage_mv(&mv))
             uart_printf("battery: pack %u mV (%u.%02u V)\n",
                         (unsigned)mv, (unsigned)(mv / 1000u), (unsigned)((mv % 1000u) / 10u));
         else
@@ -391,7 +394,10 @@ int main(void)
                     else
                         uart_printf(" %u=0x%04X!", (unsigned)regs[i], (unsigned)v);
                 }
-                if (battery_voltage_mv(&mv))
+                if (!battery_bus_ok())
+            uart_printf("battery: the gauge never acknowledged (tried %u bus speeds)\n",
+                        BATTERY_SCALE_COUNT);
+        else if (battery_voltage_mv(&mv))
                     uart_printf("  pack %u mV\n", (unsigned)mv);
                 else
                     uart_puts("  pack ?\n");

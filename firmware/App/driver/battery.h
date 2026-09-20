@@ -20,6 +20,15 @@
 /* Set up the bus pins.  Idle state: clock low (output), data released (input). */
 void battery_init(void);
 
+/* The bus speed found at init, and whether any speed was acknowledged at all.
+ * The stock's delay is a cycle count rather than a time, so the right scaling
+ * depends on the clock it was compiled for and cannot be read out of the image;
+ * battery_init() probes for it instead. */
+#define BATTERY_SCALE_COUNT 5u
+
+unsigned battery_bus_scale(void);
+bool battery_bus_ok(void);
+
 /* Read one 16-bit register.  Returns false if the chip did not acknowledge. */
 bool battery_read(uint8_t reg, uint16_t *value);
 

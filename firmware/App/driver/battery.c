@@ -15,10 +15,12 @@
  *   0x0800D138  the data pin's direction: output (arg 1) or released (arg 0)
  *
  * The stock's delay helper is 0x0802422A: a *fixed* loop of (n+1) x 21 iterations,
- * i.e. a cycle count rather than a time, so this mirrors its loop and lets the same
- * call sites give the same cycle counts.  At the 8 MHz this firmware runs on that
- * is slower in absolute time than the stock's PLL clock, which is the safe
- * direction for a bit-banged bus (there is no minimum clock rate).
+ * i.e. a cycle count, not a time -- so its absolute bus speed depends on the clock
+ * it was compiled for, and this firmware's 8 MHz puts the same loop about nine
+ * times slower (~8 kHz instead of ~70 kHz).  Since that cannot be resolved by
+ * reading, the bus *calibrates itself*: battery_init() probes the first command
+ * byte at a range of delay scalings and keeps the first one the chip acknowledges,
+ * so one flash settles the speed instead of one guess per flash.
  *
  * Not implemented: the stock also *writes* configuration to the chip and pulses
  * its reset line (PD0) at boot.  Reads alone are enough for a voltage reading --
@@ -36,13 +38,23 @@
 #define DAT_PORT BATTERY_DATA_PORT
 #define DAT_PIN  BATTERY_DATA_PIN
 
-/* The stock's own delay helper (0x0802422A): (n+1) x 21 iterations.  The inner
- * counter is volatile so the compiler cannot drop the loop, as it did not in the
- * stock image.  One unit here is ~30 us at 8 MHz. */
+/* The stock's own delay helper (0x0802422A): (n+1) x scale iterations, with the
+ * inner counter volatile so the compiler cannot drop the loop (as it did not in
+ * the stock image).  The scale is the bus speed and is found at init. */
+static unsigned s_scale = 21u;              /* the stock's own inner count */
+
+static const unsigned scales[BATTERY_SCALE_COUNT] = { 21u, 8u, 4u, 2u, 1u };
+
+static bool s_bus_ok;
+
+static void bus_start(void);
+static void bus_stop(void);
+static bool bus_write_byte(uint8_t v);
+
 static void delay(unsigned n)
 {
     for (unsigned i = 0; i <= n; i++)
-        for (volatile unsigned j = 0; j < 21u; j++)
+        for (volatile unsigned j = 0; j < s_scale; j++)
             ;
 }
 
@@ -64,6 +76,38 @@ static void dat_output(void)
 static void dat_input(void)
 {
     gpio_config_input(DAT_PORT, DAT_PIN);
+}
+
+/* Probe the bus: send the first command byte at each scaling until the chip
+ * acknowledges.  This is the speed calibration -- the only unknown the stock's
+ * code does not settle, because its delay is a cycle count rather than a time. */
+static void bus_probe(void)
+{
+    unsigned round, i;
+
+    for (round = 0; round < 2 && !s_bus_ok; round++) {
+        for (i = 0; i < BATTERY_SCALE_COUNT; i++) {
+            s_scale = scales[i];
+            bus_start();
+            s_bus_ok = bus_write_byte(0x80u);
+            bus_stop();
+            if (s_bus_ok)
+                break;
+            delay(20);
+        }
+        if (!s_bus_ok)
+            systick_delay_ms(200);      /* a gauge can still be booting */
+    }
+}
+
+unsigned battery_bus_scale(void)
+{
+    return s_scale;
+}
+
+bool battery_bus_ok(void)
+{
+    return s_bus_ok;
 }
 
 void battery_init(void)
@@ -92,10 +136,12 @@ void battery_init(void)
     gpio_clear(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
     systick_delay_ms(10);
     gpio_set(BATTERY_RESET_PORT, BATTERY_RESET_PIN);
-    systick_delay_ms(10);       /* let it come up before the first access */
+    systick_delay_ms(100);      /* a gauge takes a moment to come up */
 
     clk(0);
     dat(1);                     /* idle high */
+
+    bus_probe();
 }
 
 static void bus_start(void)
@@ -208,6 +254,9 @@ bool battery_read(uint8_t reg, uint16_t *value)
     clk(0);
 
     bus_stop();
+    clk(0);                     /* the stock leaves the clock low between transfers
+                                 * (FUN_08007158 drops it right after the stop) */
+    dat(1);
 
     *value = (uint16_t)(((uint16_t)(high & 0x03u) << 8) | low);
     return acked;
