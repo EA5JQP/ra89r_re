@@ -128,28 +128,23 @@ static bool pin_toggles(GPIO_TypeDef *port, uint32_t pin)
 bool battery_clk_pin_ok(void) { return s_clk_ok; }
 bool battery_data_pin_ok(void) { return s_data_ok; }
 
-/* PC14 is OSC32_IN.  Nothing in this firmware configures the LSE, so it is
- * whatever the bootloader left -- and if the oscillator is running, the pin
- * belongs to it, which would make the clock line never move and the chip deaf at
- * every speed.  Same class of inherited-state bug as the ADC prescaler, so turn it
- * off explicitly.  Writing BDCR needs the backup-domain protection lifted, and the
- * PWR clock to reach it. */
-static void lse_off(void)
-{
-    unsigned t;
+/* PC14 is OSC32_IN, so the LSE oscillator would own it if it were running.  This
+ * firmware does not configure it and neither does the stock app, which drives
+ * PC14 perfectly well -- so the LSE is off, and turning it off "just in case" was
+ * fixing something that was not broken.  It is *reported* instead: if the pin ever
+ * tests as not-ours, this is the first thing to look at, and the pin self-test
+ * below is what detects it.
+ */
+static bool s_lse_on;
 
-    RCC->APB1ENR |= RCC_APB1ENR_PWREN;
-    (void)RCC->APB1ENR;
-    PWR->CR |= PWR_CR_DBP;
-    RCC->BDCR &= ~RCC_BDCR_LSEON;
-    for (t = 0; t < 20u && (RCC->BDCR & RCC_BDCR_LSERDY); t++)
-        systick_delay_ms(1);
-    PWR->CR &= ~PWR_CR_DBP;
+bool battery_lse_on(void)
+{
+    return s_lse_on;
 }
 
 void battery_init(void)
 {
-    lse_off();
+    s_lse_on = (RCC->BDCR & (RCC_BDCR_LSEON | RCC_BDCR_LSERDY)) != 0u;
 
     gpio_port_clock(CLK_PORT);
     gpio_port_clock(DAT_PORT);

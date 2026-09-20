@@ -35,6 +35,10 @@ bool battery_bus_ok(void);
 bool battery_clk_pin_ok(void);
 bool battery_data_pin_ok(void);
 
+/* Whether the LSE was running (PC14 would then not be ours to drive).  Reported,
+ * never changed: the stock drives PC14 without configuring it. */
+bool battery_lse_on(void);
+
 /* Read one 16-bit register.  Returns false if the chip did not acknowledge. */
 bool battery_read(uint8_t reg, uint16_t *value);
 
