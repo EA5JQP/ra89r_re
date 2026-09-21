@@ -26,6 +26,10 @@ the CPS sources) lives outside the workspace (see "Reference inputs").
 - `ra89r_led.md` — the status LED (a transmit/receive indicator, driven by the RF
   chip, *not* an MCU pin) and the backlight (GPIOA pin 5), with the pin searches
   that came up empty and the pin map that settled them.
+- `ra89r_eeprom.md` — the external SPI NOR flash, i.e. what the CPS calls the
+  EEPROM: the part and its pins, the SPI command set, what is actually on the
+  chip (the flat codeplug, the firmware's journal at `0x20000`, the blob area),
+  and the planned write-validation test.
 
 **Every feature gets its own `ra89r_<feature>.md`**, next to the code, holding more
 than a summary: the protocol or register semantics, the evidence for each hardware
@@ -163,9 +167,12 @@ driver/led                LED         -- merged, parked: PA0/PA1 do nothing visi
                                          the LED is an RF-chip indicator, see ra89r_led.md
 driver/battery            gauge       -- OPEN, unmerged: the bus is silent for us
                                          although the stock reads it; see ra89r_battery.md
+driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR flash
+                                         ("EEPROM") reads and dumps; the write test has
+                                         not run yet, see ra89r_eeprom.md
 ```
 
-The two open features have their own write-ups, and they are the places to start:
+The open features have their own write-ups, and they are the places to start:
 
 | feature | doc | state |
 |---|---|---|
@@ -174,6 +181,7 @@ The two open features have their own write-ups, and they are the places to start
 | status LED | `ra89r_led.md` | identified as an RF-chip indicator; needs the RF bring-up |
 | battery gauge | `ra89r_battery.md` | protocol decoded and implemented; the chip never answers |
 | beeper | `ra89r_beeper.md` | traced (TIM4 + a tone generator, its pin is PA4); not written |
+| EEPROM (SPI NOR) | `ra89r_eeprom.md` | read + full dump validated on the radio; write test pending |
 | RF transceiver | -- | not started; it would also deliver the status LED |
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
