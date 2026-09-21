@@ -87,9 +87,10 @@
  *
  * The stock sends 0x90 and compares the reply with 0xEF16 (FUN_08018C7C /
  * FUN_08018BA0): that is a *Winbond* 32 Mbit assumption.  The part actually
- * fitted answers 0x8514 -- 0x85 is Puya, and the JEDEC id 0x852015 says 16 Mbit,
- * i.e. a P25Q16 with 2 MB -- so the stock's own id check does not match this
- * board and the driver here derives the size from the JEDEC id instead.
+ * fitted is a **Puya PY25Q16HB** -- 16 Mbit / 2 MB, read off a photo of the
+ * board -- which answers 0x8514 with JEDEC id 0x852015, so the stock's own id
+ * check does not match this board and the driver here derives the size from the
+ * JEDEC id instead.
  *
  * It sits on SPI1's *remapped* pins: the datasheet's default SPI1 mapping is
  * PA4..PA7, so PA15/PB3/PB4/PB5 is the remap -- the STM32F1-style arrangement.

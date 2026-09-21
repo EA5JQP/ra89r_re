@@ -5,11 +5,12 @@
  * see ra89r_findings.md, "CPS (programming software) -- band ranges are
  * CPS/EEPROM data" for the offset map.
  *
- * It is a Puya P25Q16 -- 0x90 answers 0x8514, JEDEC 0x852015, 16 Mbit / 2 MB --
- * on SPI1's *remapped* pins, driven by hand: PA15 chip select (exactly as the
- * stock does it -- a plain GPIO, not the SPI peripheral's NSS), PB3 clock,
- * PB4 MISO, PB5 MOSI.  SPI mode 0: the clock idles low and both sides sample on
- * the rising edge.
+ * It is a Puya PY25Q16HB -- 16 Mbit / 2 MB, per a photo of the board; the JEDEC
+ * id agrees (0x852015, capacity byte 0x15) and 0x90 answers 0x8514 -- on SPI1's
+ * *remapped* pins, driven by hand: PA15 chip select (exactly as the stock does
+ * it -- a plain GPIO, not the SPI peripheral's NSS), PB3 clock, PB4 MISO,
+ * PB5 MOSI.  SPI mode 0: the clock idles low and both sides sample on the rising
+ * edge.
  *
  * The stock identifies it in FUN_08018C7C (command 0x90) but compares the reply
  * with 0xEF16, a Winbond 32 Mbit id, so its own check does not match this
