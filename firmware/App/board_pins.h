@@ -83,9 +83,13 @@
 #define KEYPAD_PTT2_PIN       (1u << 9)
 
 /* External SPI NOR flash -- what the CPS calls the "EEPROM" (channels, names,
- * band ranges, settings, DTMF/tone tables, voice prompts).  Winbond class: the
- * stock sends 0x90 and compares the reply with 0xEF16 (FUN_08018C7C), i.e. a
- * 32 Mbit / 4 MB part, and reads it with 0x0B (FUN_08018C0C).
+ * band ranges, settings, DTMF/tone tables, voice prompts).
+ *
+ * The stock sends 0x90 and compares the reply with 0xEF16 (FUN_08018C7C /
+ * FUN_08018BA0): that is a *Winbond* 32 Mbit assumption.  The part actually
+ * fitted answers 0x8514 -- 0x85 is Puya, and the JEDEC id 0x852015 says 16 Mbit,
+ * i.e. a P25Q16 with 2 MB -- so the stock's own id check does not match this
+ * board and the driver here derives the size from the JEDEC id instead.
  *
  * It sits on SPI1's *remapped* pins: the datasheet's default SPI1 mapping is
  * PA4..PA7, so PA15/PB3/PB4/PB5 is the remap -- the STM32F1-style arrangement.

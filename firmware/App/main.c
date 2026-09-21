@@ -230,8 +230,8 @@ static void eeprom_report(void)
     present = spi_flash_id(&man_dev, &jedec);
     size = present ? spi_flash_size(jedec) : 0u;
 
-    uart_printf("\neeprom: 0x90 id 0x%04X (the stock expects 0xEF16), 0x9F jedec 0x%06X\n",
-                (unsigned)man_dev, (unsigned)jedec);
+    uart_printf("\neeprom: 0x90 id 0x%04X (the stock looks for the Winbond 0xEF16), "
+                "0x9F jedec 0x%06X\n", (unsigned)man_dev, (unsigned)jedec);
     if (!present) {
         uart_puts("eeprom: no chip answered -- MISO stayed high, so nothing drove\n"
                   "        it.  Check the pins before reading anything into this.\n");

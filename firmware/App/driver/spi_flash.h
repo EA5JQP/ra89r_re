@@ -5,14 +5,17 @@
  * see ra89r_findings.md, "CPS (programming software) -- band ranges are
  * CPS/EEPROM data" for the offset map.
  *
- * It is a Winbond-class 32 Mbit (4 MB) part on SPI1's *remapped* pins, driven by
- * hand: PA15 chip select (exactly as the stock does it -- a plain GPIO, not the
- * SPI peripheral's NSS), PB3 clock, PB4 MISO, PB5 MOSI.  SPI mode 0: the clock
- * idles low and both sides sample on the rising edge.
+ * It is a Puya P25Q16 -- 0x90 answers 0x8514, JEDEC 0x852015, 16 Mbit / 2 MB --
+ * on SPI1's *remapped* pins, driven by hand: PA15 chip select (exactly as the
+ * stock does it -- a plain GPIO, not the SPI peripheral's NSS), PB3 clock,
+ * PB4 MISO, PB5 MOSI.  SPI mode 0: the clock idles low and both sides sample on
+ * the rising edge.
  *
- * The stock identifies it in FUN_08018C7C (command 0x90, reply compared with
- * 0xEF16) and reads it in FUN_08018C0C (command 0x0B).  This driver uses 0x90
- * and 0x9F for identification and 0x03 for reads, which every SPI NOR accepts.
+ * The stock identifies it in FUN_08018C7C (command 0x90) but compares the reply
+ * with 0xEF16, a Winbond 32 Mbit id, so its own check does not match this
+ * board's part; this driver reads 0x90 and 0x9F and takes the capacity from the
+ * JEDEC id rather than assuming a part.  Data reads use 0x03, which every SPI
+ * NOR accepts (the stock uses 0x0B in FUN_08018C0C).
  */
 #ifndef DRIVER_SPI_FLASH_H
 #define DRIVER_SPI_FLASH_H
@@ -29,7 +32,8 @@ void spi_flash_init(void);
 bool spi_flash_id(uint16_t *man_dev, uint32_t *jedec);
 
 /* Size in bytes implied by a JEDEC id (0 when the capacity byte is not a known
- * shape).  0x16 -- the stock's part -- is 1 << 22 = 4 MB. */
+ * shape).  The byte is log2 of the size: 0x15 -> 2 MB (this board's P25Q16),
+ * 0x16 -> 4 MB (the part the stock's 0xEF16 check expects). */
 uint32_t spi_flash_size(uint32_t jedec);
 
 /* Read len bytes from a 24-bit address (command 0x03, no dummy byte). */
