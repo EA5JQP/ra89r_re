@@ -303,14 +303,32 @@ because the vector table's pointers do not resolve.
 ## CPS (programming software) — band ranges are CPS/EEPROM data
 
 From the earlier revision's CPS decompilation (sources `cps_decompiled/` in
-`~/Repos/ra_re`, **not re-verified in this pass**):
+`~/Repos/ra_re`), **partly re-verified against a dump of the chip** (see
+"External SPI flash" above; `tools/ra89r_eeprom.py`, branch `driver/eeprom`):
 
 * CPS EEPROM map: channels `7936`, channel names `4416`, band ranges `8000`,
   radio name `8048`, freq code `8080`, CTCSS/DCS `8208`, settings `8224`,
   DTMF `8256/8480`, 2-tone `8544+`, 5-tone `8800+`, contacts `10496/11520`.
 * Band data: 3 bands x `{RxLo, RxHi, TxLo, TxHi}` in 10 Hz units at offset
-  `8000` (`0xFFFFFFFF` = disabled). RA89R presets: `136-174 400-520`,
-  `144-146 430-440`, `144-148 420-450`, `144-148 430-440`.
+  `8000` (`0xFFFFFFFF` = disabled). **Confirmed in the dump**: band 0 is
+  `108-174 / 144-146`, band 1 disabled, band 2 `400-520 / 430-440` — note the
+  receiver floor is `108`, not the `136` of the preset list below.  RA89R
+  presets: `136-174 400-520`, `144-146 430-440`, `144-148 420-450`,
+  `144-148 430-440`.
+* Also confirmed at their offsets: radio name `RETEVIS` at `8048`, the model
+  string `RA89_Plus` at `8096` (`8080` is binary, not text), the DTMF and
+  2-tone/5-tone tables (`24W…`, `T-01`, `5T-01`) and the contacts area
+  (`BI6KSS` repeated).
+* **Not** confirmed: `7936` ("channels") holds `0f 00 00 00` repeated and the
+  name table at `4416` is all spaces, so the channel half of this map does not
+  describe the compact channel table the dump *does* contain — 21-byte records
+  (name 6 bytes, Rx u32, Tx u32 in 10 Hz units, Rx tone u16, Tx tone u16, 3 flag
+  bytes), whose first four are `CH-01 145.7500`, `CH-02 430.3750`,
+  `CH-03 438.6500`, `CH-04 144.9750`, all simplex.  Which of the two the
+  firmware treats as live is open, as is the copy scheme: the table appears five
+  times, `0x405` (= 49 x 21) apart, and again around `0x2100e`.
+* The firmware never uses these offsets as literals, so it parses the EEPROM
+  some other way; this map is the CPS's own view of the image.
 * The CPS rejects out-of-range frequencies ("BandOver") and clamps them to the
   nearest band edge, so 300 MHz (and the whole 174-400 MHz gap) never reaches
   the radio.
@@ -343,8 +361,13 @@ From the earlier revision's CPS decompilation (sources `cps_decompiled/` in
 3. **SPI flash contents.** The firmware erases/programs sectors
    (`0x08018BB8`, `0x08018D38`).  The chip is a Puya PY25Q16HB (2 MB), not the
    Winbond `0xEF16` the stock's id check expects, and it can be read over the
-   console (`tools/ra89r_eeprom.py`, branch `driver/eeprom`); the dump should
-   answer (2) and holds the CPS settings.
+   console (`tools/ra89r_eeprom.py`, branch `driver/eeprom`).  **Dumped**: the CPS
+   settings sit in the first 128 KB (see the CPS section above); `0x40000` holds
+   an index of 8-byte `{length, running offset}` entries followed by ~500 KB of
+   blobs (`~0x80000`-`0x110000`), and `0x110000`-`0x200000` is erased.  The blob
+   area is unidentified — it is where voice prompts or the fonts should be, but
+   `0xD0000` does **not** look like a 32-byte-stride 16x16 glyph table, so point
+   (2) is still open.
 4. **RAM band/config structs** `0x20009BB8`, `0x20009C14`, `0x20009D98`
    (pointed at by the `0x080198BC` table) — contents and who fills them.
 5. **Filter-switch callers**: nothing static references `0x08020260`; confirm on
