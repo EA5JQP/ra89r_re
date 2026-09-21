@@ -25,7 +25,7 @@ out wrongly, so every address in the earlier revision is shifted. See
 | MCU | **Puya PY32F403** (Cortex-M4F), 384 KB flash `0x08000000`, 64 KB SRAM `0x20000000`, `PY32F403xD` register map | vendor SDK + datasheet in `PY32F4xx_Firmware/`, `PY32F403_Datasheet_V1.8.pdf`; `FLASH_END = 0x0805FFFF` in `py32f403xD.h` |
 | Bootloader | 16 KB at `0x08000000`, dumped separately (`bootloader.bin`), SP `0x20003190`, reset `0x08000145`, contains the `.icf` record validator at `0x08000BE0` | `ra89r.py` docstring; `bootloader.bin` |
 | RF transceiver | **BK4815 / BK4829** (both supported by this build) | UI/debug strings `4815 Error`, `4829 Error` at `0x080270F4`ff; the four-byte register frame below matches the BK481x 3-wire write |
-| External flash | **SPI NOR, Winbond-class (`0xEF`), device id `0x16`**, on SPI1 | firmware reads it itself: `0x08018C7C` sends `0x90` + 24-bit address and compares the reply with `0xEF16` |
+| External flash | **Puya PY25Q16HB**, 16 Mbit / 2 MB SPI NOR, on SPI1's remapped pins (CS `PA15`, SCK `PB3`, MISO `PB4`, MOSI `PB5`) | read it over the console: `0x90` answers `0x8514`, JEDEC `0x852015`; the part number is also read off a photo of the board. The stock's own check (`0x08018C7C` then `0x08018BA0`) compares against `0xEF16` — a Winbond 32 Mbit id — so it **fails on this board** |
 | Display | **128x64 mono dot matrix, ST7565-family controller, bit-banged 4-wire bus** | see `ra89r_lcd.md` |
 | Bluetooth | module on a UART, AT-command driven | AT command strings at `0x08022344..0x080225D0` and `0x08022820` |
 | Models | **RA89R and RA89G** share this firmware | `RETEVIS RA89R`, `RETEVIS RA89G` at `0x080223E8`, `0x08019ED8`, `0x0802689C` |
@@ -88,7 +88,7 @@ radios). There is no "v3/v4" question any more — use `ra89r.py`.
 
 LCD pins: SDA `PB15`, SCLK `PA8`, A0/DC `PA10`, CS `PA11`, RESET `PA9`.
 
-### External SPI flash (SPI1: SCK `PB3`, MISO `PB4`, MOSI `PB5`, NSS `PA15`)
+### External SPI flash — Puya PY25Q16HB, 2 MB (SPI1 remap: SCK `PB3`, MISO `PB4`, MOSI `PB5`, NSS `PA15`)
 
 | address | role |
 |---|---|
@@ -96,7 +96,7 @@ LCD pins: SDA `PB15`, SCLK `PA8`, A0/DC `PA10`, CS `PA11`, RESET `PA9`.
 | `0x08012A9C` | clock + pin init for the SPI instance (dispatches on the handle's base) |
 | `0x08018B6C` | write-enable (`0x06`) |
 | `0x08018BB8` | 4 KB sector erase (`0x20` + 24-bit address) |
-| `0x08018C7C` | read ID (`0x90` + 24-bit 0) -> `0xEF16` |
+| `0x08018C7C` | read ID (`0x90` + 24-bit 0); the caller `0x08018BA0` expects `0xEF16`, which the fitted PY25Q16HB does not answer (it returns `0x8514`) |
 | `0x08018D38`, `0x08018E10` | page program (polled and DMA variants) |
 | `0x0801D1D8` | SPI1/handle bring-up; ends by validating the flash ID |
 | `0x0801CE90` | walks a 512-entry table (8 bytes/entry) and erases sectors past `0x1F8` |
@@ -253,7 +253,7 @@ The beep is a DAC tone on `PA4`: **see `ra89r_beeper.md`**.
 |---|---|---|
 | companion / PMIC | `PC14` clock, `PB2` data, `PD0` reset pulse | battery + charger gauge: `FUN_0800687C` returns the pack voltage (10-bit reading + 875/760/640, x 10000 uV), registers 2/3/5/7/10/11, polled from the main loop by `FUN_08017BB4` |
 | BK4815/BK4829 | bit-banged | register layer is `FUN_080220A0(reg, val)` write / `FUN_080180F0(reg)` read (used by the T/R path `FUN_08016228`); reg `0x67` is the RSSI (squelch decision in `FUN_080052B8`, debug string `RSSI R67 %d`), `0x65`/`0x63` are read alongside it |
-| SPI NOR | 16-bit serial: `FUN_08017FE4` (read) / `FUN_08018060` (write) | external flash |
+| SPI NOR | SPI1 remap: CS `PA15`, SCK `PB3`, MISO `PB4`, MOSI `PB5` | **Puya PY25Q16HB**, 2 MB — this is the CPS's EEPROM.  The `FUN_08017FE4`/`FUN_08018060` pair listed here before belongs to the BK4815/BK4829 bus, not to this chip |
 | LCD panel | `PA8`-`PA11` + `PB15` | see `ra89r_lcd.md` |
 | lamp | `PA1` + `PA5` | see "Backlight / lamp" above |
 
@@ -341,8 +341,10 @@ From the earlier revision's CPS decompilation (sources `cps_decompiled/` in
    external SPI flash and look for a 32-byte-stride glyph table, or trace the
    function on hardware with the language set to Chinese.
 3. **SPI flash contents.** The firmware erases/programs sectors
-   (`0x08018BB8`, `0x08018D38`); a dump of the chip (Winbond-class, id `0xEF16`)
-   would answer (2) and probably hold voice prompts/config.
+   (`0x08018BB8`, `0x08018D38`).  The chip is a Puya PY25Q16HB (2 MB), not the
+   Winbond `0xEF16` the stock's id check expects, and it can be read over the
+   console (`tools/ra89r_eeprom.py`, branch `driver/eeprom`); the dump should
+   answer (2) and holds the CPS settings.
 4. **RAM band/config structs** `0x20009BB8`, `0x20009C14`, `0x20009D98`
    (pointed at by the `0x080198BC` table) — contents and who fills them.
 5. **Filter-switch callers**: nothing static references `0x08020260`; confirm on
