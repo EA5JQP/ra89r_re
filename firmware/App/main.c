@@ -11,6 +11,7 @@
  *   any other character is drawn on the display.
  */
 #include <stdint.h>
+#include <stddef.h>
 
 #include "board.h"
 #include "driver/backlight.h"
@@ -20,6 +21,7 @@
 #include "driver/gpio.h"
 #include "driver/keypad.h"
 #include "driver/lcd_st7565.h"
+#include "driver/spi_flash.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
 #include "ui.h"
@@ -180,7 +182,8 @@ static void print_help(void)
               "          v/V contrast up/down  l backlight on/off  L PA0/PA1 led test  q heartbeat\n"
               "          r re-init panel (standard, bootloader-proven)\n"
               "          s re-init panel (stock app variant, 8 extra bytes)\n"
-              "          k keypad monitor (raw ADC per line + decoded key)\n");
+              "          k keypad monitor (raw ADC per line + decoded key)\n"
+              "          e eeprom id   E dump the whole eeprom as binary (~6 min)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -199,6 +202,78 @@ static void animate_step(uint32_t ms)
     if (pos > LCD_WIDTH - 26u)
         pos = 2u;
     lcd_refresh();
+}
+
+/* ---------------------------------------------------------------- eeprom */
+
+/* The external SPI NOR flash: what the CPS calls the EEPROM.  'e' identifies it,
+ * 'E' streams the whole chip as raw binary for tools/ra89r_eeprom.py to save.
+ * The CPS's offset map for the contents is in ra89r_findings.md. */
+
+static uint32_t eeprom_size(void)
+{
+    uint32_t jedec = 0;
+
+    if (!spi_flash_id(NULL, &jedec))
+        return 0u;
+    return spi_flash_size(jedec);
+}
+
+static void eeprom_report(void)
+{
+    uint16_t man_dev = 0;
+    uint32_t jedec = 0;
+    uint32_t size;
+    bool present;
+
+    spi_flash_init();
+    present = spi_flash_id(&man_dev, &jedec);
+    size = present ? spi_flash_size(jedec) : 0u;
+
+    uart_printf("\neeprom: 0x90 id 0x%04X (the stock expects 0xEF16), 0x9F jedec 0x%06X\n",
+                (unsigned)man_dev, (unsigned)jedec);
+    if (!present) {
+        uart_puts("eeprom: no chip answered -- MISO stayed high, so nothing drove\n"
+                  "        it.  Check the pins before reading anything into this.\n");
+        return;
+    }
+    if (size == 0u) {
+        uart_puts("eeprom: that is not a capacity byte this driver recognises\n");
+        return;
+    }
+    uart_printf("eeprom: %u bytes (%u KB); 'E' dumps the whole chip as binary\n",
+                (unsigned)size, (unsigned)(size / 1024u));
+}
+
+static void eeprom_dump(void)
+{
+    static uint8_t buf[256];
+    uint32_t size, addr, sum = 0;
+
+    spi_flash_init();
+    size = eeprom_size();
+    if (size == 0u) {
+        uart_puts("\neeprom: no chip answered; nothing to dump\n");
+        return;
+    }
+
+    /* A header line the host parses, then exactly <size> raw bytes, then a
+     * terminator carrying a weak checksum.  The loop runs to completion before
+     * the main loop resumes, so neither the UI nor the heartbeat can interleave
+     * into the middle of the stream.  At 115200 a 4 MB part takes ~6 minutes. */
+    uart_printf("\nEEPROM DUMP %u\n", (unsigned)size);
+    for (addr = 0; addr < size; addr += (uint32_t)sizeof buf) {
+        uint32_t n = size - addr;
+        uint32_t i;
+
+        if (n > (uint32_t)sizeof buf)
+            n = (uint32_t)sizeof buf;
+        spi_flash_read(addr, buf, n);
+        for (i = 0; i < n; i++)
+            sum += buf[i];
+        uart_write_raw((const char *)buf, n);       /* no CR/LF rewriting */
+    }
+    uart_printf("\nEEPROM END %08X\n", (unsigned)sum);
 }
 
 /* ------------------------------------------------------------------- main */
@@ -382,6 +457,12 @@ int main(void)
                 uart_printf("\nkeypad monitor %s -- press one button at a time\n",
                             keypad_monitor ? "on" : "off");
                 keypad_last = -2;           /* force the next poll to print */
+                break;
+            case 'e':
+                eeprom_report();
+                break;
+            case 'E':
+                eeprom_dump();
                 break;
             default:
                 break;

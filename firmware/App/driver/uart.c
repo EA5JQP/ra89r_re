@@ -68,6 +68,14 @@ void uart_write(const char *buf, uint32_t len)
         uart_putc(buf[i]);
 }
 
+void uart_write_raw(const char *buf, uint32_t len)
+{
+    uint32_t i;
+
+    for (i = 0; i < len; i++)
+        putc_raw(buf[i]);
+}
+
 void uart_puts(const char *s)
 {
     while (*s)

@@ -82,9 +82,24 @@
 #define KEYPAD_ANALOG_B_MASK  ((1u << 0) | (1u << 1))
 #define KEYPAD_PTT2_PIN       (1u << 9)
 
-/* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) talks to the
- * external SPI NOR flash (Winbond-class, id 0xEF16); the RF transceiver
- * (BK4815/BK4829) is on a 3-wire bus; the USB-C port goes to the MCU's USB
- * device peripheral, which nothing in the stock firmware enables. */
+/* External SPI NOR flash -- what the CPS calls the "EEPROM" (channels, names,
+ * band ranges, settings, DTMF/tone tables, voice prompts).  Winbond class: the
+ * stock sends 0x90 and compares the reply with 0xEF16 (FUN_08018C7C), i.e. a
+ * 32 Mbit / 4 MB part, and reads it with 0x0B (FUN_08018C0C).
+ *
+ * It sits on SPI1's *remapped* pins: the datasheet's default SPI1 mapping is
+ * PA4..PA7, so PA15/PB3/PB4/PB5 is the remap -- the STM32F1-style arrangement.
+ * The stock drives PA15 by hand as a plain GPIO chip select
+ * (FUN_08011B74(GPIOA, 0x8000, ...)), which is what the driver here does too;
+ * clock and data are pushed by hand as well, so no peripheral or DMA setup is
+ * involved. */
+#define SPI_FLASH_CS_PIN     (1u << 15)   /* PA15 */
+#define SPI_FLASH_SCK_PIN    (1u << 3)    /* PB3  */
+#define SPI_FLASH_MISO_PIN   (1u << 4)    /* PB4  */
+#define SPI_FLASH_MOSI_PIN   (1u << 5)    /* PB5  */
+
+/* Not mapped yet: the RF transceiver (BK4815/BK4829) is on a 3-wire bus on
+ * PA12 + PB8 + PB12; the USB-C port goes to the MCU's USB device peripheral,
+ * which nothing in the stock firmware enables. */
 
 #endif /* APP_BOARD_PINS_H */
