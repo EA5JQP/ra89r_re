@@ -211,11 +211,14 @@ backlight (GPIOA pin 5), and the keypad reader decodes all 20 buttons and return
 K5V3/F4HWN `KEY_Code_e` the port needs, with its ADC running free-running through DMA
 like the stock application and a `k` console monitor to re-check any button.
 
-Two features are not finished and are parked on their own branches, each with a doc:
-the **battery gauge** (protocol decoded, chip silent -- `ra89r_battery.md`) and the
-**status LED** (identified as an RF-chip indicator, so it comes with the RF bring-up --
-`ra89r_led.md`).  The **beeper** is traced but not written (TIM4 plus a tone generator,
-its pin is PA4 = `DAC_OUT1`).  The **RF transceiver** has not been started.
+Three features are unfinished and parked on their own branches, each with a doc:
+the **battery gauge** (protocol decoded, chip silent -- `ra89r_battery.md`), the
+**EEPROM** (read and dumped, write test pending -- `ra89r_eeprom.md`) and the
+**BK4829** RF transceiver (bus and configuration extracted, driver written but not
+run on the radio -- `ra89r_bk4829.md`).  The **status LED** is not a feature of its
+own: it is an RF-chip indicator, so it arrives with the RF bring-up
+(`ra89r_led.md`).  The **beeper** is traced but not written (TIM4 plus a tone
+generator, its pin is PA4 = `DAC_OUT1`).
 
 ## Firmware / flashing
 
