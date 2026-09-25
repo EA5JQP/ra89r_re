@@ -166,11 +166,13 @@ A decompiler pass over the runtime paths (not the boot init) now answers most of
 * **TX power**: the UI carries `Power Select` (`0x08017900`), `Power 5W`
   (`0x08017910`) and `Power 10W` (`0x0801791C`) — the setting the RA89G V52
   "10 W enable" build is named for.  Which registers it lands in has not been
-  traced.  The strongest lead is the BK4829's `0x7d`, which the stock computes
-  from a **three-bit codeplug setting** (`0x20009F28 + 0x0f`, written only by
-  `FUN_0800FE18` from `record_byte & 7`) and one flag; the six-step ladder that
-  formula produces fits a power level better than anything else in the menu, but
-  the field is unnamed (`ra89r_bk4829.md`).
+  traced.  The strongest lead is the BK4829's `0x7d`: the stock computes it as
+  `0xe940 | v`, where `v` comes from a **three-bit codeplug setting**
+  (`buffer[10] & 7` of the 32-byte block at EEPROM `0x2020`) and a flag that this
+  image only ever writes as 0 — which resolves to `0xE958` on this radio's
+  codeplug.  The six-step ladder that formula produces fits a power level better
+  than anything else in the menu, but the field itself is still unnamed
+  (`ra89r_bk4829.md`).
 * **Status LED**: the LED is an RF-chip indicator rather than an MCU pin
   (`ra89r_led.md`), so it comes with this bring-up.
 
