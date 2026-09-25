@@ -128,15 +128,24 @@ bool bk4829_detect(void)
     return bk4829_read_reg(BK4829_REG_ID) == BK4829_ID;
 }
 
-/* The stock's boot configuration, verbatim: FUN_08006B78, 39 writes.
+/* The stock's boot configuration, verbatim: FUN_08006B78, 39 registers in 40
+ * writes.
  *
  * Order matters.  The two register-0 writes come first, the block below in this
  * order, and the last two (0x48 then 0x47) last.  Between the 0x4c entry and
- * those two the stock calls FUN_0801BAF4, which re-writes register 0x7d
- * conditioned on the build: it reads a three-valued field at 0x20009f37 and,
- * when a flag (0x20000301) is set, writes `0xe940 | (((field - 3) * 3) + 0x0c)`.
- * That variant tweak is deliberately not reproduced here -- the value below is
- * the one this stock image writes unconditionally. */
+ * those two the stock calls FUN_0801BAF4, which ALWAYS re-writes register 0x7d:
+ * all four of its branches fall through to
+ * `FUN_080220A0(0xe940 | v, 0x7d)`, where v comes from a field at 0x20009f37
+ * and the flag at 0x20000301 picks between two formulas
+ *
+ *     flag == 1:  v = (field < 3) ? (3 - field) * 3 + 0x0c : (field - 3) * 3 + 0x0c
+ *     otherwise:  v = (field < 3) ? (3 - field) * 4 + 0x18 : (field - 3) * 4 + 0x18
+ *
+ * so the value that actually reaches the chip is 0xe940 | v, never the 0xe920
+ * written below -- that write is dead.  Both inputs are runtime configuration in
+ * the stock's RAM, which our firmware does not build, so the OR operand cannot be
+ * reproduced here; 0x7d is the first register to check once the bus answers on
+ * the radio (see ra89r_bk4829.md, "The boot configuration"). */
 static const struct {
     uint8_t  reg;
     uint16_t value;
@@ -175,7 +184,7 @@ static const struct {
     { 0x73, 0x6681 },
     { 0x77, 0x88ef },
     { 0x7b, 0x73dc },
-    { 0x7d, 0xe920 },
+    { 0x7d, 0xe920 },   /* dead: FUN_0801BAF4 overwrites this, see the note above */
     { 0x7e, 0x303e },
     { 0x4c, 0xe520 },
     /* FUN_0801BAF4 (the per-build tweak of 0x7d) sits here in the stock. */
