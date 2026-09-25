@@ -128,8 +128,7 @@ bool bk4829_detect(void)
     return bk4829_read_reg(BK4829_REG_ID) == BK4829_ID;
 }
 
-/* The stock's boot configuration, verbatim: FUN_08006B78, 39 registers in 40
- * writes.
+/* The stock's boot configuration: FUN_08006B78, 39 registers in 40 writes.
  *
  * Order matters.  The two register-0 writes come first, the block below in this
  * order, and the last two (0x48 then 0x47) last.  Between the 0x4c entry and
@@ -138,14 +137,20 @@ bool bk4829_detect(void)
  * `FUN_080220A0(0xe940 | v, 0x7d)`, where v comes from a field at 0x20009f37
  * and the flag at 0x20000301 picks between two formulas
  *
- *     flag == 1:  v = (field < 3) ? (3 - field) * 3 + 0x0c : (field - 3) * 3 + 0x0c
- *     otherwise:  v = (field < 3) ? (3 - field) * 4 + 0x18 : (field - 3) * 4 + 0x18
+ *     flag == 1:  v = 3 * field + 3
+ *     otherwise:  v = 4 * field + 12
  *
- * so the value that actually reaches the chip is 0xe940 | v, never the 0xe920
- * written below -- that write is dead.  Both inputs are runtime configuration in
- * the stock's RAM, which our firmware does not build, so the OR operand cannot be
- * reproduced here; 0x7d is the first register to check once the bus answers on
- * the radio (see ra89r_bk4829.md, "The boot configuration"). */
+ * so the 0xe920 the stock writes here first is dead: the chip only ever sees
+ * 0xe940 | v.
+ *
+ * Both inputs trace back into the codeplug rather than to constants, and the
+ * value this radio ends up sending is derived in ra89r_bk4829.md ("The boot
+ * configuration"): the field is `buffer[10] & 7` of the 32-byte settings block
+ * at EEPROM 0x2020, which reads 0x03 here, and the only instruction in the stock
+ * that writes the flag writes 0.  Hence v = 4 * 3 + 12 = 0x18, and the value below
+ * is 0xe940 | 0x18 = 0xe958.  Our firmware does not build that config struct, so
+ * this is a derived constant rather than a computed one; 0x7d is the first
+ * register to read back once the bus answers on the radio. */
 static const struct {
     uint8_t  reg;
     uint16_t value;
@@ -184,7 +189,7 @@ static const struct {
     { 0x73, 0x6681 },
     { 0x77, 0x88ef },
     { 0x7b, 0x73dc },
-    { 0x7d, 0xe920 },   /* dead: FUN_0801BAF4 overwrites this, see the note above */
+    { 0x7d, 0xe958 },   /* the stock's effective value; see the note above */
     { 0x7e, 0x303e },
     { 0x4c, 0xe520 },
     /* FUN_0801BAF4 (the per-build tweak of 0x7d) sits here in the stock. */
