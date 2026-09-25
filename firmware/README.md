@@ -72,6 +72,20 @@ gcc -std=c11 -I App -I App/driver -DLCD_HOST_TEST tools/preview.c App/ui.c \
 /tmp/preview            # ASCII art of the boot screen, status row, echo row, ...
 ```
 
+The two RF register layers are hardware independent too (the bus is a separate
+file), so what they put on the wire can be checked without a radio.  The test
+swaps `rf_bus.c` for a recording stub and asserts the exact transfers:
+
+```sh
+gcc -std=c11 -Wall -Wextra -I App -I App/driver tools/test_rf.c \
+    App/driver/bk4829.c App/driver/bk4815.c -o /tmp/test_rf && /tmp/test_rf
+```
+
+It covers the identity handshake (register 0 must read `0x4829` / `0x4816`),
+both address encodings, the BK4815's 36-byte block against the stock image byte
+for byte, and the BK4829's derived register `0x7d` value.  It cannot tell whether
+a part answers -- `R` on the console does that -- only that we ask correctly.
+
 After boot the panel shows a bordered test card (all drawn with the stock fonts
 lifted from the radio):
 
@@ -125,7 +139,9 @@ the stacked registers on the console instead of dying silently
 | `p` | animated bar on/off |
 | `r` / `s` | re-init the panel: standard sequence (the bootloader's, now the default) / stock-app sequence (eight extra bytes) |
 | `v` / `V` | contrast up / down (`0x81`, value) |
-| `l` | backlight on/off (GPIOA pin 1) |
+| `l` | backlight on/off (GPIOA pin 5) |
+| `R` | probe both RF parts: read register 0 of each and compare with the expected id (`0x4829` BK4829, `0x4816` BK4815), plus one more register from each |
+| `W` | replay both parts' stock boot configuration and re-probe (incl. the BK4829's `0x7d` read-back) |
 | `q` | heartbeat lines on the console (every 5 s) on/off |
 | other printable keys | echoed to the UART and shown on the display |
 

@@ -210,6 +210,18 @@ routines, so a plausible reading is that the BK4829 is the bottom-of-VHF
 test on the radio, not a finding.  What *is* established is that the choice comes
 from the channel frequency plus that state byte, never from a build option.
 
+**The exclusivity is only in the T/R mode registers.**  The per-mode routine
+`FUN_08016DE8` configures *both* parts in one pass: it selects the channel's
+filter bandwidth on the BK4829 (`FUN_0800B634(channel[0x79] - 1)`, programming
+register `0x09`), writes the BK4829's `0x32`/`0x24`/`0x47`/`0x4a`/`0x50`,
+rewrites its band/filter register `0x33` twice (`FUN_080137D4(3, 0)` then
+`FUN_080137D4(0x10, 0)`), and in between calls `FUN_08013790(2)` — the **BK4815**
+band register `0x75` — whenever the channel byte at `+0x11` is 1 or 2.  So both
+transceivers are detected, initialised and re-tuned per channel; what the
+frequency flag decides is only which part receives the *T/R state* writes
+(`0x47`/`0x13`/`0x30`/`0x31` versus `0x0c`).  Whether both parts are then in the
+signal path at once, or one is a band the other is not, is not established.
+
 ## The two calls at the end of the bring-up
 
 `FUN_0800D434` is identified: it sets `RCC_AHB2ENR` bits 3 and 4 (the GPIOB and
