@@ -30,6 +30,10 @@ the CPS sources) lives outside the workspace (see "Reference inputs").
   EEPROM: the part and its pins, the SPI command set, what is actually on the
   chip (the flat codeplug, the firmware's journal at `0x20000`, the blob area),
   and the planned write-validation test.
+- `ra89r_rf.md` — the two fitted RF transceivers (a **BK4829** on chip select
+  `PB8` and a **BK4815** on `PB13`, sharing clock `PA12` and data `PB12`), how the
+  firmware tells them apart, and their factory register sequences as extracted
+  from the stock image.
 
 **Every feature gets its own `ra89r_<feature>.md`**, next to the code, holding more
 than a summary: the protocol or register semantics, the evidence for each hardware
