@@ -53,4 +53,9 @@ void bk4829_configure(void);
 /* How many register writes that is (for the console). */
 unsigned bk4829_config_writes(void);
 
+/* Read one table entry back out, so a caller can verify what was written
+ * without keeping a second copy of the table.  `i` must be less than
+ * bk4829_config_writes(). */
+void bk4829_config_entry(unsigned i, uint8_t *reg, uint16_t *value);
+
 #endif /* DRIVER_BK4829_H */

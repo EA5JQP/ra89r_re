@@ -105,6 +105,16 @@ unsigned bk4829_config_writes(void)
     return (unsigned)(sizeof bk4829_config / sizeof bk4829_config[0]);
 }
 
+void bk4829_config_entry(unsigned i, uint8_t *reg, uint16_t *value)
+{
+    if (i >= bk4829_config_writes())
+        return;
+    if (reg)
+        *reg = bk4829_config[i].reg;
+    if (value)
+        *value = bk4829_config[i].value;
+}
+
 void bk4829_configure(void)
 {
     unsigned i;

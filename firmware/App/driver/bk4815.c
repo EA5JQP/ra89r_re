@@ -77,6 +77,16 @@ unsigned bk4815_config_writes(void)
     return (unsigned)(sizeof bk4815_config / sizeof bk4815_config[0]);
 }
 
+void bk4815_config_entry(unsigned i, uint8_t *reg, uint16_t *value)
+{
+    if (i >= bk4815_config_writes())
+        return;
+    if (reg)
+        *reg = bk4815_config[i].reg;
+    if (value)
+        *value = bk4815_config[i].value;
+}
+
 const uint8_t *bk4815_config_block(unsigned *len)
 {
     if (len)

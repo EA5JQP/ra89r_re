@@ -183,7 +183,8 @@ static void print_help(void)
               "          r re-init panel (standard, bootloader-proven)\n"
               "          s re-init panel (stock app variant, 8 extra bytes)\n"
               "          k keypad monitor (raw ADC per line + decoded key)\n"
-              "          R probe both RF chips (ids)   W configure both\n");
+              "          R probe both RF chips (ids)   W configure both\n"
+              "          X read back every register the configuration wrote\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -295,6 +296,81 @@ static void rf_configure(void)
      * stock sends it.  Press 'R' on a stock-booted radio for that. */
     uart_printf("  BK4829 reg 0x7d = 0x%04X after we wrote the derived 0xE958\n",
                 (unsigned)bk4829_read_reg(0x7d));
+}
+
+/* Read every register the configuration wrote back and compare.  This is the
+ * stronger half of 'W': "the part still answers its id" only shows the bus is
+ * alive, while this shows whether the writes actually landed -- all 16 bits of
+ * them -- in the part's own registers.
+ *
+ * Two things to expect, so a mismatch is not read as a fault on its own:
+ *
+ *   - register 0 is the reset write and reads back as the chip id, not as the
+ *     value sent, so it is reported separately;
+ *   - where the table writes one register more than once (the BK4829 writes
+ *     0x48 twice, 0x30/0x4a in the per-mode routines), only the last write is
+ *     meaningful, so earlier ones are skipped here.
+ *
+ * A register that is read-only or clears on read will also differ.  That is why
+ * this prints the value read instead of only a verdict. */
+static void rf_verify_one(const char *name, unsigned count, bool is_4815)
+{
+    unsigned i, j, checked = 0, bad = 0;
+    uint16_t id;
+
+    id = is_4815 ? bk4815_read_reg(BK4815_REG_ID) : bk4829_read_reg(BK4829_REG_ID);
+    uart_printf("  %s reg 0x00 reads 0x%04X (the reset write; expected the id)\n",
+                name, (unsigned)id);
+
+    for (i = 0; i < count; i++) {
+        uint8_t reg, reg2;
+        uint16_t want, got;
+        int superseded = 0;
+
+        if (is_4815)
+            bk4815_config_entry(i, &reg, &want);
+        else
+            bk4829_config_entry(i, &reg, &want);
+
+        if (reg == 0x00)
+            continue;                   /* the reset write, reported above */
+
+        /* Only the last write to a register is observable. */
+        for (j = i + 1u; j < count; j++) {
+            if (is_4815)
+                bk4815_config_entry(j, &reg2, 0);
+            else
+                bk4829_config_entry(j, &reg2, 0);
+            if (reg2 == reg) {
+                superseded = 1;
+                break;
+            }
+        }
+        if (superseded)
+            continue;
+
+        got = is_4815 ? bk4815_read_reg(reg) : bk4829_read_reg(reg);
+        checked++;
+        if (got != want) {
+            bad++;
+            uart_printf("    %s 0x%02X: wrote 0x%04X, read 0x%04X\n",
+                        name, (unsigned)reg, (unsigned)want, (unsigned)got);
+        }
+    }
+
+    uart_printf("  %s: %u registers compared, %u differ%s\n",
+                name, checked, bad,
+                bad ? "  (read-only or self-clearing registers will show here)"
+                    : "  -- every write landed");
+}
+
+static void rf_verify(void)
+{
+    uart_puts("\nRF: reading back every register the configuration wrote\n");
+    rf_verify_one("BK4829", bk4829_config_writes(), false);
+    rf_verify_one("BK4815", bk4815_config_writes(), true);
+    uart_puts("  note: the BK4815's 36-byte block (regs 2..19) is not covered\n"
+              "        by this -- 'R' shows a few of those registers.\n");
 }
 
 /* ------------------------------------------------------------------- main */
@@ -484,6 +560,9 @@ int main(void)
                 break;
             case 'W':
                 rf_configure();
+                break;
+            case 'X':
+                rf_verify();
                 break;
             default:
                 break;

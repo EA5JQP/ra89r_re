@@ -249,6 +249,40 @@ static void test_bk4815_config(void)
           "three writes are known to be placeholders (0x4c, 0x55, 0x62)");
 }
 
+/* The accessors the console's read-back verification walks.  If these are wrong
+ * the verification lies, so they get their own check. */
+static void test_accessors(void)
+{
+    uint8_t reg = 0;
+    uint16_t value = 0;
+    unsigned n;
+
+    printf("table accessors\n");
+
+    n = bk4829_config_writes();
+    bk4829_config_entry(0, &reg, &value);
+    check_hex(reg, 0x00, "bk4829 entry 0 reg");
+    check_hex(value, 0x8000, "bk4829 entry 0 value");
+
+    bk4829_config_entry(n - 1, &reg, &value);
+    check_hex(reg, 0x47, "bk4829 last entry reg");
+    check_hex(value, 0x6042, "bk4829 last entry value");
+
+    reg = 0xFF;
+    value = 0xFFFF;
+    bk4829_config_entry(n, &reg, &value);          /* out of range: untouched */
+    check_hex(reg, 0xFF, "bk4829 out-of-range entry leaves reg alone");
+    check_hex(value, 0xFFFF, "bk4829 out-of-range entry leaves value alone");
+
+    n = bk4815_config_writes();
+    bk4815_config_entry(0, &reg, &value);
+    check_hex(reg, 0x70, "bk4815 entry 0 reg");
+    check_hex(value, 0xA000, "bk4815 entry 0 value");
+    bk4815_config_entry(n - 1, &reg, &value);
+    check_hex(reg, 0x0C, "bk4815 last entry reg");
+    check_hex(value, 0x0A03, "bk4815 last entry value");
+}
+
 int main(void)
 {
     printf("rf register-layer test (stub bus, no radio)\n\n");
@@ -257,6 +291,7 @@ int main(void)
     test_framing();
     test_bk4829_config();
     test_bk4815_config();
+    test_accessors();
 
     printf("\n%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

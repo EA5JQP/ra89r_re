@@ -52,6 +52,11 @@ unsigned bk4815_config_writes(void);
  * this firmware therefore cannot reproduce -- it sends 0 for them. */
 unsigned bk4815_ram_sourced_writes(void);
 
+/* Read one table entry back out, so a caller can verify what was written
+ * without keeping a second copy of the table.  `i` must be less than
+ * bk4815_config_writes(). */
+void bk4815_config_entry(unsigned i, uint8_t *reg, uint16_t *value);
+
 /* The 36-byte block the stock sends to registers 2..19 (flash 0x08024E40). */
 const uint8_t *bk4815_config_block(unsigned *len);
 
