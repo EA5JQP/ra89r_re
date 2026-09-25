@@ -185,9 +185,10 @@ driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR fl
 driver/bk4829             RF          -- OPEN, unmerged: both RF transceivers (a
                                          shared 3-wire bus, the BK4829 and the
                                          BK4815) and their stock register
-                                         configurations; the id probe has not been
-                                         run on the radio, see ra89r_bk4829.md and
-                                         ra89r_bk4815.md
+                                         configurations; both parts answer their id
+                                         on the radio and accept the configuration,
+                                         but no RF effect has been observed yet, see
+                                         ra89r_bk4829.md and ra89r_bk4815.md
 ```
 
 The open features have their own write-ups, and they are the places to start:
@@ -200,7 +201,7 @@ The open features have their own write-ups, and they are the places to start:
 | battery gauge | `ra89r_battery.md` | protocol decoded and implemented; the chip never answers |
 | beeper | `ra89r_beeper.md` | traced (TIM4 + a tone generator, its pin is PA4); not written |
 | EEPROM (SPI NOR) | `ra89r_eeprom.md` | read + full dump validated on the radio; write test pending |
-| RF transceivers | `ra89r_bk4829.md`, `ra89r_bk4815.md`, `ra89r_rfpath.md` | both parts extracted and both driven; the id probe (`R`) has not run on the radio yet |
+| RF transceivers | `ra89r_bk4829.md`, `ra89r_bk4815.md`, `ra89r_rfpath.md` | both parts driven; both answer their id on the radio and accept the configuration, but no RF effect observed yet |
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
 each driver self-contained under `firmware/App/driver/`, keep it host-testable
@@ -221,8 +222,10 @@ like the stock application and a `k` console monitor to re-check any button.
 Three features are unfinished and parked on their own branches, each with a doc:
 the **battery gauge** (protocol decoded, chip silent -- `ra89r_battery.md`), the
 **EEPROM** (read and dumped, write test pending -- `ra89r_eeprom.md`) and the
-**BK4829** RF transceiver (bus and configuration extracted, driver written but not
-run on the radio -- `ra89r_bk4829.md`).  The **status LED** is not a feature of its
+**RF transceivers** (the bus and both stock configurations extracted, driver
+written; on the radio both parts answer an id probe and accept the configuration,
+but no RF effect has been observed yet -- `ra89r_bk4829.md`, `ra89r_bk4815.md`).
+The **status LED** is not a feature of its
 own: it is an RF-chip indicator, so it arrives with the RF bring-up
 (`ra89r_led.md`).  The **beeper** is traced but not written (TIM4 plus a tone
 generator, its pin is PA4 = `DAC_OUT1`).
