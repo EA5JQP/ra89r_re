@@ -19,6 +19,13 @@ them.
 Both selects are driven by hand, not by a peripheral; every access brackets its
 transfer with its own select low → transfer → high.
 
+**Validated on the radio**: a read-only probe of both parts on a freshly booted
+radio returned `0x4829` from the BK4829 and `0x4816` from the BK4815 — the clock,
+the shared data line, both selects and both address encodings — and both still
+answered after each had been sent its full stock boot configuration
+(`ra89r_bk4829.md`, "Validated on the radio").  What the configuration *does* is
+still unobserved.
+
 The bit layer is shared by both chips:
 
 | address | role |
