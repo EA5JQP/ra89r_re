@@ -1,31 +1,31 @@
-/* BK4829 RF transceiver -- the shared 3-wire bus and the stock's register setup.
+/* BK4829 RF transceiver -- register framing and the stock's boot setup.
  *
- * Two BK481x parts are fitted and share one bit-banged bus (see ra89r_rf.md):
+ * Two BK481x parts are fitted and share one bit-banged 3-wire bus, which lives
+ * in `rf_bus.c`:
  *
  *   PA12  clock        (`BK_SCL_PIN`)
  *   PB12  data         (`BK_SDA_PIN`, output to send, released to read)
  *   PB8   chip select  BK4829 (`BK4829_CS_PIN`)
- *   PB13  chip select  BK4815 (`BK4815_CS_PIN`, not driven by this driver yet)
+ *   PB13  chip select  BK4815 (`BK4815_CS_PIN`) -- see `bk4815.h`
  *
- * A register access is: select low, one byte whose bit 7 is the read flag and
- * whose bits 6..0 are the register, then one 16-bit word MSB first.  That is
- * what the stock's own primitives do --
+ * A BK4829 register access is: select low, one address byte whose bit 7 is the
+ * read flag and whose bits 6..0 are the register, then one 16-bit word MSB
+ * first.  That is what the stock's own primitives do --
  *
  *   0x08021FF4  write: clock low, select low, `reg & 0x7f`, two value bytes,
  *               select high
  *   0x080180F0  read: `reg | 0x80`, then 16 bits in
- *   0x08017D6C  shift a byte out over PB12 with PA12 as the clock
- *   0x08017FE4  shift 16 bits in
- *   0x0801DCF0  / 0x0801DCB8  switch PB12 between output and input
- *   0x08009772  detects: register 0 must read 0x4829
+ *   0x08009772  detect: register 0 must read 0x4829, else the stock takes its
+ *               error path and leaves the part unconfigured
  *
- * -- and the UV-K1/K5V3 `bk4829.c` bit-bang is the same shape (SCL low, eight
- * bits MSB first with a short delay, then the word), which is where this
- * driver's layout comes from.
+ * -- and the UV-K1/K5V3 `bk4829.c` bit-bang is the same shape, which is where
+ * this driver's layout came from.  Note that the BK4815 frames differently: it
+ * sends the register shifted left with the read flag in bit 0.
  *
- * The configuration is the stock's boot sequence verbatim (FUN_08006B78, 39
- * writes), lifted from the image; ra89r_rf.md has it and the differences
- * against the K1's own BK4819/BK4829 sequences.
+ * The configuration is the stock's boot sequence (FUN_08006B78, 39 registers in
+ * 40 writes) lifted from the image; ra89r_bk4829.md has it, the one derived
+ * value in it (register 0x7d) and the differences against the K1's own
+ * BK4819/BK4829 sequences.  Nothing here has run on the radio yet.
  */
 #ifndef DRIVER_BK4829_H
 #define DRIVER_BK4829_H
