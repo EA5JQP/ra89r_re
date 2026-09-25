@@ -118,6 +118,10 @@ Offline checks that need no radio (the flash and layout regressions):
 python3 tools/ra89r_bootloader_sim.py --pty /tmp/ra89r-pty &
 python3 tools/ra89r_flash.py --port "$(cat /tmp/ra89r-pty)" flash firmware/build/Debug/ra89r_fw.icf
 
+# the two RF register layers on a PC, against a recording bus stub (30 checks)
+cd firmware && gcc -std=c11 -I App -I App/driver tools/test_rf.c \
+    App/driver/bk4829.c App/driver/bk4815.c -o /tmp/test_rf && /tmp/test_rf
+
 # screen layout on a PC, then eyeball the ASCII art (see firmware/README.md)
 cd firmware && gcc -std=c11 -I App -I App/driver -DLCD_HOST_TEST \
     tools/preview.c App/ui.c App/driver/lcd_st7565.c \
@@ -178,9 +182,12 @@ driver/battery            gauge       -- OPEN, unmerged: the bus is silent for u
 driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR flash
                                          ("EEPROM") reads and dumps; the write test has
                                          not run yet, see ra89r_eeprom.md
-driver/bk4829             RF          -- OPEN, unmerged: the BK4829 3-wire bus and
-                                         the stock's register configuration; not yet
-                                         run on the radio, see ra89r_bk4829.md
+driver/bk4829             RF          -- OPEN, unmerged: both RF transceivers (a
+                                         shared 3-wire bus, the BK4829 and the
+                                         BK4815) and their stock register
+                                         configurations; the id probe has not been
+                                         run on the radio, see ra89r_bk4829.md and
+                                         ra89r_bk4815.md
 ```
 
 The open features have their own write-ups, and they are the places to start:
@@ -193,7 +200,7 @@ The open features have their own write-ups, and they are the places to start:
 | battery gauge | `ra89r_battery.md` | protocol decoded and implemented; the chip never answers |
 | beeper | `ra89r_beeper.md` | traced (TIM4 + a tone generator, its pin is PA4); not written |
 | EEPROM (SPI NOR) | `ra89r_eeprom.md` | read + full dump validated on the radio; write test pending |
-| RF transceivers | `ra89r_bk4829.md`, `ra89r_bk4815.md`, `ra89r_rfpath.md` | both parts and their boot configuration extracted; a BK4829 driver exists, not yet run on the radio |
+| RF transceivers | `ra89r_bk4829.md`, `ra89r_bk4815.md`, `ra89r_rfpath.md` | both parts extracted and both driven; the id probe (`R`) has not run on the radio yet |
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
 each driver self-contained under `firmware/App/driver/`, keep it host-testable
