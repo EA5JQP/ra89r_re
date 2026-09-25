@@ -118,7 +118,7 @@ Offline checks that need no radio (the flash and layout regressions):
 python3 tools/ra89r_bootloader_sim.py --pty /tmp/ra89r-pty &
 python3 tools/ra89r_flash.py --port "$(cat /tmp/ra89r-pty)" flash firmware/build/Debug/ra89r_fw.icf
 
-# the two RF register layers on a PC, against a recording bus stub (30 checks)
+# the two RF register layers on a PC, against a recording bus stub (40 checks)
 cd firmware && gcc -std=c11 -I App -I App/driver tools/test_rf.c \
     App/driver/bk4829.c App/driver/bk4815.c -o /tmp/test_rf && /tmp/test_rf
 
