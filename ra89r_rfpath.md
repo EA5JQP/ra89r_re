@@ -134,15 +134,15 @@ power-on/off and sleep paths.
 ## The rest of the RF path
 
 A decompiler pass over the runtime paths (not the boot init) now answers most of
-"which chip does what", and the answer is neither a band split nor a TX/RX split:
+"which chip does what":
 
 * **T/R**: `FUN_08016228` is the transmit/receive entry and `FUN_08009CC4` is its
   counterpart (back to the idle state).  The body only runs if the per-channel
   state (`param_1 + 0x1c`) says so, or if **`PC13` reads low** — the one place
   `PC13` is an *input* rather than the output line `FUN_08009C9C` drives.  Both
-  functions then branch on the **same runtime flag** at `0x20000303`
+  functions then branch on the **same flag** at `0x20000303`
   (`DAT_08016380` in one, `DAT_08009d40` in the other), and the flag *chooses
-  which chip is driven*, not which half of a band:
+  which chip is driven*:
   * flag `== 1` → the **BK4829**: register `0x47` = `0x6042`/`0x6142` (when the
     state byte at `+0x75` is 0) or `0x6040`/`0x6740` (otherwise, also clearing the
     RAM flag at `0x20000336`), the choice within each pair set by the flag at
@@ -173,6 +173,40 @@ A decompiler pass over the runtime paths (not the boot init) now answers most of
 * **Status LED**: the LED is an RF-chip indicator rather than an MCU pin
   (`ra89r_led.md`), so it comes with this bring-up.
 
+## What the T/R flag is
+
+The flag at `0x20000303` is not a compile-time or menu option — it is computed
+from the channel's frequency.  `FUN_0800E560(channel)` returns the channel's
+frequency field (`+0x94`, or `+0x98` when the direction/offset flags at `+3`,
+`+0x73` and `+0x74` select the other one), and three functions set the flag from
+it:
+
+| function | test | effect |
+|---|---|---|
+| `FUN_0800978C`, `FUN_08017340`, `FUN_0800D684` | `freq < 0x03567E00` → flag `0`, else `1` (or `1` outright when state `+0x75` is set) | flag from the comparison |
+| `FUN_08006360` | raw `+0x94 <= 0x00CC77C0` | sets state `+0x75` **and** the flag to `1` |
+
+The units matter and are settled: the codeplug stores frequencies in **10 Hz**
+steps — a 145.7500 MHz channel is the u32 `0x00DE6378` (14,575,000) in its
+21-byte record, the band table at EEPROM `0x1F40` reads 10,800,000 / 17,400,000
+/ 43,000,000 / 52,000,000 for 108 / 174 / 430 / 520 MHz, and the firmware itself
+contains `0x00A4CB80` (10,800,000) with no Hz-unit 108 MHz constant anywhere.
+So the two thresholds are **560 MHz** and **134 MHz**.
+
+560 MHz is above the radio's tunable range, so that comparison never turns the
+flag on by itself; the operative rule is `FUN_08006360`'s — at or below 134 MHz
+both the state byte and the flag go to `1`, and everything above it leaves the
+BK4815 branch of the T/R path in charge.
+
+That makes this board's "which chip does what" a frequency-derived split after
+all, and it is an odd place for one: 134 MHz sits *inside* the stored VHF range
+(108–174 MHz) rather than on a band edge, and there is no AM/airband mode in the
+UI strings.  The state byte `+0x75` is also read by several other per-band
+routines, so a plausible reading is that the BK4829 is the bottom-of-VHF
+(air-band-shaped) path and the BK4815 the main path — but that is a hypothesis to
+test on the radio, not a finding.  What *is* established is that the choice comes
+from the channel frequency plus that state byte, never from a build option.
+
 ## The two calls at the end of the bring-up
 
 `FUN_0800D434` is identified: it sets `RCC_AHB2ENR` bits 3 and 4 (the GPIOB and
@@ -197,13 +231,13 @@ It touches no RF register directly; the three callees are not identified yet.
 
 ## Open
 
-1. **Which chip does what.**  Partly answered, above: the paths are selected by a
-   runtime flag rather than by band or direction, and the BK4829 carries the
-   filter (`0x33`), the RSSI/metering (`0x63`/`0x65`/`0x67`/`0x99`), the squelch
-   ramp (`0x13`) and the T/R set (`0x47`/`0x30`/`0x31`), while the BK4815 carries
-   the band select (`0x75`) and the path switch (`0x0c`).  What that flag at
-   `0x20000303` means (a band, a wide/narrow or FM-broadcast mode, or a
-   board/option variant) is still open, and so is which part actually radiates.
+1. **Which chip does what.**  Answered as far as static reading goes: the BK4829
+   carries the filter (`0x33`), the RSSI/metering (`0x63`/`0x65`/`0x67`/`0x99`),
+   the squelch ramp (`0x13`) and the T/R set (`0x47`/`0x30`/`0x31`); the BK4815
+   carries the band select (`0x75`) and the path switch (`0x0c`); and the T/R
+   path picks between them from the channel frequency (`0x20000303`, see "What
+   the T/R flag is").  Still open: why the crossover is 134 MHz, what the state
+   byte `+0x75` means on its own, and which part actually radiates.
 2. The power-on/off and sleep handling, and whether anything else gates the RF
    rails — the decompiler is now available, but these paths have not been walked.
 3. The per-channel/per-band routines that feed the T/R registers, and where the
