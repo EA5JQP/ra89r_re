@@ -14,6 +14,7 @@
 
 #include "board.h"
 #include "driver/backlight.h"
+#include "driver/bk4829.h"
 #include "driver/led.h"
 #include "driver/clock.h"
 #include "driver/fault.h"
@@ -180,7 +181,8 @@ static void print_help(void)
               "          v/V contrast up/down  l backlight on/off  L PA0/PA1 led test  q heartbeat\n"
               "          r re-init panel (standard, bootloader-proven)\n"
               "          s re-init panel (stock app variant, 8 extra bytes)\n"
-              "          k keypad monitor (raw ADC per line + decoded key)\n");
+              "          k keypad monitor (raw ADC per line + decoded key)\n"
+              "          R bk4829 id   W write the stock's bk4829 configuration\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -199,6 +201,28 @@ static void animate_step(uint32_t ms)
     if (pos > LCD_WIDTH - 26u)
         pos = 2u;
     lcd_refresh();
+}
+
+/* --------------------------------------------------------------------- rf */
+
+/* The BK4829 sits on its own chip select and shares the bus with the BK4815.
+ * 'R' just reads its id -- the same check the stock makes at boot
+ * (FUN_08009772: register 0 must read 0x4829, else it shows "4829 Error").
+ * 'W' replays the stock's boot configuration (FUN_08006B78) and re-reads the
+ * id, so a silent bus and a deaf-but-configured chip look different. */
+static void bk4829_report(void)
+{
+    uint16_t id;
+
+    bk4829_init();
+    id = bk4829_read_reg(BK4829_REG_ID);
+
+    uart_printf("\nbk4829: register 0 = 0x%04X (expected 0x%04X) -- %s\n",
+                (unsigned)id, (unsigned)BK4829_ID,
+                bk4829_detect() ? "present" : "not answering");
+    if (!bk4829_detect())
+        uart_puts("        bus: PA12 clock, PB12 data, PB8 select;\n"
+                  "        the BK4815 shares the first two and uses PB13.\n");
 }
 
 /* ------------------------------------------------------------------- main */
@@ -382,6 +406,15 @@ int main(void)
                 uart_printf("\nkeypad monitor %s -- press one button at a time\n",
                             keypad_monitor ? "on" : "off");
                 keypad_last = -2;           /* force the next poll to print */
+                break;
+            case 'R':
+                bk4829_report();
+                break;
+            case 'W':
+                bk4829_configure();
+                uart_printf("\nbk4829: %u config writes sent; register 0 now 0x%04X\n",
+                            bk4829_config_writes(),
+                            (unsigned)bk4829_read_reg(BK4829_REG_ID));
                 break;
             default:
                 break;

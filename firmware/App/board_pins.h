@@ -82,9 +82,23 @@
 #define KEYPAD_ANALOG_B_MASK  ((1u << 0) | (1u << 1))
 #define KEYPAD_PTT2_PIN       (1u << 9)
 
+/* RF transceivers: two BK481x parts are fitted, sharing one bit-banged bus with
+ * a chip select each (ra89r_rf.md).  Clock `PA12`, bidirectional data `PB12`
+ * (driven to send, released to read), and `PB8` = BK4829, `PB13` = BK4815 --
+ * both selects are active low and the stock drives them by hand.
+ *
+ * Evidence: the stock's write primitive `FUN_08021FF4` (BK4829, select `PB8`)
+ * and read `FUN_080180F0` bracket their transfer with `PB8` low, while
+ * `FUN_08021F78`/`FUN_08018060` do the same with `PB13`; `FUN_08009772` reads
+ * register 0 over the first and compares with `0x4829`, `FUN_08009758` over the
+ * second against `0x4816`. */
+#define BK_SCL_PIN           (1u << 12)   /* PA12 */
+#define BK_SDA_PIN           (1u << 12)   /* PB12 */
+#define BK4829_CS_PIN        (1u << 8)    /* PB8  */
+#define BK4815_CS_PIN        (1u << 13)   /* PB13 */
+
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) talks to the
- * external SPI NOR flash (Winbond-class, id 0xEF16); the RF transceiver
- * (BK4815/BK4829) is on a 3-wire bus; the USB-C port goes to the MCU's USB
- * device peripheral, which nothing in the stock firmware enables. */
+ * external SPI NOR flash (see ra89r_eeprom.md); the USB-C port goes to the
+ * MCU's USB device peripheral, which nothing in the stock firmware enables. */
 
 #endif /* APP_BOARD_PINS_H */
