@@ -106,7 +106,7 @@ buses and the indicators:
 | `PA15`, `PB3`, `PB4`, `PB5` | the external SPI NOR flash (`ra89r_eeprom.md`) |
 | `PB15`, `PA8`–`PA11` | the LCD |
 | `PA0`, `PA1` | the TX/RX indicator field (see `ra89r_led.md`) and RF control |
-| `PC13` | driven low around the RF and audio paths (`FUN_08009C9C`, 11 callers) |
+| `PC13` | driven low around the RF and audio paths (`FUN_08009C9C`, 11 callers) and **read** in the T/R path, where it has to be low (`FUN_08016228`) |
 | `PA13`, `PA14` | driven low from a few paths (the debug pins, reused) |
 
 So the picture is:
@@ -133,12 +133,36 @@ power-on/off and sleep paths.
 
 ## The rest of the RF path
 
-* **T/R**: `FUN_08016228` is the transmit/receive path and writes both chips.
-* **Band/filter**: `FUN_080137D4` (with `FUN_08013790`) reads and rewrites
-  register `0x33`; the RF bring-up calls it before configuring anything.
-* **Squelch**: `FUN_080052B8` reads register `0x67` (RSSI) and makes the decision
-  from it; the debug page shows it as `RSSI R67 %d`, with `0x65`/`0x63` read
-  alongside.
+A decompiler pass over the runtime paths (not the boot init) now answers most of
+"which chip does what", and the answer is neither a band split nor a TX/RX split:
+
+* **T/R**: `FUN_08016228` is the transmit/receive entry and `FUN_08009CC4` is its
+  counterpart (back to the idle state).  The body only runs if the per-channel
+  state (`param_1 + 0x1c`) says so, or if **`PC13` reads low** — the one place
+  `PC13` is an *input* rather than the output line `FUN_08009C9C` drives.  Both
+  functions then branch on the **same runtime flag** at `0x20000303`
+  (`DAT_08016380` in one, `DAT_08009d40` in the other), and the flag *chooses
+  which chip is driven*, not which half of a band:
+  * flag `== 1` → the **BK4829**: register `0x47` = `0x6042`/`0x6142` (when the
+    state byte at `+0x75` is 0) or `0x6040`/`0x6740` (otherwise, also clearing the
+    RAM flag at `0x20000336`), the choice within each pair set by the flag at
+    `0x20003DDC`; register `0x13` = `0x03BE` or `0x03FF` along with it; register
+    `0x30` = `0xBFF1` (skipped only when the config byte at `0x20009F28 + 0x34`
+    is 0 *and* state `+0x75` is 0); and register `0x31` is read and bit 2 cleared.
+  * otherwise → the **BK4815**: one register, `0x0c` — `0x0203` to enter the
+    state, `0x0a03` to leave it, which is exactly the value its boot init writes.
+* **Band/filter — correction.**  The two calls are *not* two halves of one
+  register.  `FUN_080137D4(mask, value)` is **BK4829-only**: it reads register
+  `0x33`, clears bit `14 - n` for every bit `n` set in `mask`, and sets bits
+  `0..6` from `value`.  `FUN_08013790(band)` is **BK4815-only**: it rewrites the
+  low six bits of register `0x75` with `0x09` for band 0, `0x11` for 1, `0x0A`
+  for 2 and `0x12` for 3.  The bring-up calls `FUN_08013790(3)` and
+  `FUN_080137D4(3, 0)` — band 3 on the BK4815, and clear the mask-`3` filter bits
+  on the BK4829.
+* **Squelch / metering**: `FUN_080052B8` reads **BK4829** registers `0x63`,
+  `0x67` (masked `& 0x1ff` — the RSSI the debug page prints as `RSSI R67 %d`) and
+  `0x65`, plus `0x99` elsewhere, and walks **BK4829** register `0x13` in an
+  eight-step ramp (`0x3b0 | (8 - level)`, all the way to `0x3ff`).
 * **TX power**: the UI carries `Power Select` (`0x08017900`), `Power 5W`
   (`0x08017910`) and `Power 10W` (`0x0801791C`) — the setting the RA89G V52
   "10 W enable" build is named for.  Which registers it lands in has not been
@@ -149,15 +173,42 @@ power-on/off and sleep paths.
 * **Status LED**: the LED is an RF-chip indicator rather than an MCU pin
   (`ra89r_led.md`), so it comes with this bring-up.
 
+## The two calls at the end of the bring-up
+
+`FUN_0800D434` is identified: it sets `RCC_AHB2ENR` bits 3 and 4 (the GPIOB and
+GPIOC clocks) and then configures **`PB2` and `PC14` as outputs** (mode 1, no
+pull, speed 2) through `FUN_0801199C`.  Those are exactly the two wires
+`ra89r_battery.md` attributes to the companion gauge — so the "RF bring-up" also
+establishes the gauge bus, which is worth knowing before blaming the RF code for
+that bus.  It finishes with `FUN_080137D4(8, 0)`, i.e. a second poke at the
+BK4829's filter register `0x33`.
+
+`FUN_08007F90` is a mode dispatch on the byte at `0x20009F28 + 0x24`:
+
+```
+< 2:  clear state[0x20000016]
+      0 -> FUN_08009D80()   = FUN_0800A968(0, 2)
+      1 -> FUN_0801638C()   = FUN_0801533C(config[0x2d])
+      clear state[0x20000016] again
+>= 2: FUN_0801537C() then FUN_0801638C()
+```
+
+It touches no RF register directly; the three callees are not identified yet.
+
 ## Open
 
-1. **Which chip does what.**  Both are configured and used throughout; whether
-   they are split by band, by TX/RX, or one is a second receiver is not
-   established.
+1. **Which chip does what.**  Partly answered, above: the paths are selected by a
+   runtime flag rather than by band or direction, and the BK4829 carries the
+   filter (`0x33`), the RSSI/metering (`0x63`/`0x65`/`0x67`/`0x99`), the squelch
+   ramp (`0x13`) and the T/R set (`0x47`/`0x30`/`0x31`), while the BK4815 carries
+   the band select (`0x75`) and the path switch (`0x0c`).  What that flag at
+   `0x20000303` means (a band, a wide/narrow or FM-broadcast mode, or a
+   board/option variant) is still open, and so is which part actually radiates.
 2. The power-on/off and sleep handling, and whether anything else gates the RF
    rails — the decompiler is now available, but these paths have not been walked.
-3. The per-band/RX/TX routines, and where the TX power setting lands.
-4. `FUN_0800D434` and `FUN_08007F90` (the other two calls in the bring-up) are
-   not identified.
+3. The per-channel/per-band routines that feed the T/R registers, and where the
+   TX power setting lands.
+4. `FUN_0800A968`, `FUN_0801533C` and `FUN_0801537C` (the `FUN_08007F90` callees)
+   are not identified.
 5. Which string `FUN_08015D14(0x0b)` actually renders, and what the byte at
    `0x20009F28 + 0x1c` selects (the language table it indexes is built in RAM).
