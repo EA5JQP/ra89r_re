@@ -213,21 +213,19 @@ static void animate_step(uint32_t ms)
  * (FUN_08009772 / FUN_08009758), and a failure there is what makes it show its
  * error screen instead of configuring the part.
  *
- * 'R' writes nothing -- it is a read-only snapshot of both parts, so two things
- * are worth knowing about it:
- *
- *   - it can be pressed on a freshly booted radio before any configuration has
- *     been sent, and
- *   - the radio does not touch the RF pins at boot, so if the two chips keep
- *     their state across an MCU reset, 'R' shows what the *stock* firmware left
- *     in them.  That is the only way to read the stock's own values without a
- *     logic analyser, which matters for the three BK4815 registers the stock
- *     takes from its RAM and for the BK4829's computed register 0x7d.  If the
- *     chips reset with the MCU instead, the same read gives their power-on
- *     defaults -- also worth having as a baseline.
+ * 'R' writes nothing -- it is a read-only snapshot of both parts.  Pressed on a
+ * freshly booted radio it shows the parts' **power-on defaults**, not the
+ * stock's configuration: getting this firmware into flash means entering update
+ * mode, so both parts are reset by the time this code runs.  That was tried and
+ * settled on the radio -- the BK4815's register 0x0C reads 0xFFFF here while the
+ * stock's boot init always writes 0x0A03 to it -- so do not read these numbers
+ * as "what the stock had".  ra89r_bk4829.md has the default map and the
+ * argument.
  *
  * 'W' replays both parts' stock boot configuration and re-probes, so a silent
- * bus, a deaf-but-configured chip and a live one look different. */
+ * bus, a deaf-but-configured chip and a live one look different.  'X' reads
+ * every written register back and compares, which is what shows whether the
+ * writes landed rather than merely that the parts still answer. */
 static void rf_dump(const char *name, uint8_t id_reg, const uint8_t *regs,
                     unsigned n, bool is_4815)
 {
