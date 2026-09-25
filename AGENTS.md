@@ -30,10 +30,14 @@ the CPS sources) lives outside the workspace (see "Reference inputs").
   EEPROM: the part and its pins, the SPI command set, what is actually on the
   chip (the flat codeplug, the firmware's journal at `0x20000`, the blob area),
   and the planned write-validation test.
-- `ra89r_rf.md` — the two fitted RF transceivers (a **BK4829** on chip select
-  `PB8` and a **BK4815** on `PB13`, sharing clock `PA12` and data `PB12`), how the
-  firmware tells them apart, and their factory register sequences as extracted
-  from the stock image.
+- `ra89r_bk4829.md` — the RF transceiver on chip select `PB8`: its identity check
+  (`0x4829`), its boot register sequence, how it differs from the UV-K1/K5V3
+  driver, and the driver on branch `driver/bk4829`.
+- `ra89r_bk4815.md` — the second RF transceiver, on `PB13`: its identity check
+  (`0x4816`), its differently framed register access, and its boot sequence plus
+  18-register table.
+- `ra89r_rfpath.md` — the RF path the two share: the bit-banged bus, the boot
+  bring-up order, and what actually powers the RF section.
 
 **Every feature gets its own `ra89r_<feature>.md`**, next to the code, holding more
 than a summary: the protocol or register semantics, the evidence for each hardware
@@ -174,6 +178,9 @@ driver/battery            gauge       -- OPEN, unmerged: the bus is silent for u
 driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR flash
                                          ("EEPROM") reads and dumps; the write test has
                                          not run yet, see ra89r_eeprom.md
+driver/bk4829             RF          -- OPEN, unmerged: the BK4829 3-wire bus and
+                                         the stock's register configuration; not yet
+                                         run on the radio, see ra89r_bk4829.md
 ```
 
 The open features have their own write-ups, and they are the places to start:
@@ -186,7 +193,7 @@ The open features have their own write-ups, and they are the places to start:
 | battery gauge | `ra89r_battery.md` | protocol decoded and implemented; the chip never answers |
 | beeper | `ra89r_beeper.md` | traced (TIM4 + a tone generator, its pin is PA4); not written |
 | EEPROM (SPI NOR) | `ra89r_eeprom.md` | read + full dump validated on the radio; write test pending |
-| RF transceiver | -- | not started; it would also deliver the status LED |
+| RF transceivers | `ra89r_bk4829.md`, `ra89r_bk4815.md`, `ra89r_rfpath.md` | both parts and their boot configuration extracted; a BK4829 driver exists, not yet run on the radio |
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
 each driver self-contained under `firmware/App/driver/`, keep it host-testable
