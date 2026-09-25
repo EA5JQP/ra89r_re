@@ -212,13 +212,44 @@ static void animate_step(uint32_t ms)
  * (FUN_08009772 / FUN_08009758), and a failure there is what makes it show its
  * error screen instead of configuring the part.
  *
- * 'R' probes both and then reads a second, unrelated register from each: the
- * stock reads 0x63/0x67 from the BK4829 and 0x73 from the BK4815, so an id that
- * answers while everything else reads the same value is worth seeing.
+ * 'R' writes nothing -- it is a read-only snapshot of both parts, so two things
+ * are worth knowing about it:
+ *
+ *   - it can be pressed on a freshly booted radio before any configuration has
+ *     been sent, and
+ *   - the radio does not touch the RF pins at boot, so if the two chips keep
+ *     their state across an MCU reset, 'R' shows what the *stock* firmware left
+ *     in them.  That is the only way to read the stock's own values without a
+ *     logic analyser, which matters for the three BK4815 registers the stock
+ *     takes from its RAM and for the BK4829's computed register 0x7d.  If the
+ *     chips reset with the MCU instead, the same read gives their power-on
+ *     defaults -- also worth having as a baseline.
+ *
  * 'W' replays both parts' stock boot configuration and re-probes, so a silent
  * bus, a deaf-but-configured chip and a live one look different. */
+static void rf_dump(const char *name, uint8_t id_reg, const uint8_t *regs,
+                    unsigned n, bool is_4815)
+{
+    unsigned i;
+
+    uart_printf("  %s:", name);
+    for (i = 0; i < n; i++) {
+        uint16_t v = is_4815 ? bk4815_read_reg(regs[i]) : bk4829_read_reg(regs[i]);
+        uart_printf(" %02X=%04X", (unsigned)regs[i], (unsigned)v);
+    }
+    uart_putc('\n');
+    (void)id_reg;
+}
+
 static void rf_report(void)
 {
+    /* The registers worth watching: what our configuration writes (0x21, 0x24,
+     * 0x30, 0x33, 0x47), the one the stock computes (0x7d), and the two the
+     * stock reads while squelching (0x63, 0x67). */
+    static const uint8_t bk4829_regs[] = { 0x21, 0x24, 0x30, 0x33, 0x47, 0x7d,
+                                           0x63, 0x67 };
+    /* Its band/mode words, plus the three the stock fills from its own RAM. */
+    static const uint8_t bk4815_regs[] = { 0x0c, 0x75, 0x73, 0x4c, 0x55, 0x62 };
     uint16_t a, b;
 
     bk4829_init();              /* brings up the shared bus and both selects */
@@ -235,12 +266,10 @@ static void rf_report(void)
                 (unsigned)b, (unsigned)BK4815_ID,
                 b == BK4815_ID ? "present" : "not answering");
 
-    /* A second register from each, so "answers its id and nothing else" is
-     * visible rather than assumed to be fine. */
-    uart_printf("  BK4829 reg 0x63 = 0x%04X, reg 0x67 = 0x%04X (RSSI; the stock reads both)\n",
-                (unsigned)bk4829_read_reg(0x63), (unsigned)bk4829_read_reg(0x67));
-    uart_printf("  BK4815 reg 0x73 = 0x%04X (the stock reads this too)\n",
-                (unsigned)bk4815_read_reg(0x73));
+    rf_dump("BK4829", BK4829_REG_ID, bk4829_regs,
+            (unsigned)(sizeof bk4829_regs / sizeof bk4829_regs[0]), false);
+    rf_dump("BK4815", BK4815_REG_ID, bk4815_regs,
+            (unsigned)(sizeof bk4815_regs / sizeof bk4815_regs[0]), true);
 
     if (a != BK4829_ID || b != BK4815_ID)
         uart_puts("  one id is wrong: check that part's select, and that both\n"
@@ -262,7 +291,9 @@ static void rf_configure(void)
                 "          0x4c/0x55/0x62 from its own RAM and we have no source.\n",
                 bk4815_ram_sourced_writes());
 
-    uart_printf("  BK4829 reg 0x7d read back = 0x%04X (the stock sends 0xE958)\n",
+    /* Read-back proves the register took the value and kept it -- not that the
+     * stock sends it.  Press 'R' on a stock-booted radio for that. */
+    uart_printf("  BK4829 reg 0x7d = 0x%04X after we wrote the derived 0xE958\n",
                 (unsigned)bk4829_read_reg(0x7d));
 }
 
