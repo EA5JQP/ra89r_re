@@ -134,6 +134,12 @@ cd firmware && gcc -std=c11 -I App -I App/driver tools/test_rf.c \
 cd firmware && gcc -std=c11 -I App -I App/driver -DLCD_HOST_TEST \
     tools/preview.c App/ui.c App/driver/lcd_st7565.c \
     App/driver/font_8x16.c App/driver/font_5x7.c -o /tmp/preview && /tmp/preview
+
+# the ported K1 screen buffers (status line + frame), same ASCII idea
+cd firmware && gcc -std=c11 -I App -I App/driver -include App/port_features.h \
+    -DST7565_HOST_TEST tools/preview_k1.c App/k1_vfo_draft.c App/ui/helper.c \
+    App/ui/inputbox.c App/settings.c App/font.c App/bitmaps.c \
+    App/driver/st7565.c -o /tmp/preview_k1 && /tmp/preview_k1
 ```
 
 Round-trip check (the fastest way to prove a change did not break the codec):
@@ -208,8 +214,15 @@ driver/audiocontrol       audio       -- MERGED.  It receives and transmits: the
                                          unmute the import was not sending, the mic
                                          gain in `0x40`).  See ra89r_rfpath.md
 port                      integration -- OPEN: the K1/F4HWN application port, off
-                                         develop.  Nothing ported yet; ra89r_port.md
-                                         is the plan and the fix list (the TX chain
+                                         develop.  STAGE 1 IS IN (unvalidated on the
+                                         radio): the K1 display layer -- driver/
+                                         st7565.c, font.c, bitmaps.c, ui/helper.c,
+                                         ui/inputbox.c -- builds and renders here,
+                                         with LICENSE/NOTICE, port_features.h,
+                                         a newlib shim, and console 'G' showing a
+                                         first VFO draft; preview_k1.c renders it on
+                                         a PC.  ra89r_port.md has the progress and
+                                         the plan; still on the list (the TX chain
                                          reaching the app's path, TX power from the
                                          codeplug, per-band path and BK4815 handling,
                                          the squelch ramp, the whole gEeprom/storage
