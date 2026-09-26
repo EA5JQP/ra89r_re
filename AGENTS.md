@@ -261,11 +261,16 @@ port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
                                          squelch sets FUNCTION_INCOMING/RECEIVE.
                                          radio.c's own chip sequences stay unused
                                          until they are compared with the stock.  See
+                                         The K1's app loop and key layer are in too
+                                         (app/app.c CheckKeys + APP_Update, app/main.c
+                                         MAIN_ProcessKeys, generic/common/chFrScanner/
+                                         dtmf/scanner), so the menu items act and the
+                                         keys follow the K1 -- with PTT deliberately
+                                         left on the measured tx chain
+                                         (GPIO_IsPttPressed returns false).  See
                                          ra89r_port.md for the layer table and what is
-                                         next: step 3 (app/app.c keys and actions,
-                                         scanners, DTMF), then step 2 (the codeplug,
-                                         to be organised so the stock firmware stays
-                                         compatible)
+                                         next: step 2, the codeplug, to be organised so
+                                         the stock firmware stays compatible
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all
