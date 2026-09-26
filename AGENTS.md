@@ -135,11 +135,15 @@ cd firmware && gcc -std=c11 -I App -I App/driver -DLCD_HOST_TEST \
     tools/preview.c App/ui.c App/driver/lcd_st7565.c \
     App/driver/font_8x16.c App/driver/font_5x7.c -o /tmp/preview && /tmp/preview
 
-# the ported K1 screen buffers (status line + frame), same ASCII idea
-cd firmware && gcc -std=c11 -I App -I App/driver -include App/port_features.h \
-    -DST7565_HOST_TEST tools/preview_k1.c App/k1_vfo_draft.c App/ui/helper.c \
-    App/ui/inputbox.c App/settings.c App/font.c App/bitmaps.c \
-    App/driver/st7565.c -o /tmp/preview_k1 && /tmp/preview_k1
+# the ported K1 VFO screen (the K1's own ui/main.c) rendered on a PC
+SDK=../PY32F4xx_Firmware
+cd firmware && gcc -std=c11 -I App -I App/driver \
+    -I $SDK/Drivers/CMSIS/Device/PUYA/PY32F403/Include -I $SDK/Drivers/CMSIS/Include \
+    -DPY32F403xD -include App/port_features.h -DST7565_HOST_TEST \
+    -ffunction-sections -fdata-sections -Wl,--gc-sections \
+    tools/preview_k1.c App/ui/main.c App/ui/helper.c App/ui/inputbox.c \
+    App/port_state.c App/settings.c App/font.c App/bitmaps.c App/driver/st7565.c \
+    -o /tmp/preview_k1 && /tmp/preview_k1
 ```
 
 Round-trip check (the fastest way to prove a change did not break the codec):
@@ -214,15 +218,18 @@ driver/audiocontrol       audio       -- MERGED.  It receives and transmits: the
                                          unmute the import was not sending, the mic
                                          gain in `0x40`).  See ra89r_rfpath.md
 port                      integration -- OPEN: the K1/F4HWN application port, off
-                                         develop.  STAGE 1 IS IN (unvalidated on the
-                                         radio): the K1 display layer -- driver/
+                                         develop.  STAGES 1-2a ARE IN (unvalidated on
+                                         the radio): the K1 display layer (driver/
                                          st7565.c, font.c, bitmaps.c, ui/helper.c,
-                                         ui/inputbox.c -- builds and renders here,
-                                         with LICENSE/NOTICE, port_features.h,
-                                         a newlib shim, and console 'G' showing a
-                                         first VFO draft; preview_k1.c renders it on
-                                         a PC.  ra89r_port.md has the progress and
-                                         the plan; still on the list (the TX chain
+                                         ui/inputbox.c) plus the K1's own ui/main.c
+                                         (UI_DisplayMain) compile, link and render
+                                         -- preview_k1.c draws the VFO screen on a
+                                         PC and console 'G' on the radio -- over the
+                                         port_state.c facade (gEeprom.VfoInfo[] and
+                                         one stub per K1 module still to come).  See
+                                         ra89r_port.md for the progress and what is
+                                         next (menu, status, keys).  Still on the
+                                         list (the TX chain
                                          reaching the app's path, TX power from the
                                          codeplug, per-band path and BK4815 handling,
                                          the squelch ramp, the whole gEeprom/storage
