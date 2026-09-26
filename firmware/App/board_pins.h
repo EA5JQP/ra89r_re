@@ -146,6 +146,21 @@
  * K1-driver callback drives. */
 #define AUDIO_PATH_PIN       (1u << 13)   /* PC13 -- amplifier enable candidate, held HIGH */
 
+/* The PA power/bias is a PWM, not a register: the stock's "Pow AdjData" path
+ * (FUN_08016A2C -> FUN_0801830C -> FUN_0801BDE8 -> FUN_08018A88 -> FUN_080167B4
+ * -> FUN_0801306E) programs **TIM1 channel 2**, whose pin is configured at
+ * 0x080131AC as GPIOB mask 0x4000 with alternate function 4 -- i.e. `PB14`.  The
+ * timer runs from the 144 MHz APB2 clock with the period computed by
+ * FUN_08016C58 from the boot argument 100: 144e6 / 100 / 1000 = 1440, so
+ * ARR = 1439, PSC = 0, a 100 kHz PWM.  Compare = the codeplug's power value
+ * (0..252), clamped to ARR/2, and 0 in receive -- the PA has no bias at all
+ * unless this is programmed, which is why a bench that only set the chip's
+ * registers produced a weak, hissing signal. */
+#define PA_PWM_PIN          (1u << 14)  /* PB14, TIM1_CH2, AF4 */
+#define PA_PWM_AF           4u
+#define PA_PWM_ARR          1439u
+#define PA_PWM_MAX_DUTY     (PA_PWM_ARR / 2u)   /* the stock's clamp */
+
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) talks to the
  * external SPI NOR flash (see ra89r_eeprom.md); the USB-C port goes to the
  * MCU's USB device peripheral, which nothing in the stock firmware enables. */

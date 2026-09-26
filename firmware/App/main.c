@@ -392,6 +392,9 @@ static void bench_led(void)
         led_set(LED_OFF);
 }
 
+static void pa_pwm_init(void);
+static void pa_pwm_duty(uint16_t duty);
+
 static void audio_bench_arm(void)
 {
     uart_puts("\naudio bench: running 'K' at boot and asserting PC13, so the test\n"
@@ -414,6 +417,12 @@ static void audio_bench_arm(void)
     gpio_write(GPIOA, 2u, 1);
     gpio_write(GPIOA, 1u, 0);
 
+    /* The PA bias PWM: the stock runs it from boot with a compare of 0, i.e.
+     * the PA is biased only while transmitting. */
+    pa_pwm_init();
+    uart_printf("RF: PA power PWM up (PB14/TIM1_CH2, ARR %u, 100 kHz, duty 0)\n",
+                (unsigned)PA_PWM_ARR);
+
     audio_path_hi = true;
     audio_path_drive(1);
     squelch_open = false;
@@ -433,27 +442,56 @@ static void audio_bench_arm(void)
 #define BENCH_PA_7D   0xE958u
 
 static bool tx_on;
-static unsigned mic_gain;
-static uint32_t mic_last;
 
 /* TX, and where it stands.
  *
  * Measured: the chip's PA_ENABLE (GPIO pin 1) with the band-path pins
- * `PA1 = 1, PA0 = 0` (FUN_08013A70(3), also the stock's receive select) makes
- * the radio radiate; the other radio's squelch opens on it.  What is wrong is
- * the *modulation*: only noise is heard and the microphone does nothing.
+ * `PA1 = 1, PA0 = 0` makes the radio radiate, but weakly, hissing and without
+ * usable modulation -- the signature of a PA with no bias.  That is what it was:
+ * the bias is the PB14 PWM above, and the bench never programmed it.  The
+ * microphone gain (0x40) made no difference at all, which fits: nothing was
+ * reaching the antenna properly.
  *
- * The stock sets the microphone gain for TX: FUN_0801C3A8 writes
- * `0x40 = (old & 0xE000) | 0x1000 | (gain << 4)`, with the gain coming from the
- * codeplug per channel.  Our imported K1 init leaves `0x40 = 0x3516`, a gain
- * nibble of 1, and nothing changes it for TX.
+ * So the bench now walks the *PA power*, which is the register-free half of the
+ * stock's TX: holding PTT steps the PWM compare from 0 upward, two seconds per
+ * step, printing it on the panel and the console. */
+static unsigned pa_duty;
+static uint32_t pa_last;
+/* ------------------------------------------------------ PA power PWM (PB14)
  *
- * So the bench walks the gain: holding PTT steps `0x40` from 0 (muted) to 15,
- * two seconds per step, printing it on the panel and the console.  Gain 0 should
- * be an *unmodulated* carrier -- if the other radio then goes quiet instead of
- * hissing, the modulator path is sound and the microphone is on this chip; if it
- * still hisses, the noise is not mic-makeup noise and the next thing to sweep is
- * the AF level (0x48/0x6C) and 0x47. */
+ * The PA bias is not a register: it is TIM1 channel 2 on PB14, exactly as the
+ * stock sets it up (0x080131AC configures the pin, FUN_08016C58/FUN_08016764
+ * program the timer, FUN_08018A88/FUN_080167B4 set the compare from the
+ * codeplug's power value).  144 MHz APB2 / (0+1) / (1439+1) = 100 kHz, compare
+ * clamped to half the period, and 0 in receive. */
+static void pa_pwm_init(void)
+{
+    gpio_port_clock(GPIOB);
+    RCC->APB2ENR |= (1u << 11);                 /* TIM1 */
+    (void)RCC->APB2ENR;
+
+    GPIOB->AFR[1] = (GPIOB->AFR[1] & ~(0xFu << 24)) | (PA_PWM_AF << 24);
+    GPIOB->MODER = (GPIOB->MODER & ~(3u << 28)) | (2u << 28);      /* AF   */
+    GPIOB->OSPEEDR = (GPIOB->OSPEEDR & ~(3u << 28)) | (1u << 28);
+    GPIOB->PUPDR = (GPIOB->PUPDR & ~(3u << 28)) | (2u << 28);      /* pull-down */
+
+    TIM1->PSC = 0;
+    TIM1->ARR = PA_PWM_ARR;
+    TIM1->CCMR1 = (TIM1->CCMR1 & ~0xFF00u) | 0x6000u;   /* OC2M = PWM mode 1 */
+    TIM1->CCER &= ~0x30u;                                /* CC2P/CC2NE = 0  */
+    TIM1->CCR2 = 0;
+    TIM1->BDTR |= 0x8000u;                               /* MOE: TIM1 needs it */
+    TIM1->EGR = 1u;                                      /* UG */
+    TIM1->CR1 |= 1u;                                     /* CEN */
+}
+
+static void pa_pwm_duty(uint16_t duty)
+{
+    if (duty > PA_PWM_MAX_DUTY)
+        duty = PA_PWM_MAX_DUTY;
+    TIM1->CCR2 = duty;
+}
+
 static void tx_base(void)
 {
     /* The combination measured to radiate. */
@@ -469,7 +507,8 @@ static void tx_mic_gain(unsigned g)
 }
 
 /* Panel read-out: the mic gain being tried, and the registers behind it. */
-static void bench_screen(unsigned g, uint16_t r40, uint16_t r47, uint16_t r7d)
+static void bench_screen(unsigned duty, uint16_t rccr, uint16_t r47,
+                         uint16_t r7d)
 {
     static const char hex[] = "0123456789ABCDEF";
     char title[20];
@@ -477,16 +516,17 @@ static void bench_screen(unsigned g, uint16_t r40, uint16_t r47, uint16_t r7d)
     unsigned n = 0, i;
 
     title[n++] = 'T'; title[n++] = 'X'; title[n++] = ' ';
-    title[n++] = 'm'; title[n++] = 'i'; title[n++] = 'c'; title[n++] = ' ';
-    title[n++] = 'g'; title[n++] = '=';
-    if (g >= 10u)
-        title[n++] = (char)('0' + g / 10u);
-    title[n++] = (char)('0' + g % 10u);
+    title[n++] = 'p'; title[n++] = 'w'; title[n++] = 'r'; title[n++] = ' ';
+    if (duty >= 100u)
+        title[n++] = (char)('0' + duty / 100u);
+    if (duty >= 10u)
+        title[n++] = (char)('0' + (duty / 10u) % 10u);
+    title[n++] = (char)('0' + duty % 10u);
     title[n] = '\0';
 
     for (i = 0; i < 3u; i++) {
-        uint16_t v = (i == 0) ? r40 : (i == 1) ? r47 : r7d;
-        const char *name = (i == 0) ? "40=" : (i == 1) ? "47=" : "7D=";
+        uint16_t v = (i == 0) ? rccr : (i == 1) ? r47 : r7d;
+        const char *name = (i == 0) ? "CC=" : (i == 1) ? "47=" : "7D=";
         unsigned k;
         for (k = 0; k < 3u; k++)
             detail[n++] = name[k];
@@ -515,9 +555,10 @@ static void radio_tx(int on)
         BK4819_WriteRegister(BK4819_REG_7D, BENCH_PA_7D);
         BK4819_PrepareTransmit();
         BK4819_SetAF(BK4819_AF_FM);     /* 0x47 = 0x6142, as the stock's TX does */
-        mic_gain = 0;
-        mic_last = systick_millis();
-        tx_mic_gain(mic_gain);
+        tx_mic_gain(5);                 /* fixed for now: a mid codeplug gain */
+        pa_duty = 0;
+        pa_last = systick_millis();
+        pa_pwm_duty(0);
         led_set(LED_RED);               /* red = transmit, as the stock shows it */
     } else {
         BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false);
@@ -525,19 +566,16 @@ static void radio_tx(int on)
         BK4819_RX_TurnOn();
         BK4819_SetAF(BK4819_AF_MUTE);
         BK4819_WriteRegister((BK4819_REGISTER_t)0x40, 0x3516);   /* back to the RX value */
+        pa_pwm_duty(0);                                          /* PA bias off */
         squelch_open = false;
         bench_led();
     }
 
-    uart_printf("\nbench: TX %s (0x30 = 0x%04X, 0x40 = 0x%04X, 0x47 = 0x%04X, "
-                "0x50 = 0x%04X, 0x7D = 0x%04X)\n",
+    uart_printf("\nbench: TX %s (0x30 = 0x%04X, 0x7D = 0x%04X, PA duty %u of %u)\n",
                 on ? "ON" : "off", (unsigned)BK4819_ReadRegister(BK4819_REG_30),
-                (unsigned)BK4819_ReadRegister((BK4819_REGISTER_t)0x40),
-                (unsigned)BK4819_ReadRegister(BK4819_REG_47),
-                (unsigned)BK4819_ReadRegister(BK4819_REG_50),
-                (unsigned)BK4819_ReadRegister(BK4819_REG_7D));
-    bench_screen(mic_gain, BK4819_ReadRegister((BK4819_REGISTER_t)0x40),
-                 BK4819_ReadRegister(BK4819_REG_47),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_7D),
+                (unsigned)TIM1->CCR2, (unsigned)PA_PWM_ARR);
+    bench_screen(pa_duty, TIM1->CCR2, BK4819_ReadRegister(BK4819_REG_47),
                  BK4819_ReadRegister(BK4819_REG_7D));
 }
 
@@ -568,15 +606,16 @@ static void audio_bench_step(uint32_t now)
     audio_bench_last = key;
 
     if (tx_on) {
-        /* Walk the microphone gain while the operator listens on the other
-         * radio: two seconds per step, 0 (muted) up to 15. */
-        if ((uint32_t)(now - mic_last) >= 2000u) {
-            mic_last = now;
-            mic_gain = (mic_gain + 1u) & 0xFu;
-            tx_mic_gain(mic_gain);
-            uart_printf("bench: mic gain %u (0x40 = 0x%04X)\n", mic_gain,
-                        (unsigned)BK4819_ReadRegister((BK4819_REGISTER_t)0x40));
-            bench_screen(mic_gain, BK4819_ReadRegister((BK4819_REGISTER_t)0x40),
+        /* Walk the PA power while the operator listens on the other radio:
+         * two seconds per step, 0 (no bias) up to the codeplug range's top. */
+        if ((uint32_t)(now - pa_last) >= 2000u) {
+            pa_last = now;
+            if (pa_duty < 252u)
+                pa_duty += 32u;
+            pa_pwm_duty((uint16_t)pa_duty);
+            uart_printf("bench: PA duty %u (CCR2 = %u of %u)\n", pa_duty,
+                        (unsigned)TIM1->CCR2, (unsigned)PA_PWM_ARR);
+            bench_screen(pa_duty, TIM1->CCR2,
                          BK4819_ReadRegister(BK4819_REG_47),
                          BK4819_ReadRegister(BK4819_REG_7D));
         }
