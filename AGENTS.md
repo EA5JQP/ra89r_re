@@ -221,9 +221,12 @@ driver/audiocontrol       audio       -- MERGED.  It receives and transmits: the
                                          `0x7D`, PrepareTransmit, the `0x50 = 0x3B20`
                                          unmute the import was not sending, the mic
                                          gain in `0x40`).  See ra89r_rfpath.md
-port                      integration -- OPEN: the K1/F4HWN application port, off
-                                         develop.  STAGES 1-2a ARE IN (unvalidated on
-                                         the radio): the K1 display layer (driver/
+port                      integration -- OPEN (a complete VFO+menu port, awaiting
+                                         radio validation): the K1's own ui/main.c
+                                         (VFO), ui/menu.c (menu), ui/status.c,
+                                         ui/welcome.c and ui/ui.c, its fonts, bitmaps,
+                                         tables and support modules, the display layer
+                                         in the K1's layout (driver/
                                          st7565.c, font.c, bitmaps.c, ui/helper.c,
                                          ui/inputbox.c) plus the K1's own ui/main.c
                                          (UI_DisplayMain) plus ui/menu.c
