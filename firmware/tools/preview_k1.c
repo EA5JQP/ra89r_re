@@ -93,8 +93,10 @@ int main(void)
                (unsigned)gEeprom.CHANNEL_DISPLAY_MODE);
         printf("[storage] write test=%d\n", port_storage_write_test(&bad));
 
-        /* Put the defaults back so the screens below render the same as before. */
-        PORT_SettingsDefaults();
+        /* Put the state back so the screens below render as before (a plain
+         * PORT_SettingsDefaults() would clear the VFO pointers those screens
+         * dereference -- port_state_init() re-establishes them). */
+        port_state_init();
     }
 
     /* ---- the boot screen and the status line ---------------------------- */

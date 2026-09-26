@@ -21,6 +21,7 @@
 
 #include "driver/py25q16.h"
 #include "driver/spi_flash.h"
+#include "port_state.h"
 #include "port_storage.h"
 #include "settings.h"
 
@@ -130,6 +131,9 @@ bool port_storage_load_settings(void)
         return false;
 
     gEeprom = blob.settings;
+    /* The struct carries pointers into itself, which a flash round-trip cannot
+     * be trusted to preserve: re-establish them. */
+    port_state_fixup_vfo();
     return true;
 }
 

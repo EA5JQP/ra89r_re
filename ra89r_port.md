@@ -221,6 +221,12 @@ here are the port's todo list:
   the round-trip there: save -> change -> load returns the saved values, and the
   write test passes.
 
+  One bug this shook out, worth keeping in mind: `gEeprom`'s VFO objects carry
+  pointers into themselves, so anything that replaces the struct -- the defaults
+  or a blob read back from flash -- invalidates them.  `port_state_fixup_vfo()`
+  re-establishes them, and `port_storage_load_settings()` calls it after loading;
+  the host preview crashed on exactly this before the fix.
+
   Not done yet, and the reason this is not "storage finished": the *stock
   codeplug* is a different format and is not mapped into `gEeprom` yet, so the
   channels and names the menus show are still the compiled-in defaults rather

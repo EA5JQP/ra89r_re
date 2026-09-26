@@ -25,6 +25,30 @@ VFO_Info_t *gTxVfo;
 VFO_Info_t *gRxVfo;
 VFO_Info_t *gCurrentVfo;
 
+/* The VFO objects live inside gEeprom and carry pointers into themselves, so
+ * anything that replaces or clears gEeprom -- the defaults, or a blob read back
+ * from flash -- has to re-establish them before the screens dereference them. */
+void port_state_fixup_vfo(void)
+{
+    unsigned i;
+
+    for (i = 0; i < 2; i++) {
+        VFO_Info_t *vfo = &gEeprom.VfoInfo[i];
+
+        vfo->pRX = &vfo->freq_config_RX;
+        vfo->pTX = &vfo->freq_config_TX;
+    }
+
+    if (gEeprom.TX_VFO > 1u)
+        gEeprom.TX_VFO = 0;
+    if (gEeprom.RX_VFO > 1u)
+        gEeprom.RX_VFO = 0;
+
+    gTxVfo = &gEeprom.VfoInfo[gEeprom.TX_VFO];
+    gRxVfo = &gEeprom.VfoInfo[gEeprom.RX_VFO];
+    gCurrentVfo = gRxVfo;
+}
+
 void port_state_init(void)
 {
     unsigned i;
@@ -52,9 +76,7 @@ void port_state_init(void)
         vfo->StepFrequency = 1250;
     }
 
-    gTxVfo = &gEeprom.VfoInfo[gEeprom.TX_VFO];
-    gRxVfo = &gEeprom.VfoInfo[gEeprom.RX_VFO];
-    gCurrentVfo = gRxVfo;
+    port_state_fixup_vfo();
 }
 
 /* ---------------------------------------------------------------------------
