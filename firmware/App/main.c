@@ -350,16 +350,22 @@ static void rf_k1_bringup(void)
  * The Kenwood jack cuts the internal speaker while the programming cable is
  * plugged in, and that jack is also the only way to type at this console -- so
  * the audio path can only be *listened* to with the cable out.  This arms the
- * radio with no console input at all and puts the PC13 test on the physical
- * buttons, using the status LED as the read-out:
+ * radio with no console input at all:
  *
- *   GREEN = PC13 high (path asserted)      RED = PC13 low
+ *   - the K1 bring-up runs at boot (init, tune 145.7500, RX on, FM audio);
+ *   - PC13 is asserted, the way the stock holds it;
+ *   - a squelch mutes the chip's AF output whenever 0x67 says there is no
+ *     carrier, using the stock's own marks (open at 0xCF, close below 0xB4);
+ *   - the status LED is the read-out: GREEN = squelch open, OFF = quiet,
+ *     RED = PC13 pulled low by the bench, so the amplifier question can be
+ *     asked without the console.
  *
- * The K1 bring-up runs at boot and PC13 starts high, the way the stock holds it;
- * press PTT (or a side key) to flip it, watch the LED, and listen.  The console
- * 'C' does the same thing when the cable is attached. */
+ * Press PTT (or SIDE1/SIDE2/PTT2) to flip PC13 and listen for the audio to go
+ * with it -- that is the one thing about PC13 that is still unmeasured.  The
+ * console 'C' does the same when the cable is in. */
 static bool audio_bench_on;
-static bool audio_path_hi;
+static bool audio_path_hi = true;
+static bool squelch_open;
 static KEY_Code_t audio_bench_last = KEY_INVALID;
 
 static bool audio_bench_key(KEY_Code_t key)
@@ -368,37 +374,73 @@ static bool audio_bench_key(KEY_Code_t key)
            key == KEY_PTT2;
 }
 
+/* Green = receiving (the stock's Rx.Light), off = quiet, red = the bench has
+ * pulled PC13 low, which wins because it is the state being tested by ear. */
+static void bench_led(void)
+{
+    if (!audio_path_hi)
+        led_set(LED_RED);
+    else if (squelch_open)
+        led_set(LED_GREEN);
+    else
+        led_set(LED_OFF);
+}
+
 static void audio_bench_arm(void)
 {
     uart_puts("\naudio bench: running 'K' at boot and asserting PC13, so the test\n"
-              "  needs no console -- unplug the cable, press PTT, listen, and read\n"
-              "  the LED: GREEN = PC13 high, RED = PC13 low.\n");
+              "  needs no console -- unplug the cable and listen.  LED: GREEN =\n"
+              "  squelch open, OFF = quiet, RED = PC13 low.  PTT flips PC13.\n");
     rf_k1_bringup();
     audio_path_hi = true;
     audio_path_drive(1);
-    led_set(LED_GREEN);
+    squelch_open = false;
+    BK4819_SetAF(BK4819_AF_MUTE);       /* start quiet; the loop opens it */
+    bench_led();
     audio_bench_on = true;
 }
 
-static void audio_bench_step(void)
+static void audio_bench_step(uint32_t now)
 {
+    static uint32_t last;
     KEY_Code_t key;
+    uint16_t rssi;
 
     if (!audio_bench_on)
         return;
 
     key = keypad_poll();
-    if (key == audio_bench_last)
-        return;
-    audio_bench_last = key;
-    if (!audio_bench_key(key))
-        return;
+    if (key != audio_bench_last) {
+        audio_bench_last = key;
+        if (audio_bench_key(key)) {
+            audio_path_hi = !audio_path_hi;
+            audio_path_drive(audio_path_hi ? 1 : 0);
+            bench_led();
+            uart_printf("\nbench: %s -> PC13 %s\n", keypad_name(key),
+                        audio_path_hi ? "HIGH" : "low");
+        }
+    }
 
-    audio_path_hi = !audio_path_hi;
-    audio_path_drive(audio_path_hi ? 1 : 0);
-    led_set(audio_path_hi ? LED_GREEN : LED_RED);
-    uart_printf("\nbench: %s -> PC13 %s (green led = high)\n",
-                keypad_name(key), audio_path_hi ? "HIGH" : "low");
+    if ((uint32_t)(now - last) < 50u)
+        return;
+    last = now;
+
+    /* The stock's own squelch marks on 0x67: it opens at 0xCF and closes below
+     * 0xB4, and this radio's noise floor (~0x98) and keyed carrier (~0x12E)
+     * straddle them.  The mute itself is chip-side, as in the stock -- PC13 is
+     * left asserted. */
+    rssi = BK4819_GetRSSI();
+    if (!squelch_open && rssi >= 0xCFu) {
+        squelch_open = true;
+        BK4819_SetAF(BK4819_AF_FM);
+        uart_printf("\nsquelch: open (0x%03X)\n", (unsigned)rssi);
+        bench_led();
+    } else if (squelch_open && rssi < 0xB4u) {
+        squelch_open = false;
+        BK4819_SetAF(BK4819_AF_MUTE);
+        uart_printf("\nsquelch: quiet (0x%03X)\n", (unsigned)rssi);
+        bench_led();
+    }
 }
 
 /* Sample the RSSI for a few seconds.  One reading cannot tell a carrier from a
@@ -790,7 +832,7 @@ int main(void)
         }
 
         keypad_monitor_step();
-        audio_bench_step();
+        audio_bench_step(now);
 
         animate_step(now);
     }
