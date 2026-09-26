@@ -143,7 +143,7 @@ cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver \
     App/ui/ui.c App/ui/status.c App/ui/welcome.c App/app/menu.c \
     App/app/action.c App/ui/helper.c \
     App/ui/inputbox.c App/version.c App/dcs.c App/frequencies.c \
-    App/helper/battery.c App/port_state.c App/port_gui.c App/settings.c \
+    App/helper/battery.c App/port_state.c App/port_storage.c App/port_gui.c App/settings.c \
     App/font.c App/bitmaps.c App/driver/st7565.c App/driver/keyboard.c \
     -o /tmp/preview_k1 && /tmp/preview_k1
 # (tools/host is a test double for the device header: CMSIS's __DSB() is ARM
@@ -241,9 +241,15 @@ port                      integration -- OPEN: the K1/F4HWN application port, of
                                          and the boot screen.  The codeplug reads as an
                                          empty part (PY25Q16_ReadBuffer is a stub until
                                          the SPI NOR driver lands), so the menus show
-                                         their defaults.  See ra89r_port.md for the
-                                         progress and what is next (storage, then the
-                                         real settings/radio modules).  Still on the
+                                         their defaults.  Storage is in too: the
+                                         external SPI NOR driver (its write path new)
+                                         behind the K1's PY25Q16 interface, with the
+                                         port's settings blob in the part's empty tail
+                                         -- console '5' saves it, '6' runs the write
+                                         test, 'e' dumps the flash.  See ra89r_port.md
+                                         for the progress and what is next (the stock
+                                         codeplug mapping, then the real settings/radio
+                                         modules).  Still on the
                                          list (the TX chain
                                          reaching the app's path, TX power from the
                                          codeplug, per-band path and BK4815 handling,
