@@ -471,6 +471,7 @@ static uint16_t tx_reg36 = 0x8822u;    /* PA-CTL + bias: the amplifier enabler *
 static int tx_source;
 static unsigned pa_duty;
 static uint32_t pa_last;
+static unsigned mic_gain;
 
 static void tx_base(void)
 {
@@ -540,11 +541,16 @@ static void bench_screen(unsigned duty, uint16_t r50, uint16_t r36, uint16_t r7d
     title[n++] = (tx_source == TX_SRC_MIC) ? 'i' : 'o';
     title[n++] = (tx_source == TX_SRC_MIC) ? 'c' : 'n';
     title[n++] = ' ';
-    if (duty >= 100u)
-        title[n++] = (char)('0' + duty / 100u);
-    if (duty >= 10u)
-        title[n++] = (char)('0' + (duty / 10u) % 10u);
-    title[n++] = (char)('0' + duty % 10u);
+    if (tx_source == TX_SRC_MIC) {
+        title[n++] = hex[(mic_gain >> 4) & 0xF];
+        title[n++] = hex[mic_gain & 0xF];
+    } else {
+        if (duty >= 100u)
+            title[n++] = (char)('0' + duty / 100u);
+        if (duty >= 10u)
+            title[n++] = (char)('0' + (duty / 10u) % 10u);
+        title[n++] = (char)('0' + duty % 10u);
+    }
     title[n] = '\0';
 
     for (i = 0; i < 3u; i++) {
@@ -595,7 +601,8 @@ static void radio_tx(int on, int source)
             /* Microphone: PrepareTransmit already left 0x30 = 0xC1FE (mic ADC),
              * so only the TX audio path has to be unmuted. */
             BK4819_WriteRegister(BK4819_REG_50, 0x3B20);
-            tx_mic_gain(5);
+            mic_gain = 0x10;            /* the stock's gain is a byte, not a nibble */
+            tx_mic_gain(mic_gain);
         }
 
         pa_duty = 128;                  /* a level that should be audible */
@@ -655,17 +662,27 @@ static void audio_bench_step(uint32_t now)
     audio_bench_last = key;
 
     if (tx_on) {
-        /* Walk the PA power while the operator listens on the other radio:
-         * two seconds per step, 0 (no bias) up to the codeplug range's top. */
+        /* Speak into the radio while this walks: the microphone gain across the
+         * stock's full byte range for SIDE1, the PA power for the tone.  Two
+         * seconds per step. */
         if ((uint32_t)(now - pa_last) >= 2000u) {
             pa_last = now;
-            if (pa_duty < 224u)
-                pa_duty += 32u;
-            pa_pwm_duty((uint16_t)pa_duty);
-            uart_printf("bench: PA duty %u (CCR2 = %u of %u)\n", pa_duty,
-                        (unsigned)TIM1->CCR2, (unsigned)PA_PWM_ARR);
-            bench_screen(pa_duty, TIM1->CCR2,
-                         BK4819_ReadRegister(BK4819_REG_47),
+            if (tx_source == TX_SRC_MIC) {
+                if (mic_gain < 0xF0u)
+                    mic_gain += 0x10u;
+                tx_mic_gain(mic_gain);
+                uart_printf("bench: mic gain 0x%02X (0x40 = 0x%04X)\n",
+                            mic_gain, (unsigned)BK4819_ReadRegister(
+                                          (BK4819_REGISTER_t)0x40));
+            } else {
+                if (pa_duty < 224u)
+                    pa_duty += 32u;
+                pa_pwm_duty((uint16_t)pa_duty);
+                uart_printf("bench: PA duty %u (CCR2 = %u of %u)\n", pa_duty,
+                            (unsigned)TIM1->CCR2, (unsigned)PA_PWM_ARR);
+            }
+            bench_screen(pa_duty, BK4819_ReadRegister(BK4819_REG_50),
+                         BK4819_ReadRegister((BK4819_REGISTER_t)0x36),
                          BK4819_ReadRegister(BK4819_REG_7D));
         }
         return;                         /* no squelch polling while transmitting */
