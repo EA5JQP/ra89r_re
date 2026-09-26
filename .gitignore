@@ -11,3 +11,6 @@ firmware/build/
 
 # host/tooling state
 .reasonix/
+
+# editor settings
+.vscode/
