@@ -186,7 +186,7 @@ static void print_help(void)
               "          k keypad monitor (raw ADC per line + decoded key)\n"
               "          R probe both RF chips (ids)   W configure both\n"
               "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
-              "          S sample reg 0x67 for 4 s (carrier on/off comparison)\n");
+              "          S sample reg 0x67 for 4 s   A toggle the audio path (PC13)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -277,6 +277,38 @@ static void rf_report(void)
                   "  share PA12/PB12 -- a bus fault hits both, a select fault one.\n");
 }
 
+/* The K1 firmware's audio path is a GPIO of its own -- `GPIO_PIN_AUDIO_PATH` =
+ * PA8 on that board, driven HIGH to enable through `AUDIO_AudioPathOn()` -- and
+ * that is the call this port replaced with a callback.  On this board the
+ * equivalent line is PC13: the stock drives it from its transmit/receive
+ * transition (`FUN_08016228` -> `FUN_08016200` -> `FUN_080177A8`), gated by two
+ * codeplug bits, and it is the only conditional non-bus output the board has
+ * (ra89r_rffeatures.md).  Polarity is taken from the K1 convention -- high =
+ * enabled -- because the stock's own branch structure reads either way; that is
+ * one of the things to settle on the radio.
+ *
+ * The squelch does *not* drive this or any other pin: its verdict only ramps a
+ * 0..10 counter in the channel state. */
+static void audio_path_drive(int on)
+{
+    gpio_port_clock(AUDIO_PATH_PORT);
+    gpio_config_output(AUDIO_PATH_PORT, AUDIO_PATH_PIN);
+    gpio_write(AUDIO_PATH_PORT, AUDIO_PATH_PIN, on ? 1 : 0);
+}
+
+static void rf_audio_path(void)
+{
+    static int on;
+
+    on = !on;
+    audio_path_drive(on);
+    uart_printf("\nRF: audio path (PC13) -> %s\n",
+                on ? "high (enabled, per the K1 convention)" : "low");
+    uart_puts("  measure PC13: the stock drives this same line from its T/R\n"
+              "  transition, gated by codeplug bits 0x20009F28+0x38/+0x39,\n"
+              "  which this radio's codeplug has both clear.\n");
+}
+
 /* The K1-compatible path: `BK4819_Init` replays the K1's own register
  * sequences on this board's BK4829, `SetFrequency` writes the same 0x38/0x39
  * pair the stock does, and RX_TurnOn puts the part in receive.  This is the
@@ -288,6 +320,7 @@ static void rf_k1_bringup(void)
     const uint32_t freq = 14575000u;    /* 145.7500 MHz */
     uint16_t lo, hi;
 
+    BK4819_SetAudioPathCallback(audio_path_drive);
     BK4819_Init();
     BK4819_SetFrequency(freq);
     BK4819_SetAF(BK4819_AF_FM);
@@ -667,6 +700,9 @@ int main(void)
                 break;
             case 'S':
                 rf_watch();
+                break;
+            case 'A':
+                rf_audio_path();
                 break;
             default:
                 break;

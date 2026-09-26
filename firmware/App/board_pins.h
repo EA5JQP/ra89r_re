@@ -97,6 +97,20 @@
 #define BK4829_CS_PIN        (1u << 8)    /* PB8  */
 #define BK4815_CS_PIN        (1u << 13)   /* PB13 */
 
+/* Audio-path enable.  The stock drives `PC13` from its transmit/receive
+ * transition: `FUN_08016228` -> `FUN_08016200` -> `FUN_080177A8`, which sets it
+ * from two codeplug bits (`0x20009F28 + 0x38`/`+0x39`, fed from settings byte 9
+ * bits 0 and 5) and drives it alongside the transceiver's own audio cluster
+ * (chip GPIO pins 2 and 5).  It is the only conditional non-bus output line on
+ * the board -- every other pin is a bus, the panel, the keypad, the gauge or the
+ * RF/LED field -- which is why it is the candidate for the speaker/audio enable.
+ *
+ * The K1 firmware puts the same function on a GPIO of its own,
+ * `GPIO_PIN_AUDIO_PATH = PA8`, driven HIGH to enable and LOW to disable, through
+ * `AUDIO_AudioPathOn()`/`Off()`.  That is the convention this port follows until
+ * the radio says otherwise; see ra89r_rffeatures.md. */
+#define AUDIO_PATH_PIN       (1u << 13)   /* PC13 */
+
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) talks to the
  * external SPI NOR flash (see ra89r_eeprom.md); the USB-C port goes to the
  * MCU's USB device peripheral, which nothing in the stock firmware enables. */
