@@ -185,7 +185,8 @@ static void print_help(void)
               "          s re-init panel (stock app variant, 8 extra bytes)\n"
               "          k keypad monitor (raw ADC per line + decoded key)\n"
               "          R probe both RF chips (ids)   W configure both\n"
-              "          X verify config   K K1-compatible bring-up + tune 145.7500\n");
+              "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
+              "          S sample reg 0x67 for 4 s (carrier on/off comparison)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -303,6 +304,37 @@ static void rf_k1_bringup(void)
                 (unsigned)BK4819_GetRSSI());
     uart_puts("  press R to see RSSI in the snapshot; 'X' still checks the\n"
               "  stock configuration path, which this command overwrites.\n");
+}
+
+/* Sample the RSSI for a few seconds.  One reading cannot tell a carrier from a
+ * noise floor, and the single readings taken so far have wandered over the whole
+ * range; this makes "carrier on" and "carrier off" a pair of numbers to compare.
+ * The stock's own squelch compares reg 0x67 against 0xB4 (180) and 0xCF (207),
+ * so those are the marks printed alongside each sample. */
+static void rf_watch(void)
+{
+    uint16_t min = 0xFFFFu, max = 0, last = 0;
+    unsigned i;
+
+    uart_puts("\nRF: reg 0x67 every 200 ms for 4 s "
+              "(0xB4 / 0xCF are the stock's squelch marks)\n");
+
+    for (i = 0; i < 20u; i++) {
+        uint16_t v = BK4819_GetRSSI();
+
+        if (v < min)
+            min = v;
+        if (v > max)
+            max = v;
+        last = v;
+
+        uart_printf("  %02u: 0x%03X%4u %s\n", i, (unsigned)v, (unsigned)v,
+                    v >= 0xCFu ? "open" : (v < 0xB4u ? "quiet" : "between"));
+        systick_delay_ms(200);
+    }
+
+    uart_printf("  min 0x%03X  max 0x%03X  last 0x%03X\n",
+                (unsigned)min, (unsigned)max, (unsigned)last);
 }
 
 static void rf_configure(void)
@@ -632,6 +664,9 @@ int main(void)
                 break;
             case 'K':
                 rf_k1_bringup();
+                break;
+            case 'S':
+                rf_watch();
                 break;
             default:
                 break;
