@@ -345,6 +345,62 @@ static void rf_k1_bringup(void)
               "  stock configuration path, which this command overwrites.\n");
 }
 
+/* ------------------------------------------- cable-free audio-path bench
+ *
+ * The Kenwood jack cuts the internal speaker while the programming cable is
+ * plugged in, and that jack is also the only way to type at this console -- so
+ * the audio path can only be *listened* to with the cable out.  This arms the
+ * radio with no console input at all and puts the PC13 test on the physical
+ * buttons, using the status LED as the read-out:
+ *
+ *   GREEN = PC13 high (path asserted)      RED = PC13 low
+ *
+ * The K1 bring-up runs at boot and PC13 starts high, the way the stock holds it;
+ * press PTT (or a side key) to flip it, watch the LED, and listen.  The console
+ * 'C' does the same thing when the cable is attached. */
+static bool audio_bench_on;
+static bool audio_path_hi;
+static KEY_Code_t audio_bench_last = KEY_INVALID;
+
+static bool audio_bench_key(KEY_Code_t key)
+{
+    return key == KEY_PTT || key == KEY_SIDE1 || key == KEY_SIDE2 ||
+           key == KEY_PTT2;
+}
+
+static void audio_bench_arm(void)
+{
+    uart_puts("\naudio bench: running 'K' at boot and asserting PC13, so the test\n"
+              "  needs no console -- unplug the cable, press PTT, listen, and read\n"
+              "  the LED: GREEN = PC13 high, RED = PC13 low.\n");
+    rf_k1_bringup();
+    audio_path_hi = true;
+    audio_path_drive(1);
+    led_set(LED_GREEN);
+    audio_bench_on = true;
+}
+
+static void audio_bench_step(void)
+{
+    KEY_Code_t key;
+
+    if (!audio_bench_on)
+        return;
+
+    key = keypad_poll();
+    if (key == audio_bench_last)
+        return;
+    audio_bench_last = key;
+    if (!audio_bench_key(key))
+        return;
+
+    audio_path_hi = !audio_path_hi;
+    audio_path_drive(audio_path_hi ? 1 : 0);
+    led_set(audio_path_hi ? LED_GREEN : LED_RED);
+    uart_printf("\nbench: %s -> PC13 %s (green led = high)\n",
+                keypad_name(key), audio_path_hi ? "HIGH" : "low");
+}
+
 /* Sample the RSSI for a few seconds.  One reading cannot tell a carrier from a
  * noise floor, and the single readings taken so far have wandered over the whole
  * range; this makes "carrier on" and "carrier off" a pair of numbers to compare.
@@ -582,10 +638,11 @@ int main(void)
     BACKLIGHT_Init();
     uart_puts("backlight: on (GPIOA pin 5 -- confirmed on the radio)\n");
     led_init();
-    uart_puts("led: PA0/PA1 driven, nothing visible on this radio; "
-              "'L' steps the test combinations\n");
+    uart_puts("led: PA13 red / PA14 green, both active high (measured); "
+              "'L' cycles off/red/green/both\n");
     draw_test_card();
     uart_puts("lcd: test card drawn\n");
+    audio_bench_arm();
     uart_puts("boot complete. 'h' for commands, 'd' dumps the screen over this\n"
               "console, 'i' shows diagnostics.\n");
     print_help();
@@ -733,6 +790,7 @@ int main(void)
         }
 
         keypad_monitor_step();
+        audio_bench_step();
 
         animate_step(now);
     }
