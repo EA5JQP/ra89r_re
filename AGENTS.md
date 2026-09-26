@@ -278,8 +278,10 @@ generator, its pin is PA4 = `DAC_OUT1`).
   application sets `0x11` when the PC sends `Reset` + `'0'` over its serial command
   channel (0x08015710, then `SYSRESETREQ`) -- that is how the CPS reboots a *running*
   radio into the bootloader, and the key combination (`firmware/FLASHING.md` §6) is
-  the manual equivalent.  `tools/ra89r_flash.py` writes nothing there by default
-  (`--request-update` sets it deliberately) and `firmware/App/main.c` reports the
+  the manual equivalent.  `tools/ra89r_flash.py` still writes `0x11` there by
+  default, as it always has (`--no-valid-marker` skips it): the bootloader consumes
+  the request on the next reset and starts the image, so the flash ends with the
+  radio running and `0xFF` in flash either way.  `firmware/App/main.c` reports the
   byte at boot.  Nothing validates the image.
 - **The bootloader also enters update mode when PB9 and PA2 are both low at reset**
   (ra89r_bootloader.md §4c), whatever that byte says: the reset vector leads through
