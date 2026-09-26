@@ -182,14 +182,13 @@ driver/battery            gauge       -- OPEN, unmerged: the bus is silent for u
 driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR flash
                                          ("EEPROM") reads and dumps; the write test has
                                          not run yet, see ra89r_eeprom.md
-driver/bk4829             RF          -- OPEN, unmerged: both RF transceivers (a
-                                         shared 3-wire bus, the BK4829 and the
-                                         BK4815) and their stock register
-                                         configurations; both parts answer their id
-                                         on the radio and accept the configuration,
-                                         the K1-compatible path tunes and reports a quiet
-                                         channel, but no signal response yet, see
-                                         ra89r_bk4829.md and ra89r_bk4815.md
+driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
+                                         transceivers, the stock register tables and
+                                         the K1-compatible BK4819 interface.  Ids, all
+                                         configuration writes, the frequency path and
+                                         the RSSI response to a carrier are validated
+                                         on the radio, see ra89r_bk4829.md and
+                                         ra89r_bk4815.md
 ```
 
 The open features have their own write-ups, and they are the places to start:
@@ -202,7 +201,7 @@ The open features have their own write-ups, and they are the places to start:
 | battery gauge | `ra89r_battery.md` | protocol decoded and implemented; the chip never answers |
 | beeper | `ra89r_beeper.md` | traced (TIM4 + a tone generator, its pin is PA4); not written |
 | EEPROM (SPI NOR) | `ra89r_eeprom.md` | read + full dump validated on the radio; write test pending |
-| RF transceivers | `ra89r_bk4829.md`, `ra89r_bk4815.md`, `ra89r_rfpath.md` | both parts driven and configured; the K1-compatible path tunes and its RSSI reports a quiet channel -- a signal response is the remaining step |
+| RF transceivers | `ra89r_bk4829.md`, `ra89r_bk4815.md`, `ra89r_rfpath.md` | done for the BK4829: ids, all writes, tuning and an RSSI response to a carrier validated on the radio; the BK4815's RF role is still open |
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
 each driver self-contained under `firmware/App/driver/`, keep it host-testable
@@ -223,10 +222,10 @@ like the stock application and a `k` console monitor to re-check any button.
 Three features are unfinished and parked on their own branches, each with a doc:
 the **battery gauge** (protocol decoded, chip silent -- `ra89r_battery.md`), the
 **EEPROM** (read and dumped, write test pending -- `ra89r_eeprom.md`) and the
-**RF transceivers** (the bus and both stock configurations extracted, driver
-written and its K1-compatible path tunes; on the radio it reports a quiet
-channel where an unconfigured part read zero, but no signal response yet --
-`ra89r_bk4829.md`, `ra89r_bk4815.md`).
+**RF transceivers** (merged: the bus, both parts and the K1-compatible interface
+are validated on the radio -- ids, all writes, tuning and an RSSI response to a
+carrier -- with the BK4815's RF role still open, see `ra89r_bk4829.md` and
+`ra89r_bk4815.md`).
 The **status LED** is not a feature of its
 own: it is an RF-chip indicator, so it arrives with the RF bring-up
 (`ra89r_led.md`).  The **beeper** is traced but not written (TIM4 plus a tone
@@ -349,10 +348,13 @@ init, tunes 145.7500 MHz and turns RX on -- and did, on the radio: the frequency
 registers hold the split word and `0x67` reports a plausible noise floor where an
 unconfigured part read zero (ra89r_bk4829.md).
 
-What that does *not* finish: the entry points whose semantics the stock image has
-not yielded yet are now the K1's sequences running on our hardware, which is a
-hypothesis until the radio says otherwise -- the `X`/`R` commands and the host
-test can check registers, not RF.  And one thing was deliberately *not* ported:
+That layer is validated on the radio as far as its own behaviour goes: the ids
+answer, every configuration register stores what is written, it tunes 145.7500 MHz
+exactly, and `0x67` responds to a carrier (236 keyed, 57 released, straddling the
+stock's own squelch marks).  What that does *not* finish: the entry points whose
+semantics the stock image never showed are still the K1's sequences running on our
+hardware, each a hypothesis until it is exercised -- the `X`/`R`/`S` commands and
+the host test can check registers and RSSI, not audio or signalling.  And one thing was deliberately *not* ported:
 F4HWN's transport, whose chip select is a file-static define with no way to
 address two parts.
 
