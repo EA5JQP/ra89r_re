@@ -188,24 +188,21 @@ driver/battery            gauge       -- OPEN, unmerged: the bus is silent for u
 driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR flash
                                          ("EEPROM") reads and dumps; the write test has
                                          not run yet, see ra89r_eeprom.md
-driver/audiocontrol       audio       -- OPEN, unmerged, and it both RECEIVES and
-                                         TRANSMITS: RX audio is audible on a second
-                                         radio, and PTT now sends *voice* that the
-                                         second radio hears, with SIDE1 sending the
-                                         chip's own DTMF tone as a known-good
-                                         reference.  What made transmit work, none
-                                         of it in the stock's own path: `0x36` =
-                                         0x8822 (PA-CTL bit 7 + bias -- the K1's
-                                         SetupPowerAmplifier register, which our
-                                         import zeroed), `0x50` = 0x3B20 (the TX
-                                         unmute our import was not sending), the
-                                         `0x33` GPIO state, the band pins, the
-                                         PB14/TIM1 PA-power PWM and a mic gain of
-                                         0x70 in `0x40`.  All measured; see
-                                         ra89r_rfpath.md for the table.  The branch
-                                         also carries the squelch (chip AF mute on
-                                         the stock's 0xB4/0xCF marks), the status
-                                         LED bench and `C` for PC13.
+driver/audiocontrol       audio       -- MERGED.  It receives and transmits: the K1
+                                         bring-up plus the audio path are audible on
+                                         a second radio, the squelch mutes the
+                                         chip's AF on the stock's 0xB4/0xCF marks,
+                                         and **PTT sends voice that a second radio
+                                         hears** (SIDE1 sends the chip's own DTMF
+                                         tone as a reference).  The measured transmit
+                                         chain lives in `driver/pa.c` (the PB14/TIM1
+                                         bias PWM, the band-path pins, the chip's PA
+                                         enable in `0x33` and `0x36 = 0x8822` -- the
+                                         register the stock never writes and the K1
+                                         import zeroed) and `driver/tx.c` (tune,
+                                         `0x7D`, PrepareTransmit, the `0x50 = 0x3B20`
+                                         unmute the import was not sending, the mic
+                                         gain in `0x40`).  See ra89r_rfpath.md
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all
@@ -226,6 +223,7 @@ The open features have their own write-ups, and they are the places to start:
 | beeper | `ra89r_beeper.md` | traced (TIM4 + a tone generator, its pin is PA4); not written |
 | EEPROM (SPI NOR) | `ra89r_eeprom.md` | read + full dump validated on the radio; write test pending |
 | RF transceivers | `ra89r_bk4829.md`, `ra89r_bk4815.md`, `ra89r_rfpath.md` | done for the BK4829: ids, all writes, tuning and an RSSI response to a carrier validated on the radio; the BK4815's RF role is still open |
+| transmit / PA | `ra89r_rfpath.md` | done: voice heard on a second radio; `driver/pa.c` + `driver/tx.c`, with the register table in the doc |
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
 each driver self-contained under `firmware/App/driver/`, keep it host-testable
@@ -251,8 +249,11 @@ are validated on the radio -- ids, all writes, tuning and an RSSI response to a
 carrier -- with the BK4815's RF role still open, see `ra89r_bk4829.md` and
 `ra89r_bk4815.md`).
 The **status LED** turned out to be MCU lines after all -- `PA13`/`PA14`, measured
-on the radio -- and the branch that found them is `driver/audiocontrol`, which also
-keeps the `PC13` amplifier-enable candidate (`ra89r_led.md`).  The **beeper** is traced but not written (TIM4 plus a tone
+on the radio (`ra89r_led.md`).  **Transmit works**: the `driver/audiocontrol` work
+is merged, and the transmit chain it measured -- the `0x36` PA-CTL and bias, the
+`0x50` unmute, the `0x33` GPIO state, the band pins, the PB14/TIM1 bias PWM and the
+microphone gain -- is now `driver/pa.c` and `driver/tx.c`, with voice heard on a
+second receiver.  The **beeper** is traced but not written (TIM4 plus a tone
 generator, its pin is PA4 = `DAC_OUT1`).
 
 ## Firmware / flashing
@@ -390,10 +391,11 @@ image had not been asked about (AF, signalling, AGC, idle states) still run the 
 sequences here.  `ra89r_rffeatures.md` now locates the stock's own routines for
 them, which gives each one a reference to compare against, but none of that has
 been exercised on the radio either -- the `X`/`R`/`S` commands and the host test can
-check registers and RSSI, not audio or signalling -- except for the AF half: the
-K1 `SetAF`/`RX_TurnOn` sequence now produces audible receive audio on this board
-(heard on the radio from the `driver/audiocontrol` bench), so that part of the
-imported driver is good for this part.  And one thing was deliberately
+check registers and RSSI, not audio or signalling -- except for the AF and PA
+halves, which are now measured on the radio: the K1 `SetAF`/`RX_TurnOn` sequence
+produces audible receive audio, and the transmit chain is the one `driver/pa.c`
+and `driver/tx.c` implement (voice heard on a second receiver).  The stock's
+CTCSS, scramble, VOX and compander routines are still only *located*.  And one thing was deliberately
 *not* ported: F4HWN's transport, whose chip select is a file-static define with no
 way to address two parts.
 
