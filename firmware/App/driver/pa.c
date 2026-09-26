@@ -9,12 +9,38 @@ static uint16_t s_reg36;
 static uint16_t s_reg33 = 0x9000u;
 static uint16_t s_compare;
 
+/* Selected front end.  The RA89R switches its VHF and UHF paths separately and
+ * nothing here used to touch them at all; see pa.h for the evidence. */
+#define PA_VHF_UHF_SPLIT  28000000u   /* 280 MHz, in 10 Hz units */
+
+static bool s_uhf;
+
+bool pa_is_uhf(uint32_t freq_10hz)
+{
+    return freq_10hz >= PA_VHF_UHF_SPLIT;
+}
+
 void pa_band_path(void)
 {
-    /* FUN_08013A70(2) for transmit and (3) for receive both leave PA1 high and
-     * PA0 low; only the chip side differs. */
+    /* FUN_08013A70(2) for transmit and (3) for receive both leave PA1 high; PA0
+     * is the band, and low is the VHF state this board was validated in. */
     gpio_write(GPIOA, PA_BAND_PA1_PIN, 1);
-    gpio_write(GPIOA, PA_BAND_PA0_PIN, 0);
+    gpio_write(GPIOA, PA_BAND_PA0_PIN, s_uhf ? 1 : 0);
+}
+
+bool pa_band_is_uhf(void)
+{
+    return s_uhf;
+}
+
+void pa_select_band(uint32_t freq_10hz)
+{
+    s_uhf = pa_is_uhf(freq_10hz);
+    pa_band_path();
+
+    /* The chip's own front-end path bits -- 0x33 bit 0x08 for UHF, bit 0x04 for
+     * VHF.  The K1's helper drives exactly those two from the frequency. */
+    BK4819_PickRXFilterPathBasedOnFrequency(freq_10hz);
 }
 
 void pa_init(void)

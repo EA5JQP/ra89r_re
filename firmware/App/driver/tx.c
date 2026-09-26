@@ -19,7 +19,7 @@ void tx_start(uint32_t freq_10hz, tx_source_t source)
         return;
 
     pa_tx_enable();                         /* 0x33 pin 1, 0x36 = 0x8822 */
-    pa_band_path();
+    pa_select_band(freq_10hz);              /* PA0/PA1 and the chip's path bits */
     bk4815_write_reg(0x0C, 0x0203u);        /* the T/R path, other branch */
     BK4819_SetFrequency(freq_10hz);
     BK4819_WriteRegister(BK4819_REG_7D, TX_REG7D_POWER);

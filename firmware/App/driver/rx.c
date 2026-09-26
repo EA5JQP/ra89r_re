@@ -4,6 +4,7 @@
 #include "driver/bk4815.h"
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
+#include "driver/pa.h"
 #include "driver/tx.h"
 
 static bool s_ready;
@@ -18,6 +19,9 @@ void rx_init(uint32_t freq_10hz)
     BK4819_SetAudioPathCallback(audio_path_drive);
     BK4819_Init();
     BK4819_SetFrequency(freq_10hz);
+    /* The VHF/UHF front-end path, which this chain never used to set: without it
+     * both bands ran with whatever the chip's GPIO register held.  See pa.h. */
+    pa_select_band(freq_10hz);
     BK4819_SetAF(BK4819_AF_FM);
     BK4819_RX_TurnOn();
 
@@ -35,6 +39,7 @@ void rx_init(uint32_t freq_10hz)
 void rx_set_frequency(uint32_t freq_10hz)
 {
     BK4819_SetFrequency(freq_10hz);
+    pa_select_band(freq_10hz);
 }
 
 bool rx_ready(void)

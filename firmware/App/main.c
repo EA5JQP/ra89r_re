@@ -32,6 +32,7 @@
 #include "driver/py25q16.h"
 #include "app/app.h"
 #include "app/common.h"
+#include "app/scanner.h"
 #include "misc.h"
 #include "port_gui.h"
 #include "port_storage.h"
@@ -233,6 +234,10 @@ static void print_mode(void)
                 (unsigned)gEeprom.FreqChannel[0], (unsigned)gEeprom.FreqChannel[1],
                 (unsigned)gEeprom.MrChannel[0], (unsigned)gEeprom.MrChannel[1],
                 (unsigned)gEeprom.VFO_OPEN);
+    uart_printf("  front end %s (PA0 %s, reg 0x33 %s) -- VHF/UHF split 280 MHz\n",
+                pa_band_is_uhf() ? "UHF" : "VHF",
+                pa_band_is_uhf() ? "high" : "low",
+                pa_band_is_uhf() ? "bit 0x08" : "bit 0x04");
     uart_printf("  A %u.%05u MHz  B %u.%05u MHz  CHANNEL_SAVE %u  band %u  RX_VFO %u\n",
                 (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency / 100000u),
                 (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency % 100000u),
