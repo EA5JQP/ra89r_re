@@ -187,7 +187,8 @@ static void print_help(void)
               "          k keypad monitor (raw ADC per line + decoded key)\n"
               "          R probe both RF chips (ids)   W configure both\n"
               "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
-              "          S sample reg 0x67 for 4 s   C toggle PC13 (amp-enable)\n");
+              "          S sample reg 0x67 for 4 s   C toggle PC13 (amp-enable)\n"
+              "          T transmit on/off (also: hold PTT on the radio)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -360,18 +361,23 @@ static void rf_k1_bringup(void)
  *     RED = PC13 pulled low by the bench, so the amplifier question can be
  *     asked without the console.
  *
- * Press PTT (or SIDE1/SIDE2/PTT2) to flip PC13 and listen for the audio to go
- * with it -- that is the one thing about PC13 that is still unmeasured.  The
- * console 'C' does the same when the cable is in. */
+ * **PTT transmits**: the stock's TX sequence is the K1's `PrepareTransmit`
+ * (`0x37 = 0x9D1F`, `0x30 = 0xC1FE` -- PA gain + mic ADC + TX DSP) plus the
+ * power/bias register `0x7D`, which the stock computes from the codeplug level
+ * (ra89r_rfpath.md, "TX, and how the power is handled"); this radio's value is
+ * `0xE958` (level 3 -> bias 0x18).  Releasing PTT goes back to RX.
+ *
+ * SIDE1/SIDE2/PTT2 still flip PC13, and the console has 'C' (PC13), 'T' (TX)
+ * and 'K' for when the cable is in. */
 static bool audio_bench_on;
 static bool audio_path_hi = true;
 static bool squelch_open;
 static KEY_Code_t audio_bench_last = KEY_INVALID;
 
+/* The side keys ask the PC13 question; PTT is the transmitter. */
 static bool audio_bench_key(KEY_Code_t key)
 {
-    return key == KEY_PTT || key == KEY_SIDE1 || key == KEY_SIDE2 ||
-           key == KEY_PTT2;
+    return key == KEY_SIDE1 || key == KEY_SIDE2 || key == KEY_PTT2;
 }
 
 /* Green = receiving (the stock's Rx.Light), off = quiet, red = the bench has
@@ -400,6 +406,41 @@ static void audio_bench_arm(void)
     audio_bench_on = true;
 }
 
+/* ---------------------------------------------------------------- transmit
+ *
+ * The stock never writes 0x36 (the K1's SetupPowerAmplifier register) and no
+ * timer or DAC is involved: TX is the K1's own sequence -- which this port
+ * already carries -- plus 0x7D for the power level.  There is nothing else to
+ * switch on: the chip's PA drives the antenna, and the band/path select is
+ * left where the bring-up put it. */
+#define BENCH_FREQ_HZ 14575000u
+#define BENCH_PA_7D   0xE958u
+
+static bool tx_on;
+
+static void radio_tx(int on)
+{
+    if (on == tx_on)
+        return;
+    tx_on = on;
+
+    if (on) {
+        BK4819_SetFrequency(BENCH_FREQ_HZ);
+        BK4819_WriteRegister((BK4819_REGISTER_t)0x7D, BENCH_PA_7D);
+        BK4819_PrepareTransmit();
+        led_set(LED_RED);               /* red = transmit, as the stock shows it */
+    } else {
+        BK4819_RX_TurnOn();
+        BK4819_SetAF(BK4819_AF_MUTE);
+        squelch_open = false;
+        bench_led();
+    }
+
+    uart_printf("\nbench: TX %s (0x30 = 0x%04X, 0x7D = 0x%04X)\n",
+                on ? "ON" : "off", (unsigned)BK4819_ReadRegister(BK4819_REG_30),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_7D));
+}
+
 static void audio_bench_step(uint32_t now)
 {
     static uint32_t last;
@@ -410,9 +451,13 @@ static void audio_bench_step(uint32_t now)
         return;
 
     key = keypad_poll();
-    if (key != audio_bench_last) {
-        audio_bench_last = key;
-        if (audio_bench_key(key)) {
+
+    if (key == KEY_PTT) {
+        radio_tx(1);                    /* push to talk, as on the real radio */
+    } else {
+        if (tx_on)
+            radio_tx(0);
+        if (key != audio_bench_last && audio_bench_key(key)) {
             audio_path_hi = !audio_path_hi;
             audio_path_drive(audio_path_hi ? 1 : 0);
             bench_led();
@@ -420,6 +465,10 @@ static void audio_bench_step(uint32_t now)
                         audio_path_hi ? "HIGH" : "low");
         }
     }
+    audio_bench_last = key;
+
+    if (tx_on)
+        return;                         /* no squelch polling while transmitting */
 
     if ((uint32_t)(now - last) < 50u)
         return;
@@ -801,6 +850,9 @@ int main(void)
                 break;
             case 'C':
                 audio_path_toggle();
+                break;
+            case 'T':
+                radio_tx(!tx_on);
                 break;
             default:
                 break;
