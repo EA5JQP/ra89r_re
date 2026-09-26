@@ -267,7 +267,13 @@ port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
                                          dtmf/scanner), so the menu items act and the
                                          keys follow the K1 -- with PTT deliberately
                                          left on the measured tx chain
-                                         (GPIO_IsPttPressed returns false).  See
+                                         (GPIO_IsPttPressed returns false).  The
+                                         application owns the panel and the keys (its
+                                         gUpdateDisplay -> GUI_DisplayScreen path
+                                         draws, APP_TimeSlice10ms -> CheckKeys handles
+                                         them, the menu view is built at boot), and
+                                         EXIT switches VFO A/B because this radio has
+                                         no A/B key.  See
                                          ra89r_port.md for the layer table and what is
                                          next: step 2, the codeplug, to be organised so
                                          the stock firmware stays compatible
