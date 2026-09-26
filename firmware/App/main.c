@@ -186,7 +186,8 @@ static void print_help(void)
               "          k keypad monitor (raw ADC per line + decoded key)\n"
               "          R probe both RF chips (ids)   W configure both\n"
               "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
-              "          S sample reg 0x67 for 4 s   A toggle the audio path (PA14)\n");
+              "          S sample reg 0x67 for 4 s   A step the PA13/PA14 led pair\n"
+              "          C toggle PC13 (the amp-enable candidate)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -279,46 +280,68 @@ static void rf_report(void)
 
 /* The K1 firmware's audio path is a GPIO of its own -- `GPIO_PIN_AUDIO_PATH` =
  * PA8 on that board, driven HIGH to enable through `AUDIO_AudioPathOn()` -- and
- * that is the call this port replaced with a callback.  On this board the pair
- * that does it is PA14/PA13, not PC13:
+ * that is the call this port replaced with a callback.  On this board the line
+ * the stock holds asserted is PC13 (FUN_080177A8 raises it, and its config+0x38
+ * gate is 0 on this codeplug, so it stays HIGH), which leaves PC13 as the
+ * amplifier-enable candidate.  It is a *static* line: nothing in the squelch path
+ * touches it.  Pressing `C` inverts it so the speaker can be listened to with the
+ * line both ways.
  *
- *   FUN_08004C84 (per-tick RX handler)
- *     state[0x21] >= 7 (signal present) -> FUN_08018A10 -> PA14 = settings level
- *     state[0x21] <  3 (squelch closed) -> FUN_0801D458 -> PA14 LOW
- *
- * so PA14 is the line that follows the squelch; PA13 is its twin on the same
- * codeplug bit (FUN_08020028) and the stock leaves it at that level whenever the
- * radio is on (FUN_08018AB8), so it is held high here.  Both are configured as
- * push-pull outputs together by the boot GPIO init FUN_08013C74 (mask 0x6000),
- * and the level is bit 2 of codeplug settings byte 2 -- clear on this radio, i.e.
- * active HIGH (ra89r_rffeatures.md).  Polarity has not been scoped yet.
- *
- * PC13 is *not* this line: FUN_080177A8 holds it high on this codeplug. */
+ * PA13/PA14 are *not* this line -- measured on the radio, they drive the status
+ * LED: stepping them from the console changes it from green+red to red.  The
+ * stock drives the pair from its receive/squelch state machine (PA14 high while
+ * the squelch is open, low when it closes) and from TX, and the CPS setting list
+ * has `LED Mode`, `Led Type` and `Rx.Light`, so this pair is the indicator.  `A`
+ * steps it through all four combinations so the pin->colour map can be read off
+ * in one pass.  Both are the SWDIO/SWCLK pads, configured as push-pull outputs
+ * together by the boot GPIO init FUN_08013C74 (mask 0x6000). */
 static void audio_path_drive(int on)
 {
     gpio_port_clock(AUDIO_PATH_PORT);
-    gpio_port_clock(AUDIO_ENABLE_PORT);
     gpio_config_output(AUDIO_PATH_PORT, AUDIO_PATH_PIN);
-    gpio_config_output(AUDIO_ENABLE_PORT, AUDIO_ENABLE_PIN);
-    gpio_write(AUDIO_ENABLE_PORT, AUDIO_ENABLE_PIN, 1);
     gpio_write(AUDIO_PATH_PORT, AUDIO_PATH_PIN, on ? 1 : 0);
 }
 
-static void rf_audio_path(void)
+static void status_led_drive(int a, int b)
+{
+    gpio_port_clock(STATUS_LED_PORT);
+    gpio_config_output(STATUS_LED_PORT, STATUS_LED_A_PIN);
+    gpio_config_output(STATUS_LED_PORT, STATUS_LED_B_PIN);
+    gpio_write(STATUS_LED_PORT, STATUS_LED_A_PIN, a ? 1 : 0);
+    gpio_write(STATUS_LED_PORT, STATUS_LED_B_PIN, b ? 1 : 0);
+}
+
+static void audio_path_toggle(void)
 {
     static int on;
-    uint32_t en, path;
 
     on = !on;
     audio_path_drive(on);
-    en = gpio_read(AUDIO_ENABLE_PORT, AUDIO_ENABLE_PIN);
-    path = gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN);
-    uart_printf("\nRF: audio path -> PA14=%s, PA13=%s (IDR read-back)\n",
-                path ? "high" : "low", en ? "high" : "low");
-    uart_puts("  measure PA14: the stock drives this line from its squelch\n"
-              "  handler -- high while the squelch is open, low when it closes --\n"
-              "  and high in TX; PA13 is the twin on the same codeplug bit.\n"
-              "  Both are the SWDIO/SWCLK pads, so they only work as GPIO.\n");
+    uart_printf("\nRF: PC13 (amp-enable candidate) -> %s (IDR %s)\n",
+                on ? "high" : "low",
+                gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN) ? "high" : "low");
+    uart_puts("  the stock holds PC13 high on this codeplug; with the RF part in\n"
+              "  RX (K) and a signal tuned in, this is the line to listen on.\n");
+}
+
+/* Walk PA13/PA14 through (B,A) = 10, 11, 00, 01 -- four states, one per `A` --
+ * printing what each one drives, so the LED colour can be read off in one pass. */
+static void status_led_step(void)
+{
+    static const struct { int a, b; } step[] = {
+        { 0, 1 }, { 1, 1 }, { 0, 0 }, { 1, 0 },
+    };
+    static unsigned idx;
+
+    status_led_drive(step[idx].a, step[idx].b);
+    uart_printf("\nLED: PA14=%d PA13=%d (IDR PA14=%d PA13=%d)\n",
+                step[idx].a, step[idx].b,
+                gpio_read(STATUS_LED_PORT, STATUS_LED_A_PIN) ? 1 : 0,
+                gpio_read(STATUS_LED_PORT, STATUS_LED_B_PIN) ? 1 : 0);
+    if (idx == 0)
+        uart_puts("  press A three more times: 11, 00, 01.  Note the LED colour\n"
+                  "  (off / green / red / green+red) at each step.\n");
+    idx = (idx + 1) & 3;
 }
 
 /* The K1-compatible path: `BK4819_Init` replays the K1's own register
@@ -714,7 +737,10 @@ int main(void)
                 rf_watch();
                 break;
             case 'A':
-                rf_audio_path();
+                status_led_step();
+                break;
+            case 'C':
+                audio_path_toggle();
                 break;
             default:
                 break;

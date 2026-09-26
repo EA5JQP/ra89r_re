@@ -97,30 +97,36 @@
 #define BK4829_CS_PIN        (1u << 8)    /* PB8  */
 #define BK4815_CS_PIN        (1u << 13)   /* PB13 */
 
-/* Audio-path enable.  The stock's squelch handlers drive `PA14` (with `PA13` as
- * its twin on the same codeplug bit), not `PC13`:
+/* The status LED is on `PA13`/`PA14`, and it is an MCU line after all.
+ *
+ * The stock drives this pair from its receive and transmit state machines:
  *
  *   state[0x21] >= 7 (signal present, squelch open) -> FUN_08004C84
  *        -> FUN_08018A10 -> PA14 = *(char *)(0x20009F28 + 0xc)
  *   state[0x21] <  3 (squelch closed)              -> FUN_0801D458 -> PA14 LOW
+ *   TX (mode field state[2] != 0)                  -> FUN_08015D88/15E28 -> PA14 high
  *
- * and the same pair is driven high while transmitting by `FUN_08015D88` /
- * `FUN_08015E28`.  Both are push-pull outputs configured together by the boot
- * GPIO init `FUN_08013C74` (GPIOA mask `0x6000`), and `FUN_08020028` is the
- * `PA13` half of the same level pair.  The level comes from bit 2 of codeplug
- * settings byte 2; this radio's block has it clear, i.e. active HIGH.
+ * with `FUN_08020028` the `PA13` half of the same level pair, and both configured
+ * together as push-pull outputs by the boot GPIO init `FUN_08013C74` (GPIOA mask
+ * `0x6000`).  The level comes from bit 2 of codeplug settings byte 2
+ * (`0x20009F28 + 0xc`); this radio's block has it clear, i.e. active HIGH.  The CPS
+ * setting list carries `LED Mode`, `Led Type` and `Rx.Light`, which is what that bit
+ * and these two routines look like.
  *
- * `PC13` stays a real line but a static one: `FUN_080177A8`'s `config+0x38`
- * gate is 0 on this codeplug, so it is held HIGH and never follows the squelch.
+ * *Measured on the radio*: toggling `PA14` from the console changes the LED -- it
+ * goes from green+red to red -- so this pair is the indicator, not a speaker
+ * enable.  The green/red assignment and the active level of each die are being
+ * mapped (see ra89r_led.md).  The three "toggle the pin" helpers the stock has
+ * (`FUN_08005F90` for PA13, `FUN_0800656C`/`FUN_08006070`/`FUN_08019C58` for PA14)
+ * are blinks, which is what an indicator driver looks like.
  *
- * The K1 firmware puts the same function on a GPIO of its own,
- * `GPIO_PIN_AUDIO_PATH = PA8`, driven HIGH to enable and LOW to disable, through
- * `AUDIO_AudioPathOn()`/`Off()`.  That is the convention this port follows, with
- * `PA14` as the line that tracks the squelch and `PA13` kept at the level the
- * stock's "radio on" path (`FUN_08018AB8`) leaves it at; see ra89r_rffeatures.md.
- * Neither has been scoped yet. */
-#define AUDIO_PATH_PIN       (1u << 14)   /* PA14 -- tracks the squelch */
-#define AUDIO_ENABLE_PIN     (1u << 13)   /* PA13 -- the twin (PA13/PA14 = SWDIO/SWCLK) */
+ * `PC13` is the separate, static line: `FUN_080177A8` raises it and its
+ * `config+0x38` gate is 0 on this codeplug, so it is held HIGH.  That is the
+ * remaining candidate for the audio-path/amplifier enable, and it is what the
+ * K1-driver callback drives. */
+#define AUDIO_PATH_PIN       (1u << 13)   /* PC13 -- amplifier enable candidate, held HIGH */
+#define STATUS_LED_A_PIN     (1u << 14)   /* PA14 */
+#define STATUS_LED_B_PIN     (1u << 13)   /* PA13 (PA13/PA14 are the SWDIO/SWCLK pads) */
 
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) talks to the
  * external SPI NOR flash (see ra89r_eeprom.md); the USB-C port goes to the
