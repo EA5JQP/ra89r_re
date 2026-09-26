@@ -276,6 +276,68 @@ classes of part, so read it before writing new ones:
 Cross-referencing the RA89R firmware against that tree is encouraged; editing that
 tree is out of scope for this workspace unless the user asks.
 
+### The driver interface the port still needs
+
+The F4HWN application is written against **one** RF driver interface,
+`App/driver/bk4819.h`: about 80 `BK4819_*` entry points plus the enums
+(`BK4819_AF_Type_t`, `BK4819_FilterBandwidth_t`, `BK4819_CssScanResult_t`,
+`BK4819_GPIO_PIN_t`, `BK4819_REGISTER_t`), the `RegisterSpec` named-register
+table in `bk4819-regs.h`, and the global `gRxIdleMode`.  That tree ships **two
+implementations of that single API** -- `bk4819.c` and `bk4829.c`, defining the
+same symbol names -- so the chip is a build-time choice, not an API difference.
+
+Our drivers are three layers with about ten entry points between them
+(`rf_bus_*`; `bk4829_*`/`bk4815_*` detect, read, write, configure).  So the gap
+is the application-level API, and it splits three ways.
+
+**1. The register map already matches, on the BK4829.**  From the stock image,
+not from assumption:
+
+| reg | F4HWN meaning | RA89R stock |
+|---|---|---|
+| `0x38`/`0x39` | `BK4819_SetFrequency` lo/hi | written raw in `FUN_08017158` (the helper `FUN_0800F670` is a two-instruction `nop; bx lr`) |
+| `0x32` | `BK4819_SetFrequencyScan` (`0x244` = disabled) | `FUN_08016DE8` writes `0x32 = 0x244` |
+| `0x33` | `BK4819_ToggleGpioOut`, bit `0x40 >> Pin` | `FUN_080137D4` is its only writer, same bit order |
+| `0x67 & 0x1ff` | `BK4819_GetRSSI` | read that way in `FUN_080052B8` |
+| `0x13` | squelch/level | `FUN_080052B8` walks it in eight steps |
+
+Frequencies are in 10 Hz units on both sides (the RA89R's band table reads
+10,800,000 for 108 MHz; F4HWN's constants do the same), so `SetFrequency` is a
+straight drop-in against the BK4829.
+
+This also forces a correction in `ra89r_bk4829.md`: register `0x33` is the
+**chip's GPIO-output register**, not a band/filter bitfield.  Bits 0..6 are the
+outputs in `0x40 >> pin` order and the paired bit `14 - n` is cleared per driven
+pin, which is what made it look like a filter selector; the GPIOs do control
+front-end paths, just not through a bitfield.
+
+**2. Blocked on semantics we have not extracted.**  The second part has *no*
+`0x38`/`0x39` path -- the stock never writes frequency registers to the BK4815;
+its tuning word goes to `0x22` as `(x << 16) / 0x4822` in `FUN_08005C34`, an
+encoding still to work out.  Beyond that: the AF/audio group (`SetAF`,
+`SetRxAudioGain`, `GetAfTxRx`, `PlayTone*`, `TransmitTone`) sits behind the
+still-unidentified `FUN_08009D80`/`FUN_0801533C`/`FUN_0801638C`; the whole
+signalling group (CTCSS/CDCSS, DTMF, FSK, MDC, Roger) is untouched; so are AGC,
+metering beyond RSSI, scrambler/compander/VOX, the idle/sleep/bypass states and
+the scan result registers.  `SetupPowerAmplifier` needs the TX-power register,
+which is still unidentified (`0x7d`/`0x30` are the candidates).
+
+**3. The architectural gap needs a decision before code.**  F4HWN assumes one
+transceiver; the RA89R has two on a shared bus and the stock picks between them
+per channel (`0x20000303`).  Either the `BK4819_*` layer binds to the BK4829 --
+which carries frequency, RSSI, the GPIO/filter lines, squelch and the T/R set,
+and is therefore the F4HWN-equivalent part -- and the BK4815 stays an extension
+with its own calls, or every `BK4819_*` call dispatches to the active part.  The
+first is far less code and matches the evidence; the second is only needed if the
+BK4815 turns out to be what radiates above 134 MHz.
+
+Whatever is chosen, the interface still needs a named-register table (our
+register argument is a raw `uint8_t`), a name decision (`BK4819_*` versus
+`bk4829_*`/`bk4815_*`, or a shim), and `gRxIdleMode`.  One thing that should
+*not* be ported: F4HWN's transport, whose chip select is a file-static define
+with no way to address two parts -- `rf_bus.c` already takes the select as a
+parameter and is the better base.
+
 ## Bring-up debugging
 
 The UART console is the primary debugging channel (the panel may be dark for
