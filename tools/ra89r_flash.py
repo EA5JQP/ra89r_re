@@ -21,13 +21,18 @@ Protocol shape (all frames are ``FE FE EE EF <cmd> <payload> FD``):
 The bootloader only accepts records whose address is outside
 0x08000000-0x08003FFF (its own region), so this tool refuses those too.
 
-**Application-valid marker.**  The bootloader only starts the application when a
-byte in the last flash page is 0x11 (0x08003328-0x0800335A), and it *clears* that
-byte (0xFF) every time it enters update mode -- that is how an interrupted
-update leaves the radio in the bootloader.  The stock application writes 0x11
-back (0x08015724).  If the flashing tool does not, the radio boots straight back
-into the bootloader: black screen, silent UART.  This tool writes the marker
-after the image records by default; `--no-valid-marker` disables it.
+**The byte at 0x0805FFF0 (nothing to do with flashing).**  It is the
+bootloader's *update-mode request*, and the polarity is the opposite of what
+this file used to claim: `0xFF` (the normal value) makes the bootloader start
+the application, and `0x11` makes it enter update mode (0x08003328-0x0800335A).
+The bootloader *consumes* the request -- entering update mode writes 0xFF back
+(0x08000566-0x08000578) -- and the stock application sets 0x11 from its serial
+command handler when the PC sends `"Reset"` + `'0'` (0x08015710, then
+`SYSRESETREQ`), which is how the CPS reboots a running radio into the
+bootloader.  This tool therefore writes nothing there by default: after `EXIT`
+the reset runs the application, and leaving 0xFF alone is what makes that work.
+`--request-update` writes 0x11 deliberately (the next reset enters update mode);
+`--no-valid-marker` is accepted and ignored, for older command lines.
 
 Speed notes (see ra89r_bootloader.md section 5):
 
@@ -74,11 +79,12 @@ CMD_BAUD = 0xE5
 # 115200, 256000, 512000, 1024000, + one unreadable case)
 BAUD_TABLE = [9600, 19200, 38400, 56000, 57600, 115200, 256000, 512000, 1024000]
 
-# "the application is valid" marker: 0x11 at the top of the last flash page.
+# The update-mode request: 0x11 at the top of the last flash page makes the
+# bootloader enter update mode on the next reset; 0xFF (normal) runs the app.
 # Records are 256-byte aligned, so the record covering it spans 0x0805FF00..
-MARKER_ADDRESS = 0x0805FFF0
-MARKER_VALUE = 0x11
-MARKER_BASE = MARKER_ADDRESS & ~0xFF
+UPDATE_REQUEST_ADDRESS = 0x0805FFF0
+UPDATE_REQUEST_VALUE = 0x11
+UPDATE_REQUEST_BASE = UPDATE_REQUEST_ADDRESS & ~0xFF
 
 BOOTLOADER_START = 0x08000000
 BOOTLOADER_END = 0x08003FFF
@@ -172,21 +178,21 @@ class Transport(object):
         return bytes(out)
 
 
-def valid_marker_record(baseline):
-    """A record that sets the application-valid byte (see the module docstring)."""
-    payload = bytearray(b"\xFF" * (MARKER_ADDRESS - MARKER_BASE + 1))
-    payload[-1] = MARKER_VALUE
-    a = MARKER_BASE >> 8
+def update_request_record(baseline):
+    """A record that sets the update-mode request (see the module docstring)."""
+    payload = bytearray(b"\xFF" * (UPDATE_REQUEST_ADDRESS - UPDATE_REQUEST_BASE + 1))
+    payload[-1] = UPDATE_REQUEST_VALUE
+    a = UPDATE_REQUEST_BASE >> 8
     header = bytes([(len(payload) >> 8) & 0xFF, len(payload) & 0xFF,
                     (a >> 16) & 0xFF, (a >> 8) & 0xFF, a & 0xFF, 0x00])
-    return MARKER_BASE, ra89r.Record(header, bytes(payload), baseline).encode()
+    return UPDATE_REQUEST_BASE, ra89r.Record(header, bytes(payload), baseline).encode()
 
 
-def add_valid_marker(records, baseline):
+def add_update_request(records, baseline):
     for addr, raw in records:
-        if addr <= MARKER_ADDRESS < addr + len(raw) - 7:
+        if addr <= UPDATE_REQUEST_ADDRESS < addr + len(raw) - 7:
             return False
-    records.append(valid_marker_record(baseline))
+    records.append(update_request_record(baseline))
     return True
 
 
@@ -401,10 +407,11 @@ def cmd_probe(args):
 
 def cmd_flash(args):
     records, baseline = load_records(args.icf)
-    if not args.no_valid_marker:
-        if add_valid_marker(records, baseline):
-            print("adding the application-valid marker (%02X at 0x%08X)"
-                  % (MARKER_VALUE, MARKER_ADDRESS))
+    if args.request_update:
+        if add_update_request(records, baseline):
+            print("adding the update-mode request (%02X at 0x%08X): the next "
+                  "reset enters the bootloader" % (UPDATE_REQUEST_VALUE,
+                                                   UPDATE_REQUEST_ADDRESS))
     check_addresses(records, args.allow_bootloader_region)
     # 'auto' starts from the fastest rate and the sweep drops down as needed
     baud_index = (BAUD_CANDIDATES[0] if args.baud == "auto"
@@ -560,9 +567,12 @@ def main(argv=None):
     ap.add_argument("--retries", type=int, default=3)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the frames instead of using the port")
+    ap.add_argument("--request-update", action="store_true",
+                    help="write 0x11 to 0x0805FFF0 as well, i.e. ask for update "
+                         "mode on the next reset (the bootloader consumes it)")
     ap.add_argument("--no-valid-marker", action="store_true",
-                    help="do not write 0x11 to 0x0805FFF0; the bootloader then "
-                         "stays in update mode instead of starting the firmware")
+                    help="accepted and ignored: writing that byte is no longer "
+                         "the default, and 0xFF is the normal value")
     ap.add_argument("--erase-first", action="store_true",
                     help="send the E1/CLEAR command before programming")
     ap.add_argument("--allow-bootloader-region", action="store_true",

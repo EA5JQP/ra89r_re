@@ -33,11 +33,13 @@
 
 #define VERSION_STRING "ra89r_fw 0.2 (uart debug)"
 
-/* The bootloader only starts this application while this byte is 0x11; it
- * clears it on entering update mode and the stock app writes it back
- * (ra89r_bootloader.md section 4c).  Reported at boot, and worth knowing about
- * when the screen stays dark. */
-#define APP_VALID_MARKER  ((volatile uint8_t *)0x0805FFF0)
+/* 0x0805FFF0 is the bootloader's **update-mode request**, not an application
+ * validity flag: 0xFF (the normal state) makes the bootloader start this
+ * application, and 0x11 makes it enter update mode -- after which it consumes
+ * the request by writing 0xFF back (ra89r_bootloader.md section 4c).  The stock
+ * application sets 0x11 from its serial command handler when the PC sends
+ * "Reset" + '0'.  Reported at boot and by 'i'. */
+#define UPDATE_REQUEST  ((volatile uint8_t *)0x0805FFF0)
 
 static uint8_t contrast = 0x19u;
 static int show_border;
@@ -121,10 +123,11 @@ static void print_diagnostics(void)
     uart_printf("  msp         %08X\n", (unsigned)__get_MSP());
     uart_printf("  reset cause %s (CSR=%08X)\n", reset_cause(),
                 (unsigned)RCC->CSR);
-    uart_printf("  app marker  0x0805FFF0 = %02X%s\n", (unsigned)*APP_VALID_MARKER,
-                (*APP_VALID_MARKER == 0x11u) ? " (ok)"
-                                             : " (NOT SET: the bootloader will "
-                                               "not start this app)");
+    uart_printf("  update req  0x0805FFF0 = %02X%s\n", (unsigned)*UPDATE_REQUEST,
+                (*UPDATE_REQUEST == 0x11u) ? " (set: the bootloader would enter "
+                                             "update mode)"
+                                           : " (clear: normal, the bootloader "
+                                             "starts this app)");
     uart_printf("  lcd         variant %s, column offset %u\n",
                 (lcd_variant() == LCD_INIT_STOCK_APP) ? "stock-app (8 extra bytes)"
                                                       : "standard (bootloader-proven)",
@@ -751,13 +754,11 @@ int main(void)
 
     uart_printf("built " __DATE__ " " __TIME__ "\n");
     uart_printf("reset cause: %s\n", reset_cause());
-    uart_printf("app-valid marker at 0x0805FFF0 = 0x%02X (expected 0x11)\n",
-                (unsigned)*APP_VALID_MARKER);
-    if (*APP_VALID_MARKER != 0x11u) {
-        uart_puts("  note: the bootloader started us anyway, so it saw 0x11; if\n"
-                  "        this line disagrees, report it -- the marker write is\n"
-                  "        then not landing where we read it.\n");
-    }
+    uart_printf("update request at 0x0805FFF0 = 0x%02X (%s)\n",
+                (unsigned)*UPDATE_REQUEST,
+                (*UPDATE_REQUEST == 0x11u)
+                    ? "set: next reset enters the bootloader's update mode"
+                    : "clear: normal, the bootloader started this app");
 
     /* Keypad lines back to their default state before anything else touches
      * GPIO: the five ladder inputs (plus the ADC's other analog input) analog,

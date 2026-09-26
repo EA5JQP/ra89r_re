@@ -3,11 +3,13 @@
 Everything below is in this repository and needs no Windows software.  The
 protocol is documented in `../ra89r_bootloader.md`.
 
-**What gets written:** the application records plus one byte at `0x0805FFF0`
-(the bootloader's "application is valid" marker — without it the radio reboots
-back into the bootloader and stays dark, which is exactly what happened the first
-time this firmware was flashed).  Everything stays inside
-`0x08004000`-`0x0805FFFF`.
+**What gets written:** the application records, and nothing else.  The byte at
+`0x0805FFF0` is the bootloader's *update-mode request*, not a validity flag:
+`0xFF` (the normal value, and what a flash now leaves behind) makes it start the
+application, and `0x11` tells it to enter update mode.  `ra89r_flash.py` used to
+write `0x11` there "for validity", which was backwards -- the bootloader consumed
+it on the post-`EXIT` reset so it happened to work.  `--request-update` still
+writes it deliberately.  Everything stays inside `0x08004000`-`0x0805FFFF`.
 The stock bootloader (`0x08000000`-`0x08003FFF`) is never touched — `ra89r_flash.py`
 refuses those addresses and the bootloader rejects them too.  A bad flash is
 therefore recoverable: re-flash the stock image.
