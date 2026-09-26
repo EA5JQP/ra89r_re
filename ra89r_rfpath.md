@@ -253,6 +253,80 @@ BK4829's filter register `0x33`.
 
 It touches no RF register directly; the three callees are not identified yet.
 
+## TX, and how the power is handled
+
+**There is no PWM and no MCU pin that enables a PA: the transmit power is a
+transceiver register, and the MCU's TX-side actions are the band/path switch and
+the indicators.**  The stock's TX entry, walked from both ends:
+
+```
+FUN_08018AB8   enter TX (PA13 high = red LED, PA14 low = green off)
+  -> FUN_08017306(p, 1)
+     -> FUN_08017280   the TX setup
+          FUN_08017176 -> FUN_08017158          tune (0x38/0x39)
+          FUN_08006E6A(state[0x91]) -> FUN_0801763C -> 0x43 = filter bandwidth
+          FUN_08019E2C(state[0x77])             scramble
+          FUN_080220A0(0, 0x24)
+          FUN_080220A0(0x6142, 0x47)            AF source
+          FUN_080220A0(0x9D1F, 0x37)
+          FUN_080220A0(0x3B20, 0x50)
+          FUN_080220A0(0, 0x70)
+          FUN_080220A0(0, 0x30) then 0xC1FE     PA gain (bit 3) + mic ADC (bit 2) + TX DSP
+```
+
+`0xBFF1` is the other TX-stage value: the T/R path `FUN_08016228` writes it with
+`0x47`/`0x13` and the chip-GPIO cluster, and `FUN_08018A46` writes `0x37 = 0x9D1F`
+then `0x30 = 0xBFF1` (or `0xBDF1` in the VOX case).  The port's imported
+`BK4819_PrepareTransmit()` already produces the same key words (`0x36 = 0`,
+`0x37 = 0x9D1F`, `0x52 = 0x028F`, `0x30 = 0` then `0xC1FE`), because it is the
+same K1 sequence -- so the register side of TX is already available here.
+
+**The power itself is `0x7D`, and it is codeplug-driven.**
+
+* `FUN_0801BAF4` writes `0x7D = 0xE940 | bias`, with `bias` computed from the
+  decoded settings field `0x20009F28 + 0xf` (filled by `FUN_0800FE18` from bits
+  2:0 of codeplug byte 10) and the 2-bit field at `+0x10`:
+  `bias = 0x0C + 4*level`, or `0x0C + 3*level` when `+0x10 == 1`;
+* this radio's byte 10 is `0x03` (level 3, variant 0) -> `bias = 0x18`, so
+  **`0x7D = 0xE958`**;
+* it is applied per *radio configuration*, not per transmission: the only caller
+  is the BK4829 configuration `FUN_08006B78`, reached from `FUN_08016788` (band
+  select, `PC13` low, both chip configurations, chip-GPIO clear) via `FUN_0800F32C`;
+* the K1 driver writes the same register at init with its own bias (`bk4819.c`:
+  `0xE940`, `bk4829.c`: `0xE920`), so this is the part's power/bias control and the
+  stock is simply computing the value.
+
+**Checked and *not* power**, because each looked like it:
+
+* `0x43` -- `FUN_0801763C(state[0x91])` writes `0x3028` (levels 0/1) or `0x4048`
+  (level 2), and in the K1 this register is the **filter bandwidth**
+  (`BK4819_SetFilterBandwidth`): 0x3028/0x4048 differ in the RF/weak-RF/AF-LPF
+  fields, so `state[0x91]` is a bandwidth mode, not a power level;
+* `0x48`/`0x6C` -- `FUN_0802481C(state[0x91], tx)` -> `FUN_080247E0` writes
+  `0x48 = 0xB00F | (t << 4)` and `FUN_080247A0` writes `0x6C = 0x8127 | (t << 11)`,
+  with `t` read from codeplug RAM: the audio/deviation trims for that mode;
+* `0x36` -- the K1's `BK4819_SetupPowerAmplifier` register (PA bias + PA-CTL enable
+  + gain) is **never written by the stock**: there is no `r1 = 0x36` anywhere in
+  the image.  On this part the PA settings live in `0x7D` and `0x30` bit 3.
+
+**The MCU-side TX actions**, from the whole TX callee tree (47 functions):
+
+* `FUN_08013A70` / `FUN_08013B12` drive `PA0`, `PA1` and the chip's GPIO pin 1
+  (register `0x33`, mask `0x20`) as a **4-way RF path/band select** -- the very pin
+  the K1 calls `BK4819_GPIO1_PIN29_PA_ENABLE`, wired as a path switch on this board;
+* `PA13`/`PA14` are the red/green LED (TX = red), and `FUN_08016228` even *reads*
+  `PA13` as part of its T/R decision;
+* `PC13` is raised by `FUN_080177A8` in the T/R path and lowered by
+  `FUN_08009C9C`, which the RF bring-up `FUN_08016788` calls;
+* no timer channel is routed to a pin for a PA ramp, and the only DAC reference in
+  the tree arrives through the audio/DMA path (`FUN_0800A968`, DAC at `0x40007400`).
+
+So the port's TX work is the K1 `PrepareTransmit`/`EnableTXLink` sequence (present
+already) plus **`0x7D = 0xE958`**, the band/path pins and the antenna switch, with
+the level taken from the codeplug the way `FUN_0801BAF4` does.  Open: which single
+write actually turns the PA on for this board (`0x30` bit 3 or `0x7D`), and where
+`PC13` goes -- a bench TX with a power meter settles both.
+
 ## Open
 
 1. **Which chip does what.**  Answered as far as static reading goes: the BK4829
@@ -264,8 +338,9 @@ It touches no RF register directly; the three callees are not identified yet.
    byte `+0x75` means on its own, and which part actually radiates.
 2. The power-on/off and sleep handling, and whether anything else gates the RF
    rails — the decompiler is now available, but these paths have not been walked.
-3. The per-channel/per-band routines that feed the T/R registers, and where the
-   TX power setting lands.
+3. The per-channel/per-band routines that feed the T/R registers.  The TX power
+   setting is answered above: `0x7D`, computed by `FUN_0801BAF4` from the codeplug
+   level; still open is which of `0x7D` and `0x30` bit 3 actually enables the PA.
 4. `FUN_0800A968`, `FUN_0801533C` and `FUN_0801537C` (the `FUN_08007F90` callees)
    are not identified.
 5. Which string `FUN_08015D14(0x0b)` actually renders, and what the byte at
