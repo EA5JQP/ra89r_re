@@ -398,6 +398,22 @@ static void audio_bench_arm(void)
               "  needs no console -- unplug the cable and listen.  LED: GREEN =\n"
               "  squelch open, OFF = quiet, RED = PC13 low.  PTT flips PC13.\n");
     rf_k1_bringup();
+
+    /* The second transceiver is the one part of the board still left at its
+     * power-on defaults: the stock configures it on every radio bring-up
+     * (FUN_08016788 -> FUN_08006A0C), and it is on the shared RF path.  Replay
+     * that, park it in its idle/receive state, and drive the path pins the way
+     * the stock's receive select does (FUN_0800948C(0) -> FUN_08013A70(3):
+     * PA1 high, PA0 low, PA disabled) instead of leaving them floating. */
+    bk4815_configure();
+    bk4815_write_reg(0x0C, 0x0A03);
+    uart_printf("RF: BK4815 configured (%u writes, id 0x%04X, 0x0C = 0x%04X)\n",
+                bk4815_config_writes(), (unsigned)bk4815_read_reg(0),
+                (unsigned)bk4815_read_reg(0x0C));
+    gpio_config_output(GPIOA, 1u | 2u);
+    gpio_write(GPIOA, 2u, 1);
+    gpio_write(GPIOA, 1u, 0);
+
     audio_path_hi = true;
     audio_path_drive(1);
     squelch_open = false;
@@ -494,6 +510,7 @@ static void radio_tx(int on)
 
     if (on) {
         tx_base();
+        bk4815_write_reg(0x0C, 0x0203);     /* the stock's T/R path, other branch */
         BK4819_SetFrequency(BENCH_FREQ_HZ);
         BK4819_WriteRegister(BK4819_REG_7D, BENCH_PA_7D);
         BK4819_PrepareTransmit();
@@ -504,6 +521,7 @@ static void radio_tx(int on)
         led_set(LED_RED);               /* red = transmit, as the stock shows it */
     } else {
         BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false);
+        bk4815_write_reg(0x0C, 0x0A03);
         BK4819_RX_TurnOn();
         BK4819_SetAF(BK4819_AF_MUTE);
         BK4819_WriteRegister((BK4819_REGISTER_t)0x40, 0x3516);   /* back to the RX value */
