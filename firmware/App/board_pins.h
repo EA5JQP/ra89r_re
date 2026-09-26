@@ -97,19 +97,30 @@
 #define BK4829_CS_PIN        (1u << 8)    /* PB8  */
 #define BK4815_CS_PIN        (1u << 13)   /* PB13 */
 
-/* Audio-path enable.  The stock drives `PC13` from its transmit/receive
- * transition: `FUN_08016228` -> `FUN_08016200` -> `FUN_080177A8`, which sets it
- * from two codeplug bits (`0x20009F28 + 0x38`/`+0x39`, fed from settings byte 9
- * bits 0 and 5) and drives it alongside the transceiver's own audio cluster
- * (chip GPIO pins 2 and 5).  It is the only conditional non-bus output line on
- * the board -- every other pin is a bus, the panel, the keypad, the gauge or the
- * RF/LED field -- which is why it is the candidate for the speaker/audio enable.
+/* Audio-path enable.  The stock's squelch handlers drive `PA14` (with `PA13` as
+ * its twin on the same codeplug bit), not `PC13`:
+ *
+ *   state[0x21] >= 7 (signal present, squelch open) -> FUN_08004C84
+ *        -> FUN_08018A10 -> PA14 = *(char *)(0x20009F28 + 0xc)
+ *   state[0x21] <  3 (squelch closed)              -> FUN_0801D458 -> PA14 LOW
+ *
+ * and the same pair is driven high while transmitting by `FUN_08015D88` /
+ * `FUN_08015E28`.  Both are push-pull outputs configured together by the boot
+ * GPIO init `FUN_08013C74` (GPIOA mask `0x6000`), and `FUN_08020028` is the
+ * `PA13` half of the same level pair.  The level comes from bit 2 of codeplug
+ * settings byte 2; this radio's block has it clear, i.e. active HIGH.
+ *
+ * `PC13` stays a real line but a static one: `FUN_080177A8`'s `config+0x38`
+ * gate is 0 on this codeplug, so it is held HIGH and never follows the squelch.
  *
  * The K1 firmware puts the same function on a GPIO of its own,
  * `GPIO_PIN_AUDIO_PATH = PA8`, driven HIGH to enable and LOW to disable, through
- * `AUDIO_AudioPathOn()`/`Off()`.  That is the convention this port follows until
- * the radio says otherwise; see ra89r_rffeatures.md. */
-#define AUDIO_PATH_PIN       (1u << 13)   /* PC13 */
+ * `AUDIO_AudioPathOn()`/`Off()`.  That is the convention this port follows, with
+ * `PA14` as the line that tracks the squelch and `PA13` kept at the level the
+ * stock's "radio on" path (`FUN_08018AB8`) leaves it at; see ra89r_rffeatures.md.
+ * Neither has been scoped yet. */
+#define AUDIO_PATH_PIN       (1u << 14)   /* PA14 -- tracks the squelch */
+#define AUDIO_ENABLE_PIN     (1u << 13)   /* PA13 -- the twin (PA13/PA14 = SWDIO/SWCLK) */
 
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) talks to the
  * external SPI NOR flash (see ra89r_eeprom.md); the USB-C port goes to the
