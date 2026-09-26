@@ -173,8 +173,8 @@ int main(void)
     render("K1 UI_DisplayWelcome(): the ported boot screen");
 
     /* ---- the key loop: the K1's own CheckKeys() driving the screens ------- */
-    gRxVfo->freq_config_RX.Frequency = 14575000u;
-    gRxVfo->freq_config_TX.Frequency = 14575000u;
+    /* No hand-set frequency: the state is whatever the codeplug boot left, so
+     * the lines below say what the keys actually do. */
     port_gui_init();
     printf("\n[keys] start: screen A = %u, VFO A %u.%05u MHz\n",
            (unsigned)gEeprom.ScreenChannel[0],

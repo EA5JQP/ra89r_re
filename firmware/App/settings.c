@@ -52,6 +52,10 @@ void PORT_SettingsDefaults(void)
     gEeprom.SQUELCH_LEVEL = 4;
     gEeprom.TX_TIMEOUT_TIMER = 3;
     gEeprom.KEY_LOCK = false;
+    /* The K1's SET_NAV picks which way the up/down keys run: false is the
+     * UV-K1's left/right layout, which makes UP step *down* a channel.  This
+     * radio has up/down keys, so it wants the UV-K5(8) sense. */
+    gEeprom.SET_NAV = true;
     gEeprom.VOX_SWITCH = false;
     gEeprom.VOX_LEVEL = 5;
     gEeprom.BEEP_CONTROL = true;
@@ -67,7 +71,12 @@ void PORT_SettingsDefaults(void)
     gEeprom.BATTERY_SAVE = 0;
     gEeprom.BACKLIGHT_TIME = 4;
     gEeprom.SCAN_RESUME_MODE = 0;
-    gEeprom.SCAN_LIST_DEFAULT = 0;
+    /* The K1's scan-list selector is 1..24 plus "all" (`MR_CHANNELS_LIST + 1`,
+     * and 0 means "no list at all").  Every channel this port reports is in
+     * "all" (the stock has one channel set, not 24 lists), so 0 would make
+     * RADIO_CheckValidChannel() reject every channel it is asked about with a
+     * list check -- and the channel-up/down walk then finds nothing. */
+    gEeprom.SCAN_LIST_DEFAULT = MR_CHANNELS_LIST + 1;
     gEeprom.SCAN_LIST_ENABLED = false;
     gEeprom.CURRENT_STATE = 0;
     gEeprom.CURRENT_LIST = 0;
