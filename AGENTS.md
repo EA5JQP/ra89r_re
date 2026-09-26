@@ -188,15 +188,17 @@ driver/battery            gauge       -- OPEN, unmerged: the bus is silent for u
 driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR flash
                                          ("EEPROM") reads and dumps; the write test has
                                          not run yet, see ra89r_eeprom.md
-driver/audiocontrol       audio       -- OPEN, unmerged: the K1 audio-path callback
-                                         drives PC13, the amp-enable candidate the
-                                         stock holds HIGH.  `C` toggles it, and the
-                                         branch also boots straight into a
-                                         cable-free bench: K + PC13 high at boot,
-                                         PTT flips PC13 with GREEN = high / RED =
-                                         low on the status LED, because the Kenwood
-                                         jack cuts the speaker while it is plugged
-                                         in -- see ra89r_led.md
+driver/audiocontrol       audio       -- OPEN, unmerged, and it RECEIVES: with the
+                                         K1 bring-up, PC13 asserted and the cable
+                                         out, the other radio is audible on the
+                                         bench.  It boots into that test (K + PC13
+                                         + an RSSI squelch muting the chip's AF on
+                                         the stock's 0xB4/0xCF marks), with the
+                                         status LED as the read-out and PTT to flip
+                                         PC13 -- the one thing about PC13 that is
+                                         still unmeasured.  `C`/`L` on the console
+                                         do the same with the cable in.  See
+                                         ra89r_led.md.
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all
@@ -381,7 +383,10 @@ image had not been asked about (AF, signalling, AGC, idle states) still run the 
 sequences here.  `ra89r_rffeatures.md` now locates the stock's own routines for
 them, which gives each one a reference to compare against, but none of that has
 been exercised on the radio either -- the `X`/`R`/`S` commands and the host test can
-check registers and RSSI, not audio or signalling.  And one thing was deliberately
+check registers and RSSI, not audio or signalling -- except for the AF half: the
+K1 `SetAF`/`RX_TurnOn` sequence now produces audible receive audio on this board
+(heard on the radio from the `driver/audiocontrol` bench), so that part of the
+imported driver is good for this part.  And one thing was deliberately
 *not* ported: F4HWN's transport, whose chip select is a file-static define with no
 way to address two parts.
 
