@@ -14,6 +14,9 @@
 
 #include "board.h"
 #include "driver/backlight.h"
+#include "driver/bk4815.h"
+#include "driver/bk4819.h"
+#include "driver/bk4829.h"
 #include "driver/led.h"
 #include "driver/clock.h"
 #include "driver/fault.h"
@@ -180,7 +183,10 @@ static void print_help(void)
               "          v/V contrast up/down  l backlight on/off  L PA0/PA1 led test  q heartbeat\n"
               "          r re-init panel (standard, bootloader-proven)\n"
               "          s re-init panel (stock app variant, 8 extra bytes)\n"
-              "          k keypad monitor (raw ADC per line + decoded key)\n");
+              "          k keypad monitor (raw ADC per line + decoded key)\n"
+              "          R probe both RF chips (ids)   W configure both\n"
+              "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
+              "          S sample reg 0x67 for 4 s (carrier on/off comparison)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -199,6 +205,270 @@ static void animate_step(uint32_t ms)
     if (pos > LCD_WIDTH - 26u)
         pos = 2u;
     lcd_refresh();
+}
+
+/* --------------------------------------------------------------------- rf */
+
+/* Both parts sit on the same bit-banged bus and each answers its own id in
+ * register 0 -- that is the "version" read this test turns on.  A BK4829 must
+ * read 0x4829 and a BK4815 0x4816; the stock's own detect is exactly that check
+ * (FUN_08009772 / FUN_08009758), and a failure there is what makes it show its
+ * error screen instead of configuring the part.
+ *
+ * 'R' writes nothing -- it is a read-only snapshot of both parts.  Pressed on a
+ * freshly booted radio it shows the parts' **power-on defaults**, not the
+ * stock's configuration: getting this firmware into flash means entering update
+ * mode, so both parts are reset by the time this code runs.  That was tried and
+ * settled on the radio -- the BK4815's register 0x0C reads 0xFFFF here while the
+ * stock's boot init always writes 0x0A03 to it -- so do not read these numbers
+ * as "what the stock had".  ra89r_bk4829.md has the default map and the
+ * argument.
+ *
+ * 'W' replays both parts' stock boot configuration and re-probes, so a silent
+ * bus, a deaf-but-configured chip and a live one look different.  'X' reads
+ * every written register back and compares, which is what shows whether the
+ * writes landed rather than merely that the parts still answer. */
+static void rf_dump(const char *name, uint8_t id_reg, const uint8_t *regs,
+                    unsigned n, bool is_4815)
+{
+    unsigned i;
+
+    uart_printf("  %s:", name);
+    for (i = 0; i < n; i++) {
+        uint16_t v = is_4815 ? bk4815_read_reg(regs[i]) : bk4829_read_reg(regs[i]);
+        uart_printf(" %02X=%04X", (unsigned)regs[i], (unsigned)v);
+    }
+    uart_putc('\n');
+    (void)id_reg;
+}
+
+static void rf_report(void)
+{
+    /* The registers worth watching: what our configuration writes (0x21, 0x24,
+     * 0x30, 0x33, 0x47), the one the stock computes (0x7d), and the two the
+     * stock reads while squelching (0x63, 0x67). */
+    static const uint8_t bk4829_regs[] = { 0x21, 0x24, 0x30, 0x33, 0x47, 0x7d,
+                                           0x63, 0x67 };
+    /* Its band/mode words, plus the three the stock fills from its own RAM. */
+    static const uint8_t bk4815_regs[] = { 0x0c, 0x75, 0x73, 0x4c, 0x55, 0x62 };
+    uint16_t a, b;
+
+    bk4829_init();              /* brings up the shared bus and both selects */
+
+    uart_puts("\nRF bus: PA12 clock, PB12 data, PB8 = BK4829, PB13 = BK4815\n");
+
+    a = bk4829_read_reg(BK4829_REG_ID);
+    b = bk4815_read_reg(BK4815_REG_ID);
+
+    uart_printf("  BK4829 reg 0x00 = 0x%04X  (expected 0x%04X) -- %s\n",
+                (unsigned)a, (unsigned)BK4829_ID,
+                a == BK4829_ID ? "present" : "not answering");
+    uart_printf("  BK4815 reg 0x00 = 0x%04X  (expected 0x%04X) -- %s\n",
+                (unsigned)b, (unsigned)BK4815_ID,
+                b == BK4815_ID ? "present" : "not answering");
+
+    rf_dump("BK4829", BK4829_REG_ID, bk4829_regs,
+            (unsigned)(sizeof bk4829_regs / sizeof bk4829_regs[0]), false);
+    rf_dump("BK4815", BK4815_REG_ID, bk4815_regs,
+            (unsigned)(sizeof bk4815_regs / sizeof bk4815_regs[0]), true);
+
+    if (a != BK4829_ID || b != BK4815_ID)
+        uart_puts("  one id is wrong: check that part's select, and that both\n"
+                  "  share PA12/PB12 -- a bus fault hits both, a select fault one.\n");
+}
+
+/* The K1-compatible path: `BK4819_Init` replays the K1's own register
+ * sequences on this board's BK4829, `SetFrequency` writes the same 0x38/0x39
+ * pair the stock does, and RX_TurnOn puts the part in receive.  This is the
+ * first thing on this branch that can actually make the radio receive, so it is
+ * also the test that matters: watch register 0x67 move with a signal.  The
+ * frequency is in 10 Hz units, the same convention as the codeplug. */
+static void rf_k1_bringup(void)
+{
+    const uint32_t freq = 14575000u;    /* 145.7500 MHz */
+    uint16_t lo, hi;
+
+    BK4819_Init();
+    BK4819_SetFrequency(freq);
+    BK4819_SetAF(BK4819_AF_FM);
+    BK4819_RX_TurnOn();
+
+    lo = BK4819_ReadRegister(BK4819_REG_38);
+    hi = BK4819_ReadRegister(BK4819_REG_39);
+
+    uart_printf("\nRF: K1-compatible bring-up done (id 0x%04X)\n",
+                (unsigned)bk4829_read_reg(BK4829_REG_ID));
+    uart_printf("  frequency 145.7500 MHz -> reg 0x38 = 0x%04X, 0x39 = 0x%04X\n",
+                (unsigned)lo, (unsigned)hi);
+    uart_printf("  (expect 0x6598 / 0x00DE; reg 0x67 RSSI = 0x%04X)\n",
+                (unsigned)BK4819_GetRSSI());
+    uart_puts("  press R to see RSSI in the snapshot; 'X' still checks the\n"
+              "  stock configuration path, which this command overwrites.\n");
+}
+
+/* Sample the RSSI for a few seconds.  One reading cannot tell a carrier from a
+ * noise floor, and the single readings taken so far have wandered over the whole
+ * range; this makes "carrier on" and "carrier off" a pair of numbers to compare.
+ * The stock's own squelch compares reg 0x67 against 0xB4 (180) and 0xCF (207),
+ * so those are the marks printed alongside each sample. */
+static void rf_watch(void)
+{
+    uint16_t min = 0xFFFFu, max = 0, last = 0;
+    unsigned i;
+
+    uart_puts("\nRF: reg 0x67 every 200 ms for 4 s "
+              "(0xB4 / 0xCF are the stock's squelch marks)\n");
+
+    for (i = 0; i < 20u; i++) {
+        uint16_t v = BK4819_GetRSSI();
+
+        if (v < min)
+            min = v;
+        if (v > max)
+            max = v;
+        last = v;
+
+        uart_printf("  %02u: 0x%03X%4u %s\n", i, (unsigned)v, (unsigned)v,
+                    v >= 0xCFu ? "open" : (v < 0xB4u ? "quiet" : "between"));
+        systick_delay_ms(200);
+    }
+
+    uart_printf("  min 0x%03X  max 0x%03X  last 0x%03X\n",
+                (unsigned)min, (unsigned)max, (unsigned)last);
+}
+
+static void rf_configure(void)
+{
+    uart_puts("\nRF: replaying both boot configurations\n");
+
+    bk4829_configure();
+    uart_printf("  BK4829: %u writes sent;    reg 0 now 0x%04X\n",
+                bk4829_config_writes(), (unsigned)bk4829_read_reg(BK4829_REG_ID));
+
+    bk4815_configure();
+    uart_printf("  BK4815: 1 block + %u writes sent;  reg 0 now 0x%04X\n",
+                bk4815_config_writes(), (unsigned)bk4815_read_reg(BK4815_REG_ID));
+    uart_printf("          %u of those writes went out as 0: the stock takes\n"
+                "          0x4c/0x55/0x62 from its own RAM and we have no source.\n",
+                bk4815_ram_sourced_writes());
+
+    /* Read-back proves the register took the value and kept it -- not that the
+     * stock sends it.  Press 'R' on a stock-booted radio for that. */
+    uart_printf("  BK4829 reg 0x7d = 0x%04X after we wrote the derived 0xE958\n",
+                (unsigned)bk4829_read_reg(0x7d));
+}
+
+/* Write each register the configuration carries and read it straight back.
+ *
+ * This deliberately does *not* compare against whatever the chip happens to
+ * hold: the first version did, and on the second hardware run it reported 19 of
+ * 36 "differences" on the BK4829 purely because the K1-compatible 'K' command
+ * had initialised the part from a different table in between.  Those numbers
+ * were history, not faults.  Writing first makes the test independent of what
+ * ran before, and its side effect is that the stock configuration is re-applied.
+ *
+ * Two things to expect, so a mismatch is not read as a fault on its own:
+ *
+ *   - register 0 is the reset write and reads back as the chip id, not as the
+ *     value sent, so it is reported separately;
+ *   - where the table writes one register more than once (0x48 twice here,
+ *     0x30/0x4a in the per-mode routines), only the last write is observable,
+ *     so the earlier ones are skipped.
+ *
+ * A read-only or self-clearing register will still differ, and the bits the part
+ * refuses to store (the BK4815's 0x44 bit 4 and 0x49 bit 10 among them) show up
+ * every time.  That is why the values are printed and not just a verdict. */
+static void rf_verify_one(const char *name, unsigned count, bool is_4815)
+{
+    unsigned i, j, checked = 0, bad = 0;
+    uint16_t id;
+
+    id = is_4815 ? bk4815_read_reg(BK4815_REG_ID) : bk4829_read_reg(BK4829_REG_ID);
+    uart_printf("  %s reg 0x00 reads 0x%04X (the reset write; expected the id)\n",
+                name, (unsigned)id);
+
+    for (i = 0; i < count; i++) {
+        uint8_t reg, reg2;
+        uint16_t want, got;
+        int superseded = 0;
+
+        if (is_4815)
+            bk4815_config_entry(i, &reg, &want);
+        else
+            bk4829_config_entry(i, &reg, &want);
+
+        if (reg == 0x00)
+            continue;                   /* the reset write, reported above */
+
+        /* Only the last write to a register is observable. */
+        for (j = i + 1u; j < count; j++) {
+            if (is_4815)
+                bk4815_config_entry(j, &reg2, 0);
+            else
+                bk4829_config_entry(j, &reg2, 0);
+            if (reg2 == reg) {
+                superseded = 1;
+                break;
+            }
+        }
+        if (superseded)
+            continue;
+
+        if (is_4815)
+            bk4815_write_reg(reg, want);
+        else
+            bk4829_write_reg(reg, want);
+
+        got = is_4815 ? bk4815_read_reg(reg) : bk4829_read_reg(reg);
+        checked++;
+        if (got != want) {
+            bad++;
+            uart_printf("    %s 0x%02X: wrote 0x%04X, read 0x%04X\n",
+                        name, (unsigned)reg, (unsigned)want, (unsigned)got);
+        }
+    }
+
+    uart_printf("  %s: %u registers compared, %u differ%s\n",
+                name, checked, bad,
+                bad ? "  (read-only or self-clearing registers will show here)"
+                    : "  -- every write landed");
+}
+
+/* The BK4815's boot configuration is mostly a 36-byte block written in one
+ * select pulse, which the per-register check above cannot see.  Write the block
+ * and compare each of the 18 words it carries. */
+static void rf_verify_block(void)
+{
+    unsigned len = 0, i, bad = 0;
+    const uint8_t *blk = bk4815_config_block(&len);
+
+    if (len != 36u) {
+        uart_puts("  BK4815 block: unexpected length\n");
+        return;
+    }
+
+    bk4815_write_block(2u, blk, len);
+
+    for (i = 0; i < 18u; i++) {
+        uint16_t want = (uint16_t)((blk[i * 2u] << 8) | blk[i * 2u + 1u]);
+        uint16_t got = bk4815_read_reg((uint8_t)(2u + i));
+
+        if (got != want) {
+            bad++;
+            uart_printf("    BK4815 reg 0x%02X (block): wrote 0x%04X, read 0x%04X\n",
+                        (unsigned)(2u + i), (unsigned)want, (unsigned)got);
+        }
+    }
+
+    uart_printf("  BK4815 block: 18 registers compared, %u differ\n", bad);
+}
+
+static void rf_verify(void)
+{
+    uart_puts("\nRF: writing and reading back every register the configuration carries\n");
+    rf_verify_one("BK4829", bk4829_config_writes(), false);
+    rf_verify_one("BK4815", bk4815_config_writes(), true);
+    rf_verify_block();
 }
 
 /* ------------------------------------------------------------------- main */
@@ -382,6 +652,21 @@ int main(void)
                 uart_printf("\nkeypad monitor %s -- press one button at a time\n",
                             keypad_monitor ? "on" : "off");
                 keypad_last = -2;           /* force the next poll to print */
+                break;
+            case 'R':
+                rf_report();
+                break;
+            case 'W':
+                rf_configure();
+                break;
+            case 'X':
+                rf_verify();
+                break;
+            case 'K':
+                rf_k1_bringup();
+                break;
+            case 'S':
+                rf_watch();
                 break;
             default:
                 break;

@@ -26,9 +26,14 @@
 #define KEYPAD_ANALOG_B_PORT GPIOB
 #define KEYPAD_PTT2_PORT     GPIOB
 
+/* RF transceivers -- one shared 3-wire bus, a select per chip (board_pins.h) */
+#define BK_SCL_PORT          GPIOA
+#define BK_SDA_PORT          GPIOB
+#define BK4829_CS_PORT       GPIOB
+#define BK4815_CS_PORT       GPIOB
+
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) drives the
- * external SPI NOR flash, the RF transceiver (BK4815/BK4829) is on a 3-wire
- * bus, and the USB-C port goes to the MCU's USB peripheral -- unused by the
- * stock firmware, so none of it is wired up here yet. */
+ * external SPI NOR flash, and the USB-C port goes to the MCU's USB peripheral
+ * -- unused by the stock firmware, so none of it is wired up here yet. */
 
 #endif /* APP_BOARD_H */

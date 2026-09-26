@@ -44,6 +44,10 @@ set(APP_SOURCES
     App/driver/systick.c
     App/driver/lcd_st7565.c
     App/driver/keypad.c
+    App/driver/rf_bus.c
+    App/driver/bk4829.c
+    App/driver/bk4815.c
+    App/driver/bk4819.c
     App/driver/font_8x16.c
     App/driver/font_5x7.c)
 
