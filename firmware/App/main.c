@@ -17,7 +17,9 @@
 #include "driver/bk4815.h"
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
+#include "driver/audio_path.h"
 #include "driver/led.h"
+#include "driver/rx.h"
 #include "driver/clock.h"
 #include "driver/fault.h"
 #include "driver/gpio.h"
@@ -214,6 +216,10 @@ static void animate_step(uint32_t ms)
 
 /* --------------------------------------------------------------------- rf */
 
+/* The channel the bench sits on: 145.7500 MHz in 10 Hz units, the same
+ * convention as the codeplug. */
+#define BENCH_FREQ_HZ 14575000u
+
 /* Both parts sit on the same bit-banged bus and each answers its own id in
  * register 0 -- that is the "version" read this test turns on.  A BK4829 must
  * read 0x4829 and a BK4815 0x4816; the stock's own detect is exactly that check
@@ -294,59 +300,38 @@ static void rf_report(void)
  * PA13/PA14 are *not* this line: they are the status LED (PA13 red, PA14 green,
  * both active high -- measured), which lives in `driver/led.c` behind the
  * console's `L`.  See ra89r_led.md. */
-static void audio_path_drive(int on)
-{
-    gpio_port_clock(AUDIO_PATH_PORT);
-    gpio_config_output(AUDIO_PATH_PORT, AUDIO_PATH_PIN);
-    gpio_write(AUDIO_PATH_PORT, AUDIO_PATH_PIN, on ? 1 : 0);
-}
 
 static void audio_path_toggle(void)
 {
-    static int on;
-
-    on = !on;
-    audio_path_drive(on);
-    uart_printf("\nRF: PC13 (amp-enable candidate) -> %s (IDR %s)\n",
-                on ? "high" : "low",
+    audio_path_drive(!audio_path_is_on());
+    uart_printf("\nRF: PC13 (audio-path line) -> %s (IDR %s)\n",
+                audio_path_is_on() ? "high" : "low",
                 gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN) ? "high" : "low");
-    uart_puts("  the stock holds PC13 high on this codeplug; with the RF part in\n"
-              "  RX (K) and a signal tuned in, this is the line to listen on.\n");
+    uart_puts("  the stock raises this line from its T/R path and holds it high on\n"
+              "  this codeplug; receive audio was validated with it high.  What it\n"
+              "  switches is not measured -- see ra89r_rffeatures.md.\n");
 }
 
-/* Set by the K1-compatible bring-up: without it the part is untuned and not in
- * RX, so 0x67 does not follow a carrier and the numbers mislead. */
-static bool rf_up;
-
-/* The K1-compatible path: `BK4819_Init` replays the K1's own register
- * sequences on this board's BK4829, `SetFrequency` writes the same 0x38/0x39
- * pair the stock does, and RX_TurnOn puts the part in receive.  This is the
- * first thing on this branch that can actually make the radio receive, so it is
- * also the test that matters: watch register 0x67 move with a signal.  The
- * frequency is in 10 Hz units, the same convention as the codeplug. */
+/* The console's 'K': bring the RF up and retune, reporting what landed.  The
+ * chain itself is `driver/rx.c`. */
 static void rf_k1_bringup(void)
 {
-    const uint32_t freq = 14575000u;    /* 145.7500 MHz */
     uint16_t lo, hi;
 
-    BK4819_SetAudioPathCallback(audio_path_drive);
-    BK4819_Init();
-    rf_up = true;
-    BK4819_SetFrequency(freq);
-    BK4819_SetAF(BK4819_AF_FM);
-    BK4819_RX_TurnOn();
-
+    rx_init(BENCH_FREQ_HZ);
     lo = BK4819_ReadRegister(BK4819_REG_38);
     hi = BK4819_ReadRegister(BK4819_REG_39);
 
-    uart_printf("\nRF: K1-compatible bring-up done (id 0x%04X)\n",
-                (unsigned)bk4829_read_reg(BK4829_REG_ID));
-    uart_printf("  frequency 145.7500 MHz -> reg 0x38 = 0x%04X, 0x39 = 0x%04X\n",
+    uart_printf("\nRF: bring-up done (BK4829 id 0x%04X, BK4815 id 0x%04X)\n",
+                (unsigned)bk4829_read_reg(BK4829_REG_ID),
+                (unsigned)bk4815_read_reg(0));
+    uart_printf("  reg 0x38 = 0x%04X, 0x39 = 0x%04X (expect 0x6598 / 0x00DE)\n",
                 (unsigned)lo, (unsigned)hi);
-    uart_printf("  (expect 0x6598 / 0x00DE; reg 0x67 RSSI = 0x%04X)\n",
-                (unsigned)BK4819_GetRSSI());
-    uart_puts("  press R to see RSSI in the snapshot; 'X' still checks the\n"
-              "  stock configuration path, which this command overwrites.\n");
+    uart_printf("  reg 0x67 RSSI = 0x%04X, squelch %s\n",
+                (unsigned)BK4819_GetRSSI(),
+                rx_squelch_open() ? "open" : "quiet");
+    uart_puts("  press R to see the register snapshot; 'X' still checks the\n"
+              "  stock configuration path, which this overwrites.\n");
 }
 
 /* ------------------------------------------- cable-free audio-path bench
@@ -373,7 +358,6 @@ static void rf_k1_bringup(void)
  * SIDE1/SIDE2/PTT2 still flip PC13, and the console has 'C' (PC13), 'T' (TX)
  * and 'K' for when the cable is in. */
 static bool audio_bench_on;
-static bool audio_path_hi = true;
 static bool squelch_open;
 static KEY_Code_t audio_bench_last = KEY_INVALID;
 
@@ -387,7 +371,7 @@ static bool audio_bench_key(KEY_Code_t key)
  * pulled PC13 low, which wins because it is the state being tested by ear. */
 static void bench_led(void)
 {
-    if (!audio_path_hi)
+    if (!audio_path_is_on())
         led_set(LED_RED);
     else if (squelch_open)
         led_set(LED_GREEN);
@@ -400,33 +384,12 @@ static void audio_bench_arm(void)
     uart_puts("\naudio bench: running 'K' at boot and asserting PC13, so the test\n"
               "  needs no console -- unplug the cable and listen.  LED: GREEN =\n"
               "  squelch open, OFF = quiet, RED = PC13 low.  PTT flips PC13.\n");
-    rf_k1_bringup();
-
-    /* The second transceiver is the one part of the board still left at its
-     * power-on defaults: the stock configures it on every radio bring-up
-     * (FUN_08016788 -> FUN_08006A0C), and it is on the shared RF path.  Replay
-     * that, park it in its idle/receive state, and drive the path pins the way
-     * the stock's receive select does (FUN_0800948C(0) -> FUN_08013A70(3):
-     * PA1 high, PA0 low, PA disabled) instead of leaving them floating. */
-    bk4815_configure();
-    bk4815_write_reg(0x0C, 0x0A03);
-    uart_printf("RF: BK4815 configured (%u writes, id 0x%04X, 0x0C = 0x%04X)\n",
-                bk4815_config_writes(), (unsigned)bk4815_read_reg(0),
-                (unsigned)bk4815_read_reg(0x0C));
-    gpio_config_output(GPIOA, 1u | 2u);
-    gpio_write(GPIOA, 2u, 1);
-    gpio_write(GPIOA, 1u, 0);
-
-    /* The PA bias PWM: the stock runs it from boot with a compare of 0, i.e.
-     * the PA is biased only while transmitting. */
-    tx_init();
-    uart_printf("RF: PA power PWM up (PB14/TIM1_CH2, ARR %u, 100 kHz, duty 0)\n",
-                (unsigned)PA_PWM_ARR);
-
-    audio_path_hi = true;
-    audio_path_drive(1);
-    squelch_open = false;
-    BK4819_SetAF(BK4819_AF_MUTE);       /* start quiet; the loop opens it */
+    rx_init(BENCH_FREQ_HZ);
+    uart_printf("RF: up -- BK4829 id 0x%04X, BK4815 configured (%u writes, "
+                "0x0C = 0x%04X), PA PWM ARR %u, audio path %s\n",
+                (unsigned)bk4829_read_reg(BK4829_REG_ID), bk4815_config_writes(),
+                (unsigned)bk4815_read_reg(0x0C), (unsigned)PA_PWM_ARR,
+                audio_path_is_on() ? "asserted" : "low");
     bench_led();
     audio_bench_on = true;
 }
@@ -540,7 +503,6 @@ static void audio_bench_step(uint32_t now)
 {
     static uint32_t last;
     KEY_Code_t key;
-    uint16_t rssi;
 
     if (!audio_bench_on)
         return;
@@ -553,11 +515,10 @@ static void audio_bench_step(uint32_t now)
         if (tx_on)
             radio_tx(0, bench_source);
         if (key != audio_bench_last && audio_bench_key(key)) {
-            audio_path_hi = !audio_path_hi;
-            audio_path_drive(audio_path_hi ? 1 : 0);
+            audio_path_drive(!audio_path_is_on());
             bench_led();
             uart_printf("\nbench: %s -> PC13 %s\n", keypad_name(key),
-                        audio_path_hi ? "HIGH" : "low");
+                        audio_path_is_on() ? "HIGH" : "low");
         }
     }
     audio_bench_last = key;
@@ -569,21 +530,17 @@ static void audio_bench_step(uint32_t now)
         return;
     last = now;
 
-    /* The stock's own squelch marks on 0x67: it opens at 0xCF and closes below
-     * 0xB4, and this radio's noise floor (~0x98) and keyed carrier (~0x12E)
-     * straddle them.  The mute itself is chip-side, as in the stock -- PC13 is
-     * left asserted. */
-    rssi = BK4819_GetRSSI();
-    if (!squelch_open && rssi >= 0xCFu) {
-        squelch_open = true;
-        BK4819_SetAF(BK4819_AF_FM);
-        uart_printf("\nsquelch: open (0x%03X)\n", (unsigned)rssi);
-        bench_led();
-    } else if (squelch_open && rssi < 0xB4u) {
-        squelch_open = false;
-        BK4819_SetAF(BK4819_AF_MUTE);
-        uart_printf("\nsquelch: quiet (0x%03X)\n", (unsigned)rssi);
-        bench_led();
+    /* The squelch lives in driver/rx.c; the LED and the log are the bench's. */
+    {
+        bool was = rx_squelch_open();
+
+        rx_poll();
+        if (rx_squelch_open() != was) {
+            uart_printf("\nsquelch: %s (0x%03X)\n",
+                        rx_squelch_open() ? "open" : "quiet",
+                        (unsigned)rx_rssi());
+            bench_led();
+        }
     }
 }
 
@@ -599,7 +556,7 @@ static void rf_watch(void)
 
     uart_puts("\nRF: reg 0x67 every 200 ms for 4 s "
               "(0xB4 / 0xCF are the stock's squelch marks)\n");
-    if (!rf_up)
+    if (!rx_ready())
         uart_puts("  note: 'K' has not run this boot, so the part is not tuned or\n"
                   "  in RX and these readings will not follow a carrier.\n");
 
@@ -853,6 +810,7 @@ int main(void)
                 break;
             case 'i':
                 print_info();
+                print_diagnostics();
                 break;
             case 'c':
                 ui_clear();

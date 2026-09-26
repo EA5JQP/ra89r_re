@@ -48,7 +48,9 @@ set(APP_SOURCES
     App/driver/bk4829.c
     App/driver/bk4815.c
     App/driver/bk4819.c
+    App/driver/audio_path.c
     App/driver/pa.c
+    App/driver/rx.c
     App/driver/tx.c
     App/driver/font_8x16.c
     App/driver/font_5x7.c)
