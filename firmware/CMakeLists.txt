@@ -53,7 +53,17 @@ set(APP_SOURCES
     App/driver/rx.c
     App/driver/tx.c
     App/driver/font_8x16.c
-    App/driver/font_5x7.c)
+    App/driver/font_5x7.c
+    # --- imported from the UV-K1/K5V3 project (see NOTICE) -------------------
+    App/driver/st7565.c
+    App/font.c
+    App/bitmaps.c
+    App/ui/helper.c
+    App/ui/inputbox.c
+    App/k1_vfo_draft.c
+    # --- end of imported sources ---------------------------------------------
+    App/settings.c
+    App/syscalls.c)
 
 add_executable(${PROJECT_NAME} ${CORE_SOURCES} ${ASM_SOURCES} ${APP_SOURCES})
 
@@ -65,6 +75,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${PY32_SDK}/Drivers/CMSIS/Include")
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE PY32F403xD)
+
+# Feature macros for the imported K1 sources live in one header and are forced
+# into every translation unit, so the imported files stay untouched.
+target_compile_options(${PROJECT_NAME} PRIVATE
+    -include ${CMAKE_CURRENT_SOURCE_DIR}/App/port_features.h)
 
 target_compile_options(${PROJECT_NAME} PRIVATE
     ${MCU_FLAGS} -Wall -Wextra -fdata-sections -ffunction-sections)

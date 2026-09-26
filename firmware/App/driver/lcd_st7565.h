@@ -25,8 +25,14 @@
  * firmware adds 4 to the column address before writing it (0x0800F698) and the
  * open-source UV-K1/K5V3 ST7565 driver does the same; if a bring-up shows the
  * image shifted by 4 pixels, set LCD_COLUMN_OFFSET to 0. */
+/* The ported K1 header (driver/st7565.h) defines the same two names with the
+ * same values, and the port includes both, so keep ours out of its way. */
+#ifndef LCD_WIDTH
 #define LCD_WIDTH           128u
+#endif
+#ifndef LCD_HEIGHT
 #define LCD_HEIGHT          64u
+#endif
 #define LCD_PAGES           (LCD_HEIGHT / 8u)
 #define LCD_COLUMN_OFFSET   4u
 

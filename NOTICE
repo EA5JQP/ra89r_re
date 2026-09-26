@@ -1,0 +1,27 @@
+ra89r_re
+========
+
+Firmware reverse engineering and a custom firmware for the Retevis RA89R /
+RA89G (TYT UV8800 / TH9000D family, Puya PY32F403).  See AGENTS.md.
+
+This product includes software developed as part of the
+UV-K1/K5V3 custom firmware project
+(https://github.com/armel/uv-k1-k5v3-firmware-custom, based on
+https://github.com/DualTachyon/uv-k5-firmware), which is licensed under the
+Apache License, Version 2.0 (see LICENSE).  Those files keep their original
+copyright headers, and this list is where each imported file is recorded
+progressively, as the RA89R port brings them in.
+
+Imported from the UV-K1/K5V3 project
+------------------------------------
+
+| file | state | adaptation |
+|---|---|---|
+| `firmware/App/driver/bk4819.c` `.h` `bk4819-regs.h` | on `develop`, validated on the radio | transport is `rf_bus.c` (chip select `PB8`); local delay; two audio-path calls go through a registered callback; the four `gEeprom` reads became driver-local setters |
+| `firmware/App/font.c` `font.h` | verbatim | none -- font tables (`gFontBig`, `gFontBigDigits`, `gFontSmall`, `gFont3x5`, `gFontSmallBold`) |
+| `firmware/App/bitmaps.c` `bitmaps.h` | verbatim | none -- icon bitmaps |
+| `firmware/App/driver/st7565.c` `.h` | adapted | same API and layout as the K1 (`gStatusLine[128]`, `gFrameBuffer[7][128]`, status line = page 0, frame lines = pages 1..7, `+4` column offset in `DrawLine`); the transport is this repo's bit-banged `driver/lcd_st7565.c` instead of the K1's hardware SPI, and the init is the bootloader-proven sequence |
+
+Feature macros for the imported files live in `firmware/App/port_features.h` and
+are force-included by the build (`-include`), so the imported sources stay
+byte-comparable with upstream.

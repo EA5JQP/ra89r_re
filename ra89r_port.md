@@ -131,6 +131,35 @@ here are the port's todo list:
   app brings its own, so the port needs one CMake target with the K1 sources
   plus our drivers, and a clear boundary (no K1 file may include `board.h`).
 
+## Progress
+
+* **Stage 1 -- the rendering substrate: in, unvalidated on the radio.**  The
+  K1's display layer now builds here and is exercised on a PC:
+  `App/driver/st7565.{c,h}` (the K1 API -- `gStatusLine`, `gFrameBuffer[7][128]`,
+  status line on panel page 0, frame lines on pages 1..7, the `+4` column offset
+  -- over this repo's bit-banged transport and the bootloader-proven init),
+  `App/font.{c,h}` + `App/bitmaps.{c,h}` (verbatim tables), `App/ui/helper.{c,h}`
+  + `App/ui/inputbox.{c,h}` (verbatim drawing/text helpers), and the plumbing
+  that made them compile: `App/port_features.h` (force-included feature macros,
+  so the imported files stay untouched), `App/external/printf/printf.h` (newlib),
+  `App/syscalls.c` (newlib stubs, `_write` to the console) and a **stopgap**
+  `App/settings.{c,h}` that carries the single field `ui/helper.c` needs
+  (`gEeprom.KEY_LOCK`) until the real state model arrives.  `LICENSE` and
+  `NOTICE` are in, with the provenance table the port needs before more of the
+  K1 lands.
+  `firmware/tools/preview_k1.c` renders the K1 buffers as ASCII on a PC, and
+  `App/k1_vfo_draft.c` draws a first VFO screen with the K1's own helpers
+  (status line, `UI_DisplayFrequency`, `UI_PrintStringSmallBold`,
+  `ST7565_Gauge`); console `G` shows it on the radio.  The draft is scaffolding:
+  `ui/main.c`'s `UI_DisplayMain` replaces it.
+
+* **Next -- stage 2, the state facade**, in this order: the real K1
+  `settings.h`/`radio.h`/`frequencies.h`/`helper/battery.h`/`misc.c` with a
+  RAM-backed `gEeprom` (then the external-NOR backend), `driver/keyboard.h`
+  bound to our `keypad.c`, then `ui/main.c` (VFO), `ui/menu.c` (menu) and
+  `ui/status.c`, compiling file by file and keeping what the hardware lacks
+  (FM broadcast, USB VCP, voice prompts) stubbed.
+
 ## Suggested order
 
 1. **Fix A1, A2 (C/D)**, add the license, and wire the console behind a flag --
