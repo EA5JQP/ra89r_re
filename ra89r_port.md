@@ -106,10 +106,17 @@ here are the port's todo list:
 * **The EEPROM is external SPI NOR**, not internal flash: the settings, the
   calibration, the journal and the "blob" area are all on that chip
   (`ra89r_eeprom.md`).
-* **`0x0805FFF0`, the app-valid marker, is unresolved** -- the radio reports
-  `0xff` where the flasher writes `0x11` (`AGENTS.md`, "Known discrepancy").
-  Fix it *before* porting: a flashed app the bootloader refuses to start looks
-  exactly like a broken port.
+* **`0x0805FFF0`, the app-valid marker: not a port blocker, but settle the
+  diagnostic.**  The bootloader tests that byte on every reset
+  (`ra89r_bootloader.md` §4c), yet the radio reports `0xff` where the flasher
+  writes `0x11`.  Either our *read* is wrong or the app came out of the
+  update-mode fall-through at `0x08003382`, which launches it with no marker
+  test at all -- the app's own `reset cause` line says which, and a flashed
+  image that the bootloader refuses to start would look like a broken port.  So
+  settle it, but it is a measurement, not a fix.  What the port does owe is one
+  boot-time line copying the stock (`0x08015724` -> its flash driver
+  `0x080190C0`): write `0x11` there once the app is up, so a flash session that
+  ends without `EXIT` cannot leave the radio in the bootloader.
 
 ### D. Repository hygiene before app code lands
 
@@ -128,8 +135,9 @@ here are the port's todo list:
 
 ## Suggested order
 
-1. **Fix A1, A2 and the marker (C/D)**, add the license, and wire the console
-   behind a flag -- all small, and all before any app code.
+1. **Fix A1, A2 (C/D)**, add the license, wire the console behind a flag, and
+   settle the marker diagnostic -- all small, and all before any app code.  (The
+   app-side marker write rides along with the first app boot, not before it.)
 2. **Storage**: finish the EEPROM write test, then implement `gEeprom` and the
    settings model over the external NOR flash.  The app cannot boot without it.
 3. **Bring up the app's shell**: `main()`, the scheduler and the panel drawing
