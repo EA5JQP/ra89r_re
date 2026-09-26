@@ -10,12 +10,16 @@
 #define SDA_PIN  BK_SDA_PIN
 #define CS_PORT  BK4829_CS_PORT     /* both selects live on GPIOB */
 
-/* The stock's delay helper (FUN_0802422A) is a (n + 1) x 21 cycle loop; the
- * K1's SHORT_DELAY() is 40 NOPs.  The part is good for far faster than either,
- * so this only keeps the edges clean rather than meeting a timing requirement. */
+/* The stock's delay helper (FUN_0802422A) is a (n + 1) x 21 cycle loop, and the
+ * stock brackets each clock edge with n = 2..8 of those -- tens of cycles -- at
+ * its own full clock speed.  This port used 40 volatile iterations, which at
+ * 48 MHz is ~5 us of half-period: about twenty times the stock's edge time on
+ * the same board and the same bus, and the reason one RSSI read cost a
+ * millisecond (console 'P' shows it).  Eight iterations is ~1 us here, still
+ * several times what the stock does, so the edges stay clean. */
 static void rf_delay(void)
 {
-    for (volatile unsigned i = 0; i < 40u; i++)
+    for (volatile unsigned i = 0; i < 8u; i++)
         ;
 }
 

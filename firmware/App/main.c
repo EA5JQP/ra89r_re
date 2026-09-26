@@ -258,6 +258,24 @@ static void print_profile(void)
     uart_printf("  100 x BK4819_GetRSSI               %5u ms\n", (unsigned)(t1 - t0));
 
     t0 = systick_millis();
+    for (i = 0; i < 20u; i++)
+        CheckKeys();
+    t1 = systick_millis();
+    uart_printf("  20 x CheckKeys (the keys, no press) %3u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 20u; i++)
+        SCANNER_TimeSlice10ms();
+    t1 = systick_millis();
+    uart_printf("  20 x SCANNER_TimeSlice10ms        %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 20u; i++)
+        UI_MAIN_TimeSlice10ms();
+    t1 = systick_millis();
+    uart_printf("  20 x UI_MAIN_TimeSlice10ms        %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
     for (i = 0; i < 100u; i++) {
         uint8_t buf[21];
         PY25Q16_ReadBuffer(0, buf, sizeof buf);
