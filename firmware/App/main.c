@@ -455,6 +455,7 @@ static bool tx_on;
  * So the bench now walks the *PA power*, which is the register-free half of the
  * stock's TX: holding PTT steps the PWM compare from 0 upward, two seconds per
  * step, printing it on the panel and the console. */
+static unsigned tx_cand;
 static unsigned pa_duty;
 static uint32_t pa_last;
 /* ------------------------------------------------------ PA power PWM (PB14)
@@ -492,13 +493,65 @@ static void pa_pwm_duty(uint16_t duty)
     TIM1->CCR2 = duty;
 }
 
+/* TX, and where it stands.
+ *
+ * Measured: the carrier is real and on frequency -- detuning the other radio by
+ * 50 kHz stops its squelch opening, so it is not keying noise.  What does *not*
+ * happen is amplification: the PA power PWM makes no difference to what the
+ * other radio hears, so the external PA is never enabled and the chip's own
+ * low-level output is what reaches it.
+ *
+ * Two enablers are candidates, and they are what this sweep varies:
+ *
+ *   - the chip's GPIO outputs (register 0x33).  The stock's transmit path clears
+ *     all seven and sets only pin 1 (`FUN_08013A70(2)` -> `FUN_080137D4(0x20,
+ *     0x20)`), while our init inherits the K1's `0x33 = 0x9000` and only ORs the
+ *     pin in -- and `FUN_080137D4` shows every driven pin also clears its paired
+ *     bit (bit 14-n), so the leftover bits are not neutral;
+ *   - the chip's PA-CTL and bias, register `0x36`: the K1 sets it for transmit
+ *     (`BK4819_SetupPowerAmplifier`, bit 7 = enable), and our imported
+ *     `BK4819_TxOn_Beep` writes it to **0**, which is the one TX register the
+ *     stock's own path never touches.
+ */
+static uint16_t tx_gpio33;
+static uint16_t tx_reg36;
+
+static const char *tx_cand_name(unsigned c)
+{
+    switch (c) {
+    case 0:  return "0x33 = 0x9020 (K1 base + pin 1), 0x36 = 0";
+    case 1:  return "0x33 = 0x0020 (clean, pin 1), 0x36 = 0";
+    case 2:  return "0x33 = 0x0020, 0x36 = 0x0080 (PA-CTL)";
+    case 3:  return "0x33 = 0x0020, 0x36 = 0x0022";
+    case 4:  return "0x33 = 0x0020, 0x36 = 0x8822";
+    case 5:  return "0x33 = 0x0020, 0x36 = 0x80A2";
+    case 6:  return "0x33 = 0x0020, 0x36 = 0xFFA2";
+    default: return "0x33 = 0x0020, 0x36 = 0x88AA";
+    }
+}
+
+static void tx_apply_candidate(unsigned c)
+{
+    tx_gpio33 = (c == 0) ? 0x9020u : 0x0020u;
+    switch (c) {
+    case 0:
+    case 1:  tx_reg36 = 0x0000u; break;
+    case 2:  tx_reg36 = 0x0080u; break;
+    case 3:  tx_reg36 = 0x0022u; break;
+    case 4:  tx_reg36 = 0x8822u; break;
+    case 5:  tx_reg36 = 0x80A2u; break;
+    case 6:  tx_reg36 = 0xFFA2u; break;
+    default: tx_reg36 = 0x88AAu; break;
+    }
+}
+
 static void tx_base(void)
 {
-    /* The combination measured to radiate. */
-    BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, true);
+    BK4819_WriteRegister(BK4819_REG_33, tx_gpio33);
+    /* PA0/PA1: the stock's transmit select is PA1 = 1, PA0 = 0. */
     gpio_config_output(GPIOA, 1u | 2u);
-    gpio_write(GPIOA, 2u, 1);              /* PA1 high */
-    gpio_write(GPIOA, 1u, 0);              /* PA0 low  */
+    gpio_write(GPIOA, 2u, 1);
+    gpio_write(GPIOA, 1u, 0);
 }
 
 static void tx_mic_gain(unsigned g)
@@ -526,7 +579,7 @@ static void bench_screen(unsigned duty, uint16_t rccr, uint16_t r47,
 
     for (i = 0; i < 3u; i++) {
         uint16_t v = (i == 0) ? rccr : (i == 1) ? r47 : r7d;
-        const char *name = (i == 0) ? "CC=" : (i == 1) ? "47=" : "7D=";
+        const char *name = (i == 0) ? "33=" : (i == 1) ? "36=" : "7D=";
         unsigned k;
         for (k = 0; k < 3u; k++)
             detail[n++] = name[k];
@@ -549,6 +602,7 @@ static void radio_tx(int on)
     tx_on = on;
 
     if (on) {
+        tx_apply_candidate(tx_cand);
         tx_base();
         bk4815_write_reg(0x0C, 0x0203);     /* the stock's T/R path, other branch */
         BK4819_SetFrequency(BENCH_FREQ_HZ);
@@ -561,12 +615,13 @@ static void radio_tx(int on)
          * A loud two-tone on the other radio means the carrier and the modulator
          * are real, whatever the microphone does; nothing at all means we are
          * not transmitting and the squelch was opening on keying noise. */
+        BK4819_WriteRegister((BK4819_REGISTER_t)0x36, tx_reg36);
         BK4819_EnterDTMF_TX(false);
         BK4819_PlayDTMF('5');
         tx_mic_gain(5);                 /* irrelevant to the tone, kept for later */
-        pa_duty = 0;
+        pa_duty = 128;
         pa_last = systick_millis();
-        pa_pwm_duty(0);
+        pa_pwm_duty((uint16_t)pa_duty);
         led_set(LED_RED);               /* red = transmit, as the stock shows it */
     } else {
         BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false);
@@ -579,14 +634,20 @@ static void radio_tx(int on)
         bench_led();
     }
 
-    uart_printf("\nbench: TX %s (0x30 = 0x%04X, 0x70 = 0x%04X, 0x71 = 0x%04X, "
+    uart_printf("\nbench: TX %s (0x30 = 0x%04X, 0x33 = 0x%04X, 0x36 = 0x%04X, "
                 "PA duty %u of %u)\n",
                 on ? "ON" : "off", (unsigned)BK4819_ReadRegister(BK4819_REG_30),
-                (unsigned)BK4819_ReadRegister(BK4819_REG_70),
-                (unsigned)BK4819_ReadRegister(BK4819_REG_71),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_33),
+                (unsigned)BK4819_ReadRegister((BK4819_REGISTER_t)0x36),
                 (unsigned)TIM1->CCR2, (unsigned)PA_PWM_ARR);
-    bench_screen(pa_duty, TIM1->CCR2, BK4819_ReadRegister(BK4819_REG_70),
-                 BK4819_ReadRegister(BK4819_REG_71));
+    bench_screen(pa_duty, BK4819_ReadRegister(BK4819_REG_33),
+                 BK4819_ReadRegister((BK4819_REGISTER_t)0x36),
+                 BK4819_ReadRegister(BK4819_REG_7D));
+    if (on) {
+        uart_printf("bench: candidate %u -- %s\n", tx_cand,
+                    tx_cand_name(tx_cand));
+        tx_cand = (tx_cand + 1u) % 8u;
+    }
 }
 
 static void audio_bench_step(uint32_t now)
@@ -620,7 +681,7 @@ static void audio_bench_step(uint32_t now)
          * two seconds per step, 0 (no bias) up to the codeplug range's top. */
         if ((uint32_t)(now - pa_last) >= 2000u) {
             pa_last = now;
-            if (pa_duty < 252u)
+            if (pa_duty < 224u)
                 pa_duty += 32u;
             pa_pwm_duty((uint16_t)pa_duty);
             uart_printf("bench: PA duty %u (CCR2 = %u of %u)\n", pa_duty,
