@@ -408,6 +408,13 @@ void RADIO_ConfigureChannel(const unsigned int VFO, const unsigned int configure
     if (IS_MR_CHANNEL(channel))
     {   // 16 bytes allocated to the channel name but only 10 used, the rest are 0's
         SETTINGS_FetchChannelName(pVfo->Name, channel);
+
+        /* Port addition: keep the frequency-mode channel in the band the user
+         * is already in.  The K1 sets FreqChannel when its band key is used,
+         * which never happens here, so without this the VFO/channel switch
+         * would open frequency mode on whatever band FreqChannel was left at
+         * (band 1, 18 MHz) instead of the band the channel is in. */
+        gEeprom.FreqChannel[VFO] = (uint16_t)(FREQ_CHANNEL_FIRST + FREQUENCY_GetBand(frequency));
     }
 
     if (!pVfo->FrequencyReverse)

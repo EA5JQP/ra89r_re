@@ -14,6 +14,7 @@
 
 #include "app/app.h"
 #include "driver/backlight.h"
+#include "driver/keyboard.h"
 #include "driver/st7565.h"
 #include "host_hw.h"
 #include "misc.h"
@@ -212,6 +213,22 @@ int main(void)
         }
         printf("[keys] flash erases over 40 idle slices: %u (must be 0)\n",
                host_flash_erase_count() - erases);
+    }
+
+    /* The VFO/channel switch, which is what a radio that cannot change mode is
+     * missing: the K1's path is F (the # key) and then 3. */
+    {
+        const uint16_t before = gEeprom.ScreenChannel[0];
+
+        gWasFKeyPressed    = true;
+        gKeyInputCountdown = key_input_timeout_500ms;
+        press(KEY_3);
+        printf("[keys] F+3: screen A %u (%s) -> %u (%s), VFO A %u.%05u MHz\n",
+               (unsigned)before, IS_MR_CHANNEL(before) ? "channel" : "frequency",
+               (unsigned)gEeprom.ScreenChannel[0],
+               IS_MR_CHANNEL(gEeprom.ScreenChannel[0]) ? "channel" : "frequency",
+               (unsigned)(gRxVfo->freq_config_RX.Frequency / 100000u),
+               (unsigned)(gRxVfo->freq_config_RX.Frequency % 100000u));
     }
 
     press(KEY_MENU);                   /* ... then open the menu ... */

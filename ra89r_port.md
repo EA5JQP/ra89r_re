@@ -370,6 +370,19 @@ here are the port's todo list:
   for the next ported module: nothing on the 10 ms slice may touch the external
   flash, and a timeout does not belong in a fade.
 
+  The second radio run found the two that were left.  The port's own
+  `port_gui_poll()`/`port_gui_tick()` sat outside the 10 ms slice, so the
+  squelch read -- one `BK4819_GetRSSI()`, about 0.6 ms of bit-banged RF bus --
+  ran on *every* pass of the main loop and left the application a tenth of the
+  CPU; they are on the slice now, which is where the K1 reads PTT and the
+  squelch too.  And the port's frequency (VFO) channel store was never
+  initialised, so switching to frequency mode decoded 0 Hz, which
+  `RADIO_ConfigureChannel` clamps to band 1: 18 MHz, a dead frequency, which is
+  what "I cannot switch to VFO mode" looked like.  It starts at each band's own
+  lower bound and, because the K1's band key does not exist here, the frequency
+  channel now follows the band of the channel in use.  The preview drives the
+  switch the way the radio does (`F` then `3`) and prints where it lands.
+
 * **Still step 2, second half -- the settings block.**  `ra89r_codeplug.md` has
   the whole 32-byte block at `0x2020` mapped, with the CPS's labels and this
   radio's values, but nothing reads it yet: the port's own defaults and its blob

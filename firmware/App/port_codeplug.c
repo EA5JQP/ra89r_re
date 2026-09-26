@@ -42,10 +42,17 @@ static bool    cp_bitmaps_valid;
  * instead of once per lookup. */
 static uint8_t cp_band[RA89R_CP_RECORD_COUNT];
 
+static void cp_freq_defaults(void);
+
 void port_codeplug_init(void)
 {
     cp_bitmaps_valid = false;
     memset(cp_band, 0, sizeof cp_band);
+    /* The frequency channels' store starts at the band's own lower bound: a
+     * zeroed store decodes as 0 Hz, which RADIO_ConfigureChannel then clamps to
+     * band 1 -- frequency mode opening on 18 MHz, which is what the first radio
+     * run of the VFO/channel switch did.  A stored blob overwrites these. */
+    cp_freq_defaults();
 }
 
 /* ---------------------------------------------------------------------------

@@ -31,12 +31,16 @@
 #include "driver/uart.h"
 #include "driver/py25q16.h"
 #include "app/app.h"
+#include "app/common.h"
+#include "misc.h"
 #include "port_gui.h"
 #include "port_storage.h"
 #include "port_state.h"
 #include "radio.h"
 #include "ui/main.h"
 #include "ui/menu.h"
+#include "ui/status.h"
+#include "ui/ui.h"
 #include "ui.h"
 
 #define VERSION_STRING "ra89r_fw 0.2 (uart debug)"
@@ -196,6 +200,8 @@ static void print_help(void)
 {
     uart_puts("\nthe K1 GUI owns the panel; these are console diagnostics\n"
               "          h help   i diagnostics   d dump screen as ASCII\n"
+              "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
+              "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
               "          v/V contrast   L status led cycle (PA13/PA14)\n"
               "          R probe RF ids   W configure both   X verify config\n"
@@ -207,6 +213,99 @@ static void print_help(void)
               "          0 hand the panel to the bring-up screens (again: back)\n"
               "          t test card   b border   f fill   p animation   c clear\n"
               "          r/s panel re-init (standard / stock-app variant)\n");
+}
+
+/* What the two VFOs are actually on, and the state the VFO/channel switch
+ * depends on.  `m` prints this before and after the switch. */
+static void print_mode(void)
+{
+    const uint16_t a = gEeprom.ScreenChannel[0];
+    const uint16_t b = gEeprom.ScreenChannel[1];
+
+    uart_printf("  TX_VFO %u  screen A %u %s  screen B %u %s\n",
+                (unsigned)gEeprom.TX_VFO,
+                (unsigned)a, IS_MR_CHANNEL(a) ? "(channel)" :
+                              (IS_FREQ_CHANNEL(a) ? "(frequency)" : "(?)"),
+                (unsigned)b, IS_MR_CHANNEL(b) ? "(channel)" :
+                              (IS_FREQ_CHANNEL(b) ? "(frequency)" : "(?)"));
+    uart_printf("  FreqChannel A %u B %u  MrChannel A %u B %u  VFO_OPEN %u\n",
+                (unsigned)gEeprom.FreqChannel[0], (unsigned)gEeprom.FreqChannel[1],
+                (unsigned)gEeprom.MrChannel[0], (unsigned)gEeprom.MrChannel[1],
+                (unsigned)gEeprom.VFO_OPEN);
+    uart_printf("  A %u.%05u MHz  B %u.%05u MHz  CHANNEL_SAVE %u  band %u  RX_VFO %u\n",
+                (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency / 100000u),
+                (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency % 100000u),
+                (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency / 100000u),
+                (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency % 100000u),
+                (unsigned)gTxVfo->CHANNEL_SAVE, (unsigned)gTxVfo->Band,
+                (unsigned)gEeprom.RX_VFO);
+}
+
+/* Where does the time go on this radio?  Every line is wall-clock milliseconds
+ * for N calls, so the numbers can be compared with the loop's 10 ms slice. */
+static void print_profile(void)
+{
+    volatile uint32_t sink = 0;
+    uint32_t t0, t1, i;
+
+    uart_puts("\nprofile (systick milliseconds for the count shown):\n");
+
+    t0 = systick_millis();
+    for (i = 0; i < 100u; i++)
+        sink += BK4819_GetRSSI();
+    t1 = systick_millis();
+    uart_printf("  100 x BK4819_GetRSSI               %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 100u; i++) {
+        uint8_t buf[21];
+        PY25Q16_ReadBuffer(0, buf, sizeof buf);
+        sink += buf[0];
+    }
+    t1 = systick_millis();
+    uart_printf("  100 x 21-byte codeplug read       %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 20u; i++) {
+        ChannelScanDisplayInfo_t info;
+        if (SETTINGS_FetchChannelScanDisplayInfo(0, &info))
+            sink += info.rx.Frequency;
+    }
+    t1 = systick_millis();
+    uart_printf("  20 x channel decode (CH-01)       %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 20u; i++) {
+        char name[16];
+        SETTINGS_FetchChannelName(name, 0);
+        sink += (uint8_t)name[0];
+    }
+    t1 = systick_millis();
+    uart_printf("  20 x channel name (CH-01)         %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 20u; i++)
+        APP_Update();
+    t1 = systick_millis();
+    uart_printf("  20 x APP_Update                   %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 20u; i++)
+        APP_TimeSlice10ms();
+    t1 = systick_millis();
+    uart_printf("  20 x APP_TimeSlice10ms            %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    UI_DisplayMain();
+    t1 = systick_millis();
+    uart_printf("  1 x UI_DisplayMain (full screen)  %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    UI_DisplayStatus();
+    t1 = systick_millis();
+    uart_printf("  1 x UI_DisplayStatus (top line)   %5u ms\n", (unsigned)(t1 - t0));
+
+    (void)sink;
 }
 
 /* --------------------------------------------------------------- animation */
@@ -401,7 +500,8 @@ static void radio_boot(void)
                                    ? gRxVfo->freq_config_RX.Frequency : BENCH_FREQ_HZ;
 
     uart_puts("\nradio: bring-up (the GUI's radio init lands with the RF layer)\n");
-    uart_printf("radio: channel %u, %u.%05u MHz\n",
+    uart_printf("radio: %s %u, %u.%05u MHz  (F then 3 switches VFO/channel mode)\n",
+                IS_MR_CHANNEL(gEeprom.ScreenChannel[gEeprom.RX_VFO]) ? "channel" : "frequency",
                 (unsigned)gEeprom.ScreenChannel[gEeprom.RX_VFO],
                 (unsigned)(frequency / 100000u),
                 (unsigned)(frequency % 100000u));
@@ -851,6 +951,25 @@ int main(void)
                 print_info();
                 print_diagnostics();
                 break;
+            case 'm':
+                /* The K1 switches between channel and frequency mode with F
+                 * then 3 (MAIN_ProcessKeys -> processFKeyFunction -> KEY_3).
+                 * This is the same call plus the reconfigure it asks for, so
+                 * the mechanism can be exercised without the key sequence --
+                 * and it prints the state the switch depends on either way. */
+                uart_puts("\nmode: before\n");
+                print_mode();
+                COMMON_SwitchVFOMode();
+                gRequestSaveVFO   = true;
+                gVfoConfigureMode = VFO_CONFIGURE_RELOAD;
+                gFlagResetVfos    = true;
+                APP_Update();              /* apply it now, not on the next slice */
+                uart_puts("mode: after COMMON_SwitchVFOMode()\n");
+                print_mode();
+                break;
+            case 'P':
+                print_profile();
+                break;
             case '0':
                 /* Hand the panel back to the bring-up screens (and to the
                  * GUI again on the next press). */
@@ -1111,20 +1230,26 @@ int main(void)
             /* The K1's own loop: APP_Update() runs the state machine and
              * repaints when it sets gUpdateDisplay; APP_TimeSlice10ms() ends
              * with CheckKeys(), so the keys are handled there and must not be
-             * polled again here. */
+             * polled again here.
+             *
+             * The port's two calls belong on the same 10 ms slice, not on every
+             * pass of the loop.  PTT is read by the K1's CheckKeys() on this
+             * slice too, and port_gui_tick's squelch read is one BK4819_GetRSSI()
+             * -- about 0.6 ms of bit-banged RF bus, so running it thousands of
+             * times a second leaves the application almost no CPU at all. */
             APP_Update();
 
             if ((uint32_t)(now - slice10) >= 10u) {
                 slice10 = now;
                 APP_TimeSlice10ms();
+
+                port_gui_poll();
+                port_gui_tick(now);
             }
             if ((uint32_t)(now - slice500) >= 500u) {
                 slice500 = now;
                 APP_TimeSlice500ms();
             }
-
-            port_gui_poll();
-            port_gui_tick(now);
         }
 
         keypad_monitor_step();
