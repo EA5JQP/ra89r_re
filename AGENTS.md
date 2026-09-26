@@ -38,6 +38,9 @@ the CPS sources) lives outside the workspace (see "Reference inputs").
   18-register table.
 - `ra89r_rfpath.md` — the RF path the two share: the bit-banged bus, the boot
   bring-up order, and what actually powers the RF section.
+- `ra89r_rffeatures.md` — the stock's feature routines above the part: where AF,
+  AGC, the CTCSS/CDCSS/DTMF/scramble/VOX group and the sleep/idle/mode-restore
+  states live, by register.
 
 **Every feature gets its own `ra89r_<feature>.md`**, next to the code, holding more
 than a summary: the protocol or register semantics, the evidence for each hardware
@@ -312,16 +315,25 @@ outputs in `0x40 >> pin` order and the paired bit `14 - n` is cleared per driven
 pin, which is what made it look like a filter selector; the GPIOs do control
 front-end paths, just not through a bitfield.
 
-**2. Not visible in the stock image.**  The AF/audio group (`SetAF`,
-`SetRxAudioGain`, `GetAfTxRx`, `PlayTone*`, `TransmitTone`) sits behind the
-still-unidentified `FUN_08009D80`/`FUN_0801533C`/`FUN_0801638C`; the signalling
-group (CTCSS/CDCSS, DTMF, FSK, MDC, Roger), AGC, metering beyond RSSI,
-scrambler/compander/VOX, the idle/sleep/bypass states and the scan result
-registers are all outside what the decompiler has yielded so far.
-`SetupPowerAmplifier` needs the TX-power register, still unidentified (`0x7d`/
-`0x30` are the candidates).  For these the port uses the K1 implementation's
-sequences rather than extracted evidence, which is why they are hypotheses until
-the radio confirms them.  The BK4815 is a separate matter: it has *no*
+**2. Located in the stock image, by register.**  These were listed here as "not
+visible in the stock image", which was wrong: the stock implements all of them and
+they are simply found by taking each feature's register set from the K1 driver and
+asking which stock functions write those registers.  `ra89r_rffeatures.md` has the
+first pass — the AF source/mute switch (`FUN_08015F48`), the tone player writing
+`0x71` (`FUN_08005D2C`), the AGC gain table (`0x10`–`0x14`, whose five values match
+the K1's `InitAGC` exactly) with `0x13` as the runtime step the squelch walks, the
+CTCSS/tail registers `0x51`/`0x52` fed from the codeplug (`FUN_08006DE4`), the
+BK4815 compander `0x28` (`FUN_0801C15C`), the scramble enable on `0x31` bit 1 with
+its code word in `0x71` (`FUN_08019E2C`), VOX (`FUN_0801754A`, register set
+identical to the K1's `EnableVox`) and the mode restore that pulses `0x37` from
+`0x9D00` to `0x9D1F` (`FUN_0800CE1C`).
+
+That is location and register content, not validation: none of it has run on the
+radio, `0x30`'s bit fields are unmapped, and DTMF has no stock counterpart located
+yet.  `SetupPowerAmplifier` still needs the TX-power register, unidentified (`0x7d`/
+`0x30` are the candidates).  For these the port keeps using the K1 implementation's
+sequences, now with a stock reference to compare against rather than a hypothesis
+with nothing behind it.  The BK4815 is a separate matter: it has *no*
 `0x38`/`0x39` path at all -- the stock never writes frequency registers to it,
 and its tuning word goes to `0x22` as `(x << 16) / 0x4822` in `FUN_08005C34`, an
 encoding still to work out.  With the port bound to the BK4829 that is out of
