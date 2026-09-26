@@ -31,6 +31,11 @@ the CPS sources) lives outside the workspace (see "Reference inputs").
   EEPROM: the part and its pins, the SPI command set, what is actually on the
   chip (the flat codeplug, the firmware's journal at `0x20000`, the blob area),
   and the planned write-validation test.
+- `ra89r_codeplug.md` — the *contents* of that chip's first 16 KB: the 21-byte
+  channel records, the two channel bitmaps, the tone encoding, the band ranges,
+  the 32-byte general-settings block field by field, the calibration window and
+  the signature, each with the CPS source line that proves it.  The authority for
+  anything the port reads or writes there.
 - `ra89r_bk4829.md` — the RF transceiver on chip select `PB8`: its identity check
   (`0x4829`), its boot register sequence, how it differs from the UV-K1/K5V3
   driver, and the driver on branch `driver/bk4829`.
@@ -126,25 +131,35 @@ Offline checks that need no radio (the flash and layout regressions):
 python3 tools/ra89r_bootloader_sim.py --pty /tmp/ra89r-pty &
 python3 tools/ra89r_flash.py --port "$(cat /tmp/ra89r-pty)" flash firmware/build/Debug/ra89r_fw.icf
 
-# the RF register layers and the K1-compatible one on a PC (53 checks)
-cd firmware && gcc -std=c11 -I App -I App/driver tools/test_rf.c \
-    App/driver/bk4829.c App/driver/bk4815.c App/driver/bk4819.c -o /tmp/test_rf && /tmp/test_rf
+# the RF register layers and the K1-compatible one on a PC (53 checks).
+# `driver/bk4819.c` mirrors the status LED onto `driver/led.c`, which needs the
+# target's GPIO registers, so the host LED stand-in goes in its place.
+cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver tools/test_rf.c \
+    App/driver/bk4829.c App/driver/bk4815.c App/driver/bk4819.c \
+    tools/host/host_led.c -o /tmp/test_rf && /tmp/test_rf
 
 # screen layout on a PC, then eyeball the ASCII art (see firmware/README.md)
 cd firmware && gcc -std=c11 -I App -I App/driver -DLCD_HOST_TEST \
     tools/preview.c App/ui.c App/driver/lcd_st7565.c \
     App/driver/font_8x16.c App/driver/font_5x7.c -o /tmp/preview && /tmp/preview
 
-# the ported K1 VFO screen (the K1's own ui/main.c) rendered on a PC
+# the ported K1 application on a PC: it renders the VFO/menu screens as ASCII,
+# decodes the codeplug the host's RAM flash holds, round-trips the settings blob
+# and runs the K1's own key path (CheckKeys).  It links the whole app core, not
+# just the screens -- port_state_init() is the K1's boot sequence.
 cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver \
     -DPY32F403xD -include App/port_features.h -DST7565_HOST_TEST \
     -ffunction-sections -fdata-sections -Wl,--gc-sections \
-    tools/preview_k1.c tools/host/host_hw.c App/ui/main.c App/ui/menu.c \
-    App/ui/ui.c App/ui/status.c App/ui/welcome.c App/app/menu.c \
-    App/app/action.c App/ui/helper.c \
-    App/ui/inputbox.c App/version.c App/dcs.c App/frequencies.c \
-    App/helper/battery.c App/port_state.c App/port_storage.c App/port_gui.c App/settings.c \
-    App/font.c App/bitmaps.c App/driver/st7565.c App/driver/keyboard.c \
+    tools/preview_k1.c tools/host/host_hw.c tools/host/host_bk4819.c \
+    App/ui/main.c App/ui/menu.c App/ui/ui.c App/ui/status.c App/ui/welcome.c \
+    App/ui/battery.c App/ui/scanner.c App/ui/helper.c App/ui/inputbox.c \
+    App/app/menu.c App/app/action.c App/app/app.c App/app/main.c \
+    App/app/generic.c App/app/common.c App/app/chFrScanner.c App/app/dtmf.c \
+    App/app/scanner.c App/radio.c App/functions.c App/audio.c App/misc.c \
+    App/port_state.c App/port_storage.c App/port_codeplug.c App/port_gui.c \
+    App/port_board.c App/settings.c App/version.c App/dcs.c App/frequencies.c \
+    App/helper/battery.c App/driver/system.c App/font.c App/bitmaps.c \
+    App/driver/st7565.c App/driver/keyboard.c \
     -o /tmp/preview_k1 && /tmp/preview_k1
 # (tools/host is a test double for the device header: CMSIS's __DSB() is ARM
 #  assembly, so a PC build cannot use the real one -- see NOTICE)
@@ -242,9 +257,13 @@ port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
                                          the external SPI NOR flash.  The K1 GUI is
                                          what the radio boots into, straight into the
                                          VFO, in its double-channel layout
-                                         (gEeprom.DUAL_WATCH = DUAL_WATCH_CHAN_A; the
-                                         two VFOs hold placeholder channels until the
-                                         codeplug is mapped); console '4' shows the K1
+                                         (gEeprom.DUAL_WATCH = DUAL_WATCH_CHAN_A);
+                                         the two VFOs land on the first two channels
+                                         the codeplug has, because port_codeplug.c
+                                         decodes the stock's own 21-byte records,
+                                         bitmaps and tones (ra89r_codeplug.md) and
+                                         settings.c is the K1's SETTINGS_* interface
+                                         over it; console '4' shows the K1
                                          boot screen, '1' returns to the GUI,
                                          '2'/'3'/'G'/'M'/'4' select screens, '0' hands
                                          the panel back to the bring-up screens,
@@ -275,8 +294,10 @@ port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
                                          EXIT switches VFO A/B because this radio has
                                          no A/B key.  See
                                          ra89r_port.md for the layer table and what is
-                                         next: step 2, the codeplug, to be organised so
-                                         the stock firmware stays compatible
+                                         next: mapping the stock's 32-byte general
+                                         settings block (ra89r_codeplug.md) into
+                                         EEPROM_Config_t, so squelch, backlight and
+                                         the power-on display follow the stock radio
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all
