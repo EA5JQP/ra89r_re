@@ -68,8 +68,11 @@ void port_state_init(void)
         memset(vfo, 0, sizeof *vfo);
         vfo->pRX = &vfo->freq_config_RX;
         vfo->pTX = &vfo->freq_config_TX;
-        vfo->freq_config_RX.Frequency = 14575000u;
-        vfo->freq_config_TX.Frequency = 14575000u;
+        /* Placeholder channels until the stock codeplug is mapped in: VFO A on
+         * 145.7500 and VFO B on 145.5000, so the double-channel screen shows
+         * two different rows. */
+        vfo->freq_config_RX.Frequency = (i == 0) ? 14575000u : 14550000u;
+        vfo->freq_config_TX.Frequency = vfo->freq_config_RX.Frequency;
         vfo->CHANNEL_BANDWIDTH = 0;
         vfo->OUTPUT_POWER = 2;
         vfo->STEP_SETTING = STEP_12_5kHz;

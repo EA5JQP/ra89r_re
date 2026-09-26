@@ -15,8 +15,13 @@ at the bottom for the stage-by-stage log):
 | not ported, stubbed | the RF/audio/scanner/DTMF engines, the CPS codeplug mapping, USB/voice/FM features the hardware lacks |
 
 **The K1 GUI is what the radio boots into**: the panel and the keys belong to it
-from power-on (the K1 boot screen for a second, then the VFO), and the bring-up
-screens are now console diagnostics behind `0`.  The console: **`1`** back to the
+from power-on, straight into the VFO (the K1 boot screen is still there behind
+console `4`), and the bring-up screens are console diagnostics behind `0`.  The
+**double-channel UI** is the default: `ui/main.c`'s `isMainOnly()` is
+"dual watch off *and* cross-band off", so the defaults now set
+`gEeprom.DUAL_WATCH = DUAL_WATCH_CHAN_A` and the main screen draws both VFOs.
+Placeholder channels until the stock codeplug is mapped: VFO A on 145.7500 and
+VFO B on 145.5000, so the two rows are visibly different.  The console: **`1`** back to the
 GUI, **`2`** VFO, **`3`** menu, **`M`**/`G` draw those once, **`4`** the boot
 screen, **`5`** saves the settings blob, **`6`** runs the flash write test,
 **`e`** dumps the flash, **`0`** hands the panel to the bring-up screens (test

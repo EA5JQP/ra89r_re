@@ -48,7 +48,11 @@ void PORT_SettingsDefaults(void)
     gEeprom.CHANNEL_DISPLAY_MODE = 0;
     gEeprom.TAIL_TONE_ELIMINATION = false;
     gEeprom.VFO_OPEN = true;
-    gEeprom.DUAL_WATCH = DUAL_WATCH_OFF;
+    /* The double-channel UI: ui/main.c's isMainOnly() is
+     * (DUAL_WATCH == OFF && CROSS_BAND == OFF), so any other dual-watch mode
+     * makes the main screen draw both VFOs.  Cross-band stays off: that is an
+     * RF behaviour, and the port has no engine for it yet. */
+    gEeprom.DUAL_WATCH = DUAL_WATCH_CHAN_A;
     gEeprom.CROSS_BAND_RX_TX = CROSS_BAND_OFF;
     gEeprom.BATTERY_SAVE = 0;
     gEeprom.BACKLIGHT_TIME = 4;

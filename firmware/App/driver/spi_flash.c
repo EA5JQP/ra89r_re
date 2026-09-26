@@ -125,8 +125,8 @@ void spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len)
 #define CMD_READ_STATUS    0x05u
 #define CMD_PAGE_PROGRAM   0x02u
 #define CMD_SECTOR_ERASE   0x20u
-#define FLASH_PAGE_SIZE    256u
-#define FLASH_SECTOR_SIZE  4096u
+/* SPI_SPI_FLASH_SECTOR_SIZE is in the header; the page size is local. */
+#define SPI_FLASH_PAGE_SIZE    256u
 
 static void cmd_only(uint8_t command)
 {
@@ -176,7 +176,7 @@ void spi_flash_wait_ready(void)
 void spi_flash_program(uint32_t addr, const uint8_t *buf, uint32_t len)
 {
     while (len > 0u) {
-        uint32_t room = FLASH_PAGE_SIZE - (addr & (FLASH_PAGE_SIZE - 1u));
+        uint32_t room = SPI_FLASH_PAGE_SIZE - (addr & (SPI_FLASH_PAGE_SIZE - 1u));
         uint32_t chunk = (len < room) ? len : room;
         uint32_t i;
 

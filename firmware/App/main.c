@@ -809,9 +809,8 @@ int main(void)
     radio_boot();
     port_state_init();
     port_gui_init();
-    port_gui_welcome();
-    systick_delay_ms(1200);
-    port_gui_screen(DISPLAY_MAIN);
+    port_gui_screen(DISPLAY_MAIN);   /* straight into the VFO (console '4' has the
+                                      * K1 boot screen if it is wanted) */
     uart_puts("boot complete. 'h' for commands, 'd' dumps the screen over this\n"
               "console, 'i' shows diagnostics.\n");
     print_help();
