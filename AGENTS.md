@@ -23,9 +23,10 @@ the CPS sources) lives outside the workspace (see "Reference inputs").
 - `ra89r_battery.md` — the companion gauge chip: the bus, the protocol, the voltage
   arithmetic, the configuration block, and the full troubleshooting log (what has
   been eliminated and how, so it is not re-derived).
-- `ra89r_led.md` — the status LED (a transmit/receive indicator, driven by the RF
-  chip, *not* an MCU pin) and the backlight (GPIOA pin 5), with the pin searches
-  that came up empty and the pin map that settled them.
+- `ra89r_led.md` — the status LED (a transmit/receive indicator on MCU `PA13`/`PA14`,
+  confirmed on the radio) and the backlight (GPIOA pin 5), with the pin searches
+  that came up empty -- including the earlier "it is the RF chip's" reading -- and
+  the pin map that settled them.
 - `ra89r_eeprom.md` — the external SPI NOR flash, i.e. what the CPS calls the
   EEPROM: the part and its pins, the SPI command set, what is actually on the
   chip (the flat codeplug, the firmware's journal at `0x20000`, the blob area),
@@ -178,13 +179,20 @@ driver/lcd                screen      -- merged; working on hardware (init, font
 driver/uart               console     -- merged; working on hardware (115200, faults)
 driver/backlight          lamp        -- merged; GPIOA pin 5 (the panel backlight), 'l'
 driver/keypad             keys        -- merged; 20 buttons, K5V3 KEY_Code_e, 'k' monitor
-driver/led                LED         -- merged, parked: PA0/PA1 do nothing visible;
-                                         the LED is an RF-chip indicator, see ra89r_led.md
+driver/led                LED         -- merged and VALIDATED: the indicator is
+                                         PA13 (red) / PA14 (green), both active
+                                         high, measured on the radio; console 'L'
+                                         cycles off/red/green/both, see ra89r_led.md
 driver/battery            gauge       -- OPEN, unmerged: the bus is silent for us
                                          although the stock reads it; see ra89r_battery.md
 driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR flash
                                          ("EEPROM") reads and dumps; the write test has
                                          not run yet, see ra89r_eeprom.md
+driver/audiocontrol       audio       -- OPEN, unmerged: the K1 audio-path callback
+                                         drives PC13 (the amp-enable candidate the
+                                         stock holds HIGH), plus pin tests: `A`
+                                         steps the PA13/PA14 status-LED pair and
+                                         `C` toggles PC13 -- see ra89r_led.md
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all
@@ -200,7 +208,7 @@ The open features have their own write-ups, and they are the places to start:
 |---|---|---|
 | keypad | `ra89r_keypad.md` | done: 20 buttons, validated on the radio |
 | backlight | `ra89r_led.md` | done: GPIOA pin 5, confirmed on the radio |
-| status LED | `ra89r_led.md` | identified as an RF-chip indicator; needs the RF bring-up |
+| status LED | `ra89r_led.md` | done: `PA13` red, `PA14` green, active high (measured); `driver/led.c`, 'L' |
 | battery gauge | `ra89r_battery.md` | protocol decoded and implemented; the chip never answers |
 | beeper | `ra89r_beeper.md` | traced (TIM4 + a tone generator, its pin is PA4); not written |
 | EEPROM (SPI NOR) | `ra89r_eeprom.md` | read + full dump validated on the radio; write test pending |
@@ -229,9 +237,9 @@ the **battery gauge** (protocol decoded, chip silent -- `ra89r_battery.md`), the
 are validated on the radio -- ids, all writes, tuning and an RSSI response to a
 carrier -- with the BK4815's RF role still open, see `ra89r_bk4829.md` and
 `ra89r_bk4815.md`).
-The **status LED** is not a feature of its
-own: it is an RF-chip indicator, so it arrives with the RF bring-up
-(`ra89r_led.md`).  The **beeper** is traced but not written (TIM4 plus a tone
+The **status LED** turned out to be MCU lines after all -- `PA13`/`PA14`, measured
+on the radio -- and the branch that found them is `driver/audiocontrol`, which also
+keeps the `PC13` amplifier-enable candidate (`ra89r_led.md`).  The **beeper** is traced but not written (TIM4 plus a tone
 generator, its pin is PA4 = `DAC_OUT1`).
 
 ## Firmware / flashing

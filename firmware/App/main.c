@@ -180,14 +180,14 @@ static void print_help(void)
 {
     uart_puts("\ncommands: h help   i diagnostics   d dump screen as ASCII\n"
               "          c clear  t test card   b border   f fill   p animation\n"
-              "          v/V contrast up/down  l backlight on/off  L PA0/PA1 led test  q heartbeat\n"
+              "          v/V contrast up/down  l backlight on/off  q heartbeat\n"
+              "          L status led cycle (PA13 red / PA14 green)\n"
               "          r re-init panel (standard, bootloader-proven)\n"
               "          s re-init panel (stock app variant, 8 extra bytes)\n"
               "          k keypad monitor (raw ADC per line + decoded key)\n"
               "          R probe both RF chips (ids)   W configure both\n"
               "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
-              "          S sample reg 0x67 for 4 s   A step the PA13/PA14 led pair\n"
-              "          C toggle PC13 (the amp-enable candidate)\n");
+              "          S sample reg 0x67 for 4 s   C toggle PC13 (amp-enable)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -281,34 +281,20 @@ static void rf_report(void)
 /* The K1 firmware's audio path is a GPIO of its own -- `GPIO_PIN_AUDIO_PATH` =
  * PA8 on that board, driven HIGH to enable through `AUDIO_AudioPathOn()` -- and
  * that is the call this port replaced with a callback.  On this board the line
- * the stock holds asserted is PC13 (FUN_080177A8 raises it, and its config+0x38
- * gate is 0 on this codeplug, so it stays HIGH), which leaves PC13 as the
- * amplifier-enable candidate.  It is a *static* line: nothing in the squelch path
- * touches it.  Pressing `C` inverts it so the speaker can be listened to with the
- * line both ways.
+ * the stock holds asserted is PC13 (`FUN_080177A8` raises it and its
+ * `config+0x38` gate is 0 on this codeplug, so it stays HIGH), which leaves PC13
+ * as the amplifier-enable candidate.  It is a *static* line: nothing in the
+ * squelch path touches it, so `C` inverts it and the speaker can be listened to
+ * with the line both ways.
  *
- * PA13/PA14 are *not* this line -- measured on the radio, they drive the status
- * LED: stepping them from the console changes it from green+red to red.  The
- * stock drives the pair from its receive/squelch state machine (PA14 high while
- * the squelch is open, low when it closes) and from TX, and the CPS setting list
- * has `LED Mode`, `Led Type` and `Rx.Light`, so this pair is the indicator.  `A`
- * steps it through all four combinations so the pin->colour map can be read off
- * in one pass.  Both are the SWDIO/SWCLK pads, configured as push-pull outputs
- * together by the boot GPIO init FUN_08013C74 (mask 0x6000). */
+ * PA13/PA14 are *not* this line: they are the status LED (PA13 red, PA14 green,
+ * both active high -- measured), which lives in `driver/led.c` behind the
+ * console's `L`.  See ra89r_led.md. */
 static void audio_path_drive(int on)
 {
     gpio_port_clock(AUDIO_PATH_PORT);
     gpio_config_output(AUDIO_PATH_PORT, AUDIO_PATH_PIN);
     gpio_write(AUDIO_PATH_PORT, AUDIO_PATH_PIN, on ? 1 : 0);
-}
-
-static void status_led_drive(int a, int b)
-{
-    gpio_port_clock(STATUS_LED_PORT);
-    gpio_config_output(STATUS_LED_PORT, STATUS_LED_A_PIN);
-    gpio_config_output(STATUS_LED_PORT, STATUS_LED_B_PIN);
-    gpio_write(STATUS_LED_PORT, STATUS_LED_A_PIN, a ? 1 : 0);
-    gpio_write(STATUS_LED_PORT, STATUS_LED_B_PIN, b ? 1 : 0);
 }
 
 static void audio_path_toggle(void)
@@ -324,25 +310,9 @@ static void audio_path_toggle(void)
               "  RX (K) and a signal tuned in, this is the line to listen on.\n");
 }
 
-/* Walk PA13/PA14 through (B,A) = 10, 11, 00, 01 -- four states, one per `A` --
- * printing what each one drives, so the LED colour can be read off in one pass. */
-static void status_led_step(void)
-{
-    static const struct { int a, b; } step[] = {
-        { 0, 1 }, { 1, 1 }, { 0, 0 }, { 1, 0 },
-    };
-    static unsigned idx;
-
-    status_led_drive(step[idx].a, step[idx].b);
-    uart_printf("\nLED: PA14=%d PA13=%d (IDR PA14=%d PA13=%d)\n",
-                step[idx].a, step[idx].b,
-                gpio_read(STATUS_LED_PORT, STATUS_LED_A_PIN) ? 1 : 0,
-                gpio_read(STATUS_LED_PORT, STATUS_LED_B_PIN) ? 1 : 0);
-    if (idx == 0)
-        uart_puts("  press A three more times: 11, 00, 01.  Note the LED colour\n"
-                  "  (off / green / red / green+red) at each step.\n");
-    idx = (idx + 1) & 3;
-}
+/* Set by the K1-compatible bring-up: without it the part is untuned and not in
+ * RX, so 0x67 does not follow a carrier and the numbers mislead. */
+static bool rf_up;
 
 /* The K1-compatible path: `BK4819_Init` replays the K1's own register
  * sequences on this board's BK4829, `SetFrequency` writes the same 0x38/0x39
@@ -357,6 +327,7 @@ static void rf_k1_bringup(void)
 
     BK4819_SetAudioPathCallback(audio_path_drive);
     BK4819_Init();
+    rf_up = true;
     BK4819_SetFrequency(freq);
     BK4819_SetAF(BK4819_AF_FM);
     BK4819_RX_TurnOn();
@@ -386,6 +357,9 @@ static void rf_watch(void)
 
     uart_puts("\nRF: reg 0x67 every 200 ms for 4 s "
               "(0xB4 / 0xCF are the stock's squelch marks)\n");
+    if (!rf_up)
+        uart_puts("  note: 'K' has not run this boot, so the part is not tuned or\n"
+                  "  in RX and these readings will not follow a carrier.\n");
 
     for (i = 0; i < 20u; i++) {
         uint16_t v = BK4819_GetRSSI();
@@ -693,22 +667,12 @@ int main(void)
                 }
                 break;
             case 'L': {
-                /* PA0/PA1 do nothing visible on this radio; this is here so that
-                 * if they are ever identified, the test is one key away. */
-                static const struct {
-                    uint32_t mask;
-                    const char *name;
-                } test[] = {
-                    { LED_PIN_B, "PA1" },
-                    { LED_PIN_A, "PA0" },
-                    { LED_PIN_A | LED_PIN_B, "PA0+PA1" },
-                    { 0u, "off" },
-                };
-                static unsigned step;
-
-                led_drive_pins(test[step].mask);
-                uart_printf("\nled: %s\n", test[step].name);
-                step = (step + 1u) % (sizeof(test) / sizeof(test[0]));
+                /* The status LED: PA13 = red, PA14 = green, both active high
+                 * (measured, ra89r_led.md).  Cycle off -> red -> green -> both. */
+                led_set((led_colour_t)((led_get() + 1) % LED_STATE_COUNT));
+                uart_printf("\nled: %s (PA13=%u PA14=%u)\n", led_name(led_get()),
+                            gpio_read(LED_PORT, LED_RED_PIN) ? 1u : 0u,
+                            gpio_read(LED_PORT, LED_GREEN_PIN) ? 1u : 0u);
                 break;
             }
             case 'q':
@@ -735,9 +699,6 @@ int main(void)
                 break;
             case 'S':
                 rf_watch();
-                break;
-            case 'A':
-                status_led_step();
                 break;
             case 'C':
                 audio_path_toggle();

@@ -104,7 +104,7 @@ an open point rather than a finding.
 A sweep of **every GPIO write in the stock image** (88 call sites resolved, with
 their port, mask and level) leaves no candidate for an MCU-driven supply enable:
 no pin is taken high as a rail gate.  The pins the stock actually drives are the
-buses and the indicators:
+buses, the indicators and the audio path:
 
 | pin | role |
 |---|---|
@@ -113,8 +113,8 @@ buses and the indicators:
 | `PA15`, `PB3`, `PB4`, `PB5` | the external SPI NOR flash (`ra89r_eeprom.md`) |
 | `PB15`, `PA8`–`PA11` | the LCD |
 | `PA0`, `PA1` | the TX/RX indicator field (see `ra89r_led.md`) and RF control |
-| `PC13` | driven low around the RF and audio paths (`FUN_08009C9C`, 11 callers) and **read** in the T/R path, where it has to be low (`FUN_08016228`) |
-| `PA13`, `PA14` | driven low from a few paths (the debug pins, reused) |
+| `PC13` | a static audio/RF control line: driven low by `FUN_08009C9C`/`FUN_08009CB0` (11 call sites) and raised by `FUN_080177A8` from the T/R transition; on this codeplug it is held **high** and does **not** follow the squelch — see `ra89r_rffeatures.md` |
+| `PA13`, `PA14` | the **audio-path pair**: configured together as push-pull outputs by the boot GPIO init `FUN_08013C74` (GPIOA mask `0x6000`), with `FUN_08020028`/`FUN_08018A10` driving each to a level selected by codeplug settings byte 2 bit 2 (`0x20009F28 + 0xc`).  **`PA14` goes high while the squelch is open and low when it closes** (`FUN_08004C84` vs `FUN_0801D458`) and high in TX; `PA13` is its counterpart.  They are the `SWDIO`/`SWCLK` pads, given up for GPIO — see `ra89r_rffeatures.md` |
 
 So the picture is:
 
@@ -123,6 +123,8 @@ So the picture is:
   control, not a supply.  This is the same pin the LED search tested and found
   "does nothing visible" (`ra89r_led.md`).
 * **`PC13`** is likewise a control line in the RF/audio paths, not a rail.
+* **`PA14`** (with `PA13`) is the one pin whose level tracks the squelch, so it is
+  the audio-path enable the T/R-only reading missed.
 * **`PD0`** is pulsed low → high at boot (`FUN_0801D69C`, which clears bit 0 of
   `GPIOD` at `0x48000C00`, does a handshake and sets it again) and driven low from
   a handful of other paths; it behaves as the companion chip's reset/handshake, so

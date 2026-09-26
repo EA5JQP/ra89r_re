@@ -32,7 +32,6 @@
 #define BK4829_CS_PORT       GPIOB
 #define BK4815_CS_PORT       GPIOB
 #define AUDIO_PATH_PORT      GPIOC
-#define STATUS_LED_PORT      GPIOA
 
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) drives the
  * external SPI NOR flash, and the USB-C port goes to the MCU's USB peripheral
