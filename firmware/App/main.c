@@ -494,6 +494,50 @@ static void tx_level(unsigned c)
     }
 }
 
+/* The bench read-out on the panel: which candidate this transmission used, the
+ * TX/RX state, and the three registers that decide how it sounds.  It is the
+ * only way to read the state with the console cable unplugged. */
+static void bench_screen(int tx, unsigned cand, uint16_t r50, uint16_t r13,
+                         uint16_t r7d)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    char title[20];
+    char detail[32];
+    unsigned n = 0, i;
+
+    title[n++] = tx ? 'T' : 'R';
+    title[n++] = tx ? 'X' : 'X';
+    title[n++] = ' ';
+    if (!tx) {
+        title[n++] = 'n'; title[n++] = 'e'; title[n++] = 'x'; title[n++] = 't';
+        title[n++] = ' ';
+    } else {
+        title[n++] = 'c'; title[n++] = 'a'; title[n++] = 'n'; title[n++] = 'd';
+        title[n++] = ' ';
+    }
+    if (cand >= 10u)
+        title[n++] = (char)('0' + cand / 10u);
+    title[n++] = (char)('0' + cand % 10u);
+    title[n] = '\0';
+
+    for (i = 0; i < 3u; i++) {
+        uint16_t v = (i == 0) ? r50 : (i == 1) ? r13 : r7d;
+        const char *name = (i == 0) ? "50=" : (i == 1) ? "13=" : "7D=";
+        unsigned k;
+        for (k = 0; k < 3u; k++)
+            detail[n++] = name[k];
+        detail[n++] = hex[(v >> 12) & 0xF];
+        detail[n++] = hex[(v >> 8) & 0xF];
+        detail[n++] = hex[(v >> 4) & 0xF];
+        detail[n++] = hex[v & 0xF];
+        detail[n++] = ' ';
+    }
+    detail[n] = '\0';
+
+    ui_bench(title, detail);
+    lcd_refresh();
+}
+
 static void radio_tx(int on)
 {
     if (on == tx_on)
@@ -528,7 +572,16 @@ static void radio_tx(int on)
     if (on) {
         uart_printf("bench: candidate %u -- %s\n", tx_cand,
                     tx_cand_name(tx_cand));
+        bench_screen(1, tx_cand,
+                     BK4819_ReadRegister(BK4819_REG_50),
+                     BK4819_ReadRegister(BK4819_REG_13),
+                     BK4819_ReadRegister(BK4819_REG_7D));
         tx_cand = (tx_cand + 1u) % 9u;
+    } else {
+        bench_screen(0, tx_cand,
+                     BK4819_ReadRegister(BK4819_REG_50),
+                     BK4819_ReadRegister(BK4819_REG_13),
+                     BK4819_ReadRegister(BK4819_REG_7D));
     }
 }
 
