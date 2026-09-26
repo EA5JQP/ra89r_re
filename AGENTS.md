@@ -252,11 +252,20 @@ port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
                                          test, 'e' dumps the flash.
                                          preview_k1.c renders and key-drives the same
                                          screens on a PC (see "Offline checks").
-                                         ra89r_port.md has the layer table, the
-                                         stage-by-stage progress and what is next: the
-                                         stock codeplug mapping, then the real
-                                         settings/radio/functions modules that retire
-                                         port_state.c and port_gui.c
+                                         The app core is in as well (radio.c,
+                                         functions.c, audio.c, misc.c + a port
+                                         driver/system.c), which retired most of
+                                         port_state.c's stubs, and port_gui.c drives
+                                         the measured chains: UP/DOWN retune the
+                                         receiver, PTT keys the transmitter, the
+                                         squelch sets FUNCTION_INCOMING/RECEIVE.
+                                         radio.c's own chip sequences stay unused
+                                         until they are compared with the stock.  See
+                                         ra89r_port.md for the layer table and what is
+                                         next: step 3 (app/app.c keys and actions,
+                                         scanners, DTMF), then step 2 (the codeplug,
+                                         to be organised so the stock firmware stays
+                                         compatible)
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all
