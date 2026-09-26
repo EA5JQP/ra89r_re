@@ -185,6 +185,11 @@ driver/battery            gauge       -- OPEN, unmerged: the bus is silent for u
 driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR flash
                                          ("EEPROM") reads and dumps; the write test has
                                          not run yet, see ra89r_eeprom.md
+driver/audiocontrol       audio       -- OPEN, unmerged: drives PC13 as the audio
+                                         path enable, the line the stock drives from
+                                         its T/R transition; polarity unverified and
+                                         there is no audio path to hear, see
+                                         ra89r_rffeatures.md
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all

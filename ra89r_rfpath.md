@@ -113,7 +113,7 @@ buses and the indicators:
 | `PA15`, `PB3`, `PB4`, `PB5` | the external SPI NOR flash (`ra89r_eeprom.md`) |
 | `PB15`, `PA8`–`PA11` | the LCD |
 | `PA0`, `PA1` | the TX/RX indicator field (see `ra89r_led.md`) and RF control |
-| `PC13` | driven low around the RF and audio paths (`FUN_08009C9C`, 11 callers) and **read** in the T/R path, where it has to be low (`FUN_08016228`) |
+| `PC13` | the audio-path enable: driven low by `FUN_08009C9C`/`FUN_08009CB0` (11 call sites) and conditionally by `FUN_080177A8` from the T/R transition, gated by two codeplug bits — see `ra89r_rffeatures.md`; also **read** in the T/R path, where it has to be low |
 | `PA13`, `PA14` | driven low from a few paths (the debug pins, reused) |
 
 So the picture is:

@@ -160,6 +160,69 @@ throughout (`0x0A03`/`0x0203`/`0xF823`/`0xF023` in `ra89r_bk4815.md`).
 `Idle`, `Disable`, `Sleep`, `PrepareToPlayTone` and `EnterTxMute` all touch `0x30`
 as well, so it carries several independent bit fields and is not yet mapped.
 
+## Does anything enable a speaker PA when the squelch opens?
+
+**Not from the squelch, no.**  The whole verdict chain is:
+
+* `FUN_080052B8` reads `0x63`/`0x65`/`0x67`, ramps the AGC step `0x13`, prints
+  `RSSI R67 %d` and returns 0/1/2 — no pin, and no register beyond `0x13`;
+* `FUN_08005440` only picks between it and a second verdict routine,
+  `FUN_08005218`, for the other mode;
+* `FUN_0801D420` acts on the verdict: 1 → `FUN_0801D3F0(2, 1, state)`,
+  0 → `FUN_0801D3F0(1, 2, state)`;
+* `FUN_0801D3F0` is a **counter**: it steps a byte at `state + 0x21` up or down,
+  clamped to 0..10.  That is the entire squelch action — an MCU-side ramp, most
+  likely the audio fade.  Its consumer has not been located; the reader does not
+  use a plain `[rX, #0x21]` offset, so a scan for that misses it.
+
+So if the stock unmutes a PA when the squelch opens, it happens downstream of that
+counter, not in the squelch path itself.
+
+**The line that does exist is `PC13`.**  Scanning every GPIO write in the image by
+pin and level, and keeping only pins driven *both* ways — a real enable line rather
+than a pulse or a bus — leaves exactly three, and two are the companion gauge
+(`PB2` data, `PD0` reset).  The third:
+
+* driven by **`FUN_080177A8`**, which has exactly **one caller**: `FUN_08016200`,
+  called from the **transmit/receive path** `FUN_08016228`;
+* its branches are `config+0x38 == 0` → HIGH, otherwise LOW or HIGH per
+  `config+0x39` — so it idles high and is pulled low when the path is active;
+* both gates are **codeplug** bits: `config+0x38` ← settings byte 9 bit 0 and
+  `config+0x39` ← bit 5, via `FUN_0800FE18`.
+
+On this radio that byte is **`0x00`**, so `config+0x38 = 0` and `FUN_080177A8` takes
+its unconditional `PC13` HIGH branch: the conditional low-drive is unreachable as
+this radio is configured.  The 11 unconditional `FUN_08009C9C`/`FUN_08009CB0` call
+sites elsewhere drive PC13 low, so the line is normally low and this routine is what
+raises it.
+
+**The chip-side alternative.**  The other place an enable can live is the
+transceiver's own GPIO register — `0x33` bits 0..6, the K1's `ToggleGpioOut`.  Its
+only writer is `FUN_080137D4(mask, value)`, and the 16 call sites set chip pins 0/1
+(bring-up), 2 (`FUN_08004E20`), 3, 4, 5 (`FUN_08013A70`/`FUN_08013B12`) and clear
+all seven (`FUN_08013C24`).  The T/R transition does the whole cluster at once:
+
+```
+FUN_08008F2C()  -> FUN_0801AFF4() -> chip pin 2 = 0, chip pin 5 = 0
+FUN_080177A8()  -> MCU PC13, gated by the codeplug bits above
+FUN_08021888()  -> sets a RAM state flag only
+```
+
+**And there is no other candidate.**  Every other MCU pin is accounted for: the RF
+bus (`PB8`/`PB12`/`PB13`/`PA12`), the flash (`PA15`/`PB3`–`PB5`), the panel
+(`PA8`–`PA11`/`PB15`), the gauge (`PC14`/`PB2`/`PD0`), `PA0`/`PA1` for the RF/LED
+field, and `PA13`/`PA14` for debug.  A speaker/audio enable is therefore either
+**`PC13`** or one of the **chip's GPIO pins set in that T/R cluster** — and either
+way it is driven by the **transmit/receive transition**, not by the squelch.
+
+**What would settle it.**  The K1 tree answers it for its own board: its audio path
+is `GPIO_PIN_AUDIO_PATH = PA8`, driven HIGH by `AUDIO_AudioPathOn()` and low by
+`AUDIO_AudioPathOff()` — the two macros the port replaced with a callback.  On the
+RA89R the call to make is a scope on PC13 (and on the chip's GPIO pins) while the
+squelch opens and closes with the stock firmware running; on our side the port now
+drives PC13 from that callback and the console's `A` toggles it, so the line can be
+measured with a meter before any audio path exists.
+
 ## Open
 
 1. **Nothing here has been run on the radio.**  These are register-set and code-
