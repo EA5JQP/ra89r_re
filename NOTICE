@@ -21,6 +21,15 @@ Imported from the UV-K1/K5V3 project
 | `firmware/App/font.c` `font.h` | verbatim | none -- font tables (`gFontBig`, `gFontBigDigits`, `gFontSmall`, `gFont3x5`, `gFontSmallBold`) |
 | `firmware/App/bitmaps.c` `bitmaps.h` | verbatim | none -- icon bitmaps |
 | `firmware/App/driver/st7565.c` `.h` | adapted | same API and layout as the K1 (`gStatusLine[128]`, `gFrameBuffer[7][128]`, status line = page 0, frame lines = pages 1..7, `+4` column offset in `DrawLine`); the transport is this repo's bit-banged `driver/lcd_st7565.c` instead of the K1's hardware SPI, and the init is the bootloader-proven sequence |
+| `firmware/App/ui/main.c` `.h` | verbatim | the VFO screen (`UI_DisplayMain`) and its helpers |
+| `firmware/App/ui/menu.h`, `ui/ui.h`, `ui/helper.c` `.h`, `ui/inputbox.c` `.h` | verbatim | menu table declarations, the screen dispatcher's interface, drawing/text helpers |
+| `firmware/App/settings.h`, `radio.h`, `frequencies.h`, `dcs.h`, `functions.h`, `audio.h`, `misc.h`, `helper/battery.h`, `app/app.h`, `app/chFrScanner.h`, `app/dtmf.h`, `driver/system.h` | verbatim | the headers the screens compile against.  `settings.h` has one port addition: `PORT_SettingsDefaults()` |
+| `firmware/App/driver/backlight.h` `.c` | extended | this repo's backlight driver plus the K1's names (`gBacklightCountdown_500ms`, `gBacklightBrightness`, `value[]`, `BACKLIGHT_InitHardware/_Update/_UpdateTickless/_SetBrightness`); the brightness is kept as state, the panel stays on -- the DAC dimming is not implemented |
+
+Not imported on purpose: the K1's `board.h`, `driver/{gpio,uart,systick}.h` and
+its `driver/st7565.c` body stay this repo's; its `settings.c`, `radio.c`,
+`misc.c` and the `app/*` modules are replaced for now by
+`firmware/App/port_state.c`, whose stubs each name the K1 module that owns them.
 
 Feature macros for the imported files live in `firmware/App/port_features.h` and
 are force-included by the build (`-include`), so the imported sources stay

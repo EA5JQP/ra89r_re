@@ -29,7 +29,9 @@
 #include "driver/lcd_st7565.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
-#include "k1_vfo_draft.h"
+#include "port_state.h"
+#include "radio.h"
+#include "ui/main.h"
 #include "ui.h"
 
 #define VERSION_STRING "ra89r_fw 0.2 (uart debug)"
@@ -196,7 +198,7 @@ static void print_help(void)
               "          R probe both RF chips (ids)   W configure both\n"
               "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
               "          S sample reg 0x67 for 4 s   C toggle PC13\n"
-              "          G K1 VFO screen draft (imported K1 substrate)\n"
+              "          G ported K1 VFO screen (ui/main.c UI_DisplayMain)\n"
               "          T transmit (DTMF tone)   Y step the PA power\n"
               "          T transmit on/off (also: hold PTT on the radio)\n");
 }
@@ -904,16 +906,23 @@ int main(void)
             case 'S':
                 rf_watch();
                 break;
-            case 'G':
-                /* The port's first K1 screen: drawn with the imported K1
-                 * substrate (driver/st7565.c + font.c + bitmaps.c +
-                 * ui/helper.c), from live squelch/RSSI state. */
-                k1_vfo_draft_show(BENCH_FREQ_HZ, "CALL 1",
-                                  rx_squelch_open() ? 5u : 1u, 3u,
-                                  false, false);
-                uart_puts("\nK1 VFO draft drawn (see tools/preview_k1.c for the "
-                          "same frame on a PC)\n");
+            case 'G': {
+                /* The ported K1 VFO screen: ui/main.c's UI_DisplayMain() itself,
+                 * drawing through the imported display layer, with the app state
+                 * from port_state.c. */
+                static int gui_up;
+
+                if (!gui_up) {
+                    port_state_init();
+                    gui_up = 1;
+                }
+                gRxVfo->freq_config_RX.Frequency = BENCH_FREQ_HZ;
+                gRxVfo->freq_config_TX.Frequency = BENCH_FREQ_HZ;
+                UI_DisplayMain();
+                uart_puts("\nK1 UI_DisplayMain() drawn (preview_k1.c renders the "
+                          "same screen on a PC)\n");
                 break;
+            }
             case 'C':
                 audio_path_toggle();
                 break;

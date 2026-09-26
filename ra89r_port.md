@@ -153,12 +153,24 @@ here are the port's todo list:
   `ST7565_Gauge`); console `G` shows it on the radio.  The draft is scaffolding:
   `ui/main.c`'s `UI_DisplayMain` replaces it.
 
-* **Next -- stage 2, the state facade**, in this order: the real K1
-  `settings.h`/`radio.h`/`frequencies.h`/`helper/battery.h`/`misc.c` with a
-  RAM-backed `gEeprom` (then the external-NOR backend), `driver/keyboard.h`
-  bound to our `keypad.c`, then `ui/main.c` (VFO), `ui/menu.c` (menu) and
-  `ui/status.c`, compiling file by file and keeping what the hardware lacks
-  (FM broadcast, USB VCP, voice prompts) stubbed.
+* **Stage 2a -- the VFO screen is in and renders, unvalidated on the radio.**
+  `App/ui/main.c` (the K1's `UI_DisplayMain`, 2465 lines, verbatim) compiles,
+  links and draws here: `settings.h`/`radio.h`/`frequencies.h`/`dcs.h`/
+  `functions.h`/`audio.h`/`helper/battery.h`/`app/{app,chFrScanner,dtmf}.h`/
+  `driver/system.h` came in as the headers it needs, and
+  `App/port_state.c` is the facade it links against -- `gEeprom.VfoInfo[2]`
+  with a 145.7500 MHz default, the VFO pointers, and one stub per missing K1
+  module, each naming its owner (functions.c, misc.c, radio.c, settings.c,
+  helper/battery.c, app/dtmf.c, dcs.c) so replacing them is mechanical.
+  `firmware/tools/preview_k1.c` renders `UI_DisplayMain()` on a PC (the
+  frequency, the status line, the channel and the power/RSSI readouts all
+  draw), and console `G` draws it on the radio.
+
+* **Next -- stage 2b.**  `driver/keyboard.h` bound to our `keypad.c`, then
+  `ui/ui.c` (the screen dispatcher) and `ui/status.c`/`ui/welcome.c`, then
+  `ui/menu.c` with the real `settings.c`/`menu.c` behind it, and the key/action
+  layer (`functions.c`) -- each step first on `preview_k1.c`, then on the radio.
+  The stubs in `port_state.c` come out as their owner modules come in.
 
 ## Suggested order
 

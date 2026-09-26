@@ -60,7 +60,8 @@ set(APP_SOURCES
     App/bitmaps.c
     App/ui/helper.c
     App/ui/inputbox.c
-    App/k1_vfo_draft.c
+    App/ui/main.c
+    App/port_state.c
     # --- end of imported sources ---------------------------------------------
     App/settings.c
     App/syscalls.c)

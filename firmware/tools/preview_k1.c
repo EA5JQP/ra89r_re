@@ -1,26 +1,24 @@
-/* preview_k1.c -- render the ported K1 screen buffers on a PC.
+/* preview_k1.c -- render the ported K1 screens on a PC.
  *
- * Builds the same buffers the target builds (gStatusLine + gFrameBuffer through
- * the imported K1 drawing helpers) and prints them as text, so the port's
- * layout can be checked and reviewed in a diff without a radio:
+ * The VFO screen is the K1's own ui/main.c (UI_DisplayMain) compiled against
+ * the port's headers, buffers and state facade; this tool just sets the state
+ * up, calls it, and prints the panel as text.  Page 0 is the status line,
+ * pages 1..7 are gFrameBuffer[0..6].
  *
  *   gcc -std=c11 -I App -I App/driver -include App/port_features.h \
- *       -DST7565_HOST_TEST tools/preview_k1.c App/k1_vfo_draft.c \
- *       App/ui/helper.c App/ui/inputbox.c App/settings.c App/font.c \
+ *       -DST7565_HOST_TEST tools/preview_k1.c App/ui/main.c App/ui/helper.c \
+ *       App/ui/inputbox.c App/port_state.c App/settings.c App/font.c \
  *       App/bitmaps.c App/driver/st7565.c -o /tmp/preview_k1 && /tmp/preview_k1
  *
- * Page 0 of the panel is the status line, pages 1..7 are gFrameBuffer[0..6].
+ * (AGENTS.md, "Offline checks", has the same command with the SDK path.)
  */
 #include <stdio.h>
-#include <string.h>
 
 #include "driver/st7565.h"
-#include "k1_vfo_draft.h"
-
-static uint8_t page_byte(const uint8_t *page, unsigned x)
-{
-    return page[x];
-}
+#include "port_state.h"
+#include "radio.h"
+#include "settings.h"
+#include "ui/main.h"
 
 static void render(const char *title)
 {
@@ -36,7 +34,7 @@ static void render(const char *title)
         const uint8_t *page = (y < 8) ? gStatusLine : gFrameBuffer[(y >> 3) - 1];
         printf("%3u |", y);
         for (x = 0; x < LCD_WIDTH; x++)
-            putchar((page_byte(page, x) >> (y & 7u)) & 1u ? '#' : ' ');
+            putchar((page[x] >> (y & 7u)) & 1u ? '#' : ' ');
         printf("|\n");
     }
 
@@ -49,10 +47,17 @@ static void render(const char *title)
 int main(void)
 {
     ST7565_Init();
-    k1_vfo_draft_draw(14575000u, "CALL 1", 3, 3, false, false);
-    render("K1 VFO draft: 145.7500, CALL 1, rssi 3/5, battery 3/5");
+    port_state_init();
 
-    k1_vfo_draft_draw(43350000u, "REPEATER", 5, 1, true, true);
-    render("K1 VFO draft: 433.5000 VFO B, locked, battery 1/5");
+    gRxVfo->freq_config_RX.Frequency = 14575000u;
+    gRxVfo->freq_config_TX.Frequency = 14575000u;
+    UI_DisplayMain();
+    render("K1 UI_DisplayMain(): 145.7500 MHz, channel, status line");
+
+    gRxVfo->freq_config_RX.Frequency = 43350000u;
+    gRxVfo->freq_config_TX.Frequency = 43350000u;
+    UI_DisplayMain();
+    render("K1 UI_DisplayMain(): 433.5000 MHz");
+
     return 0;
 }
