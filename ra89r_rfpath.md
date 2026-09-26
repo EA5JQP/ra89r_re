@@ -323,9 +323,48 @@ same K1 sequence -- so the register side of TX is already available here.
 
 So the port's TX work is the K1 `PrepareTransmit`/`EnableTXLink` sequence (present
 already) plus **`0x7D = 0xE958`**, the band/path pins and the antenna switch, with
-the level taken from the codeplug the way `FUN_0801BAF4` does.  Open: which single
-write actually turns the PA on for this board (`0x30` bit 3 or `0x7D`), and where
-`PC13` goes -- a bench TX with a power meter settles both.
+the level taken from the codeplug the way `FUN_0801BAF4` does.
+
+### The PA power itself is a PWM: PB14 / TIM1 channel 2
+
+The one part of the TX chain that is *not* a transceiver register, and the reason
+a bench that set every register correctly still produced a weak, hissing,
+unstable signal with no usable modulation: **the PA bias is a PWM**, on a pin that
+was not in the pin map at all.
+
+```
+FUN_08016A2C   the TX start (FUN_08018AB8, 5 ms, then this)
+  -> FUN_0801830C -> FUN_0801BDE8        "Pow AdjData" <- FUN_080201CC(channel)
+       -> FUN_08018A88(value)            value * *(0x08018AA0) / 0xFF
+          -> FUN_080167B4                clamp: if (period <= value) value = period/2
+             -> FUN_0801306E(TIM1, cfg, 4)     channel 2 of TIM1
+                -> FUN_0801DEEC(TIM1,cfg)      TIM1->CCR2 = the value
+             -> FUN_08012F26(TIM1, 4)          BDTR |= MOE, CR1 |= CEN
+```
+
+* **the pin is `PB14`**: `FUN_080131AC` configures `GPIOB` mask `0x4000` as
+  alternate function **4** (mode 2), enabling the port clock (bit 3 of
+  `RCC_AHB2ENR`, the same bit `gpio.c` uses) and the timer clock (`0x800` in
+  `RCC_APB2ENR` = TIM1EN).  That is why no GPIO-write sweep ever turned it up:
+  a PWM pin is configured as AF, not driven through `BSRR`;
+* **the timer is TIM1** (`0x40012C00`, the literal at `0x08016C4C`), and the
+  channel is 2 -- `FUN_0801DEEC` writes `+0x38` (CCR2);
+* **the period is 1439, i.e. a 100 kHz PWM.**  `FUN_08016C58`/`FUN_08016764`
+  compute it in floating point from the boot argument `0x64` (100):
+  `1.44e8 / 100 / 1000 = 1440`, minus one.  `1.44e8` is the 144 MHz APB2 clock
+  (the double at `0x08016CB0`), `1000.0` the divisor at `0x08016CB8`;
+* **the duty is the codeplug's power value** (`FUN_080201CC`: `(& 0x3F) << 2`, so
+  0..252), clamped to `ARR/2`, written to `CCR2`.  The boot arms the timer with
+  `CCR2 = 0` and the receive path (`FUN_08017340`) sets it back to 0, so **the PA
+  is biased only while transmitting**.
+
+With that in place the CPU-side TX picture is complete: chip registers
+(`0x30`/`0x37`/`0x47`/`0x50`/`0x7D`), the band/path pins (`PA1 = 1, PA0 = 0`, chip
+PA_ENABLE on -- `FUN_0800948C(1)` -> `FUN_0801B018` -> `FUN_08013A70(2)`), the
+second transceiver's state and the PB14 power PWM.  What is still open is only the
+*level*: which duty the codeplug asks for on this radio, and the microphone gain
+(`FUN_0801C3A8`, `0x40`) and AF level (`0x48`/`0x6C`) the stock fills from its own
+RAM.
 
 ## Open
 
