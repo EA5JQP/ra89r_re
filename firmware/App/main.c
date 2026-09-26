@@ -326,21 +326,26 @@ static void rf_configure(void)
                 (unsigned)bk4829_read_reg(0x7d));
 }
 
-/* Read every register the configuration wrote back and compare.  This is the
- * stronger half of 'W': "the part still answers its id" only shows the bus is
- * alive, while this shows whether the writes actually landed -- all 16 bits of
- * them -- in the part's own registers.
+/* Write each register the configuration carries and read it straight back.
+ *
+ * This deliberately does *not* compare against whatever the chip happens to
+ * hold: the first version did, and on the second hardware run it reported 19 of
+ * 36 "differences" on the BK4829 purely because the K1-compatible 'K' command
+ * had initialised the part from a different table in between.  Those numbers
+ * were history, not faults.  Writing first makes the test independent of what
+ * ran before, and its side effect is that the stock configuration is re-applied.
  *
  * Two things to expect, so a mismatch is not read as a fault on its own:
  *
  *   - register 0 is the reset write and reads back as the chip id, not as the
  *     value sent, so it is reported separately;
- *   - where the table writes one register more than once (the BK4829 writes
- *     0x48 twice, 0x30/0x4a in the per-mode routines), only the last write is
- *     meaningful, so earlier ones are skipped here.
+ *   - where the table writes one register more than once (0x48 twice here,
+ *     0x30/0x4a in the per-mode routines), only the last write is observable,
+ *     so the earlier ones are skipped.
  *
- * A register that is read-only or clears on read will also differ.  That is why
- * this prints the value read instead of only a verdict. */
+ * A read-only or self-clearing register will still differ, and the bits the part
+ * refuses to store (the BK4815's 0x44 bit 4 and 0x49 bit 10 among them) show up
+ * every time.  That is why the values are printed and not just a verdict. */
 static void rf_verify_one(const char *name, unsigned count, bool is_4815)
 {
     unsigned i, j, checked = 0, bad = 0;
@@ -377,6 +382,11 @@ static void rf_verify_one(const char *name, unsigned count, bool is_4815)
         if (superseded)
             continue;
 
+        if (is_4815)
+            bk4815_write_reg(reg, want);
+        else
+            bk4829_write_reg(reg, want);
+
         got = is_4815 ? bk4815_read_reg(reg) : bk4829_read_reg(reg);
         checked++;
         if (got != want) {
@@ -392,13 +402,41 @@ static void rf_verify_one(const char *name, unsigned count, bool is_4815)
                     : "  -- every write landed");
 }
 
+/* The BK4815's boot configuration is mostly a 36-byte block written in one
+ * select pulse, which the per-register check above cannot see.  Write the block
+ * and compare each of the 18 words it carries. */
+static void rf_verify_block(void)
+{
+    unsigned len = 0, i, bad = 0;
+    const uint8_t *blk = bk4815_config_block(&len);
+
+    if (len != 36u) {
+        uart_puts("  BK4815 block: unexpected length\n");
+        return;
+    }
+
+    bk4815_write_block(2u, blk, len);
+
+    for (i = 0; i < 18u; i++) {
+        uint16_t want = (uint16_t)((blk[i * 2u] << 8) | blk[i * 2u + 1u]);
+        uint16_t got = bk4815_read_reg((uint8_t)(2u + i));
+
+        if (got != want) {
+            bad++;
+            uart_printf("    BK4815 reg 0x%02X (block): wrote 0x%04X, read 0x%04X\n",
+                        (unsigned)(2u + i), (unsigned)want, (unsigned)got);
+        }
+    }
+
+    uart_printf("  BK4815 block: 18 registers compared, %u differ\n", bad);
+}
+
 static void rf_verify(void)
 {
-    uart_puts("\nRF: reading back every register the configuration wrote\n");
+    uart_puts("\nRF: writing and reading back every register the configuration carries\n");
     rf_verify_one("BK4829", bk4829_config_writes(), false);
     rf_verify_one("BK4815", bk4815_config_writes(), true);
-    uart_puts("  note: the BK4815's 36-byte block (regs 2..19) is not covered\n"
-              "        by this -- 'R' shows a few of those registers.\n");
+    rf_verify_block();
 }
 
 /* ------------------------------------------------------------------- main */
