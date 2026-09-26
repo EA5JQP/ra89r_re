@@ -419,61 +419,77 @@ static void audio_bench_arm(void)
 static bool tx_on;
 static unsigned tx_cand;
 
-/* TX candidates.  The K1 sequence alone does not radiate, so the bench adds the
- * steps the stock's own TX path has and the K1's does not -- the chip's
- * PA_ENABLE (GPIO pin 1), the second transceiver's path state, and the PA0/PA1
- * band-path pins -- one per TX activation, printing which one it used.  That
- * way one flash finds the combination instead of one guess per flash.
+/* TX, and the candidates still being settled.
  *
- * The path pins are restored to the RX combination the stock uses
- * (`FUN_08013A70(3)`: PA1 high, PA0 low) so the working receive path survives. */
+ * Measured: the chip's PA_ENABLE (GPIO pin 1) together with the band-path pins
+ * `PA1 = 1, PA0 = 0` -- the combination `FUN_08013A70(3)`, which is also what
+ * the stock's own receive select uses -- is what makes the radio radiate.  That
+ * is the base every candidate below builds on.  What is still poor is the level
+ * (a second radio's squelch 2 does not open) and the microphone, so the sweep
+ * varies the registers the stock's TX path sets and ours does not:
+ *
+ *   0x50  TX audio path -- stock 0x3B20, our imported ExitTxMute writes 0x3B18
+ *   0x13  the DSP/AGC value the stock's T/R path writes for TX (0x3BE / 0x3FF)
+ *   0x24  cleared by the stock's TX setup
+ *   0x7D  the power/bias (stock: 0xE958 for this codeplug's level 3)
+ *
+ * One candidate per TX activation, printed, so one flash finds the combination. */
 static const char *tx_cand_name(unsigned c)
 {
     switch (c) {
-    case 0:  return "K1 PrepareTransmit only";
-    case 1:  return "+ chip PA_ENABLE (pin 1)";
-    case 2:  return "+ BK4815 0x0C = 0x0203";
-    case 3:  return "+ PA_ENABLE and BK4815 0x0C";
-    case 4:  return "+ PA_ENABLE and path PA0=1 PA1=0 (FUN_08013B12(0))";
-    case 5:  return "+ PA_ENABLE and path PA1=1 PA0=0 (FUN_08013A70(3))";
-    default: return "+ PA_ENABLE, path PA0=1, BK4815 0x0C, VHF LNA";
+    case 0:  return "base (PA enable + path PA1=1 PA0=0)";
+    case 1:  return "base + 0x50 = 0x3B20 (stock TX audio path)";
+    case 2:  return "base + 0x50 = 0x3B20 + 0x13 = 0x3FF + 0x24 = 0";
+    case 3:  return "base + 0x13 = 0x3BE + 0x50 = 0x3B20";
+    case 4:  return "base + bias 0x7D = 0xE970";
+    case 5:  return "base + bias 0x7D = 0xE988";
+    case 6:  return "base + bias 0x7D = 0xE9C0";
+    case 7:  return "base + 0x50 = 0x3B20 + 0x13 = 0x3FF + 0x24 = 0 + 0x7D = 0xE988";
+    default: return "base + the above + BK4815 0x0C = 0x0203 / 0x70 = 0xA000";
     }
 }
 
-static void tx_extra(unsigned c, int on)
+static void tx_base(void)
+{
+    /* The working combination, measured on the radio. */
+    BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, true);
+    gpio_config_output(GPIOA, 1u | 2u);
+    gpio_write(GPIOA, 2u, 1);              /* PA1 high */
+    gpio_write(GPIOA, 1u, 0);              /* PA0 low  */
+}
+
+static void tx_level(unsigned c)
 {
     switch (c) {
-    case 0:
-        break;
     case 1:
-        BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, on);
+        BK4819_WriteRegister(BK4819_REG_50, 0x3B20);
         break;
     case 2:
-        bk4815_write_reg(0x0C, on ? 0x0203u : 0x0A03u);
-        break;
     case 3:
-        BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, on);
-        bk4815_write_reg(0x0C, on ? 0x0203u : 0x0A03u);
+    case 7:
+        BK4819_WriteRegister(BK4819_REG_50, 0x3B20);
+        BK4819_WriteRegister(BK4819_REG_13, (c == 3) ? 0x03BE : 0x03FF);
+        BK4819_WriteRegister((BK4819_REGISTER_t)0x24, 0);
         break;
     case 4:
+        BK4819_WriteRegister(BK4819_REG_7D, 0xE970);
+        break;
     case 5:
-        BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, on);
-        gpio_config_output(GPIOA, 1u | 2u);
-        if (on) {
-            gpio_write(GPIOA, 1u, (c == 4) ? 1 : 0);
-            gpio_write(GPIOA, 2u, (c == 4) ? 0 : 1);
-        } else {
-            gpio_write(GPIOA, 2u, 1);       /* back to the stock's RX path */
-            gpio_write(GPIOA, 1u, 0);
-        }
+        BK4819_WriteRegister(BK4819_REG_7D, 0xE988);
+        break;
+    case 6:
+        BK4819_WriteRegister(BK4819_REG_7D, 0xE9C0);
+        break;
+    case 8:
+        BK4819_WriteRegister(BK4819_REG_50, 0x3B20);
+        BK4819_WriteRegister(BK4819_REG_13, 0x03FF);
+        BK4819_WriteRegister((BK4819_REGISTER_t)0x24, 0);
+        BK4819_WriteRegister(BK4819_REG_7D, 0xE988);
+        bk4815_write_reg(0x70, 0x0000);
+        bk4815_write_reg(0x70, 0xA000);
+        bk4815_write_reg(0x0C, 0x0203);
         break;
     default:
-        BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, on);
-        BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, on);
-        gpio_config_output(GPIOA, 1u | 2u);
-        gpio_write(GPIOA, 1u, on ? 1 : 0);
-        gpio_write(GPIOA, 2u, on ? 0 : 1);
-        bk4815_write_reg(0x0C, on ? 0x0203u : 0x0A03u);
         break;
     }
 }
@@ -485,30 +501,34 @@ static void radio_tx(int on)
     tx_on = on;
 
     if (on) {
-        tx_extra(tx_cand, 1);
+        tx_base();
         BK4819_SetFrequency(BENCH_FREQ_HZ);
         BK4819_WriteRegister(BK4819_REG_7D, BENCH_PA_7D);
         BK4819_PrepareTransmit();
         BK4819_SetAF(BK4819_AF_FM);     /* 0x47 = 0x6142, as the stock's TX does */
+        tx_level(tx_cand);
         led_set(LED_RED);               /* red = transmit, as the stock shows it */
     } else {
-        tx_extra(tx_cand, 0);
+        BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false);
+        BK4819_WriteRegister(BK4819_REG_7D, BENCH_PA_7D);
+        BK4819_WriteRegister(BK4819_REG_50, 0xBB18);
         BK4819_RX_TurnOn();
         BK4819_SetAF(BK4819_AF_MUTE);
         squelch_open = false;
         bench_led();
     }
 
-    uart_printf("\nbench: TX %s (0x30 = 0x%04X, 0x7D = 0x%04X, 0x33 = 0x%04X, "
-                "0x0C/4815 = 0x%04X)\n",
+    uart_printf("\nbench: TX %s (0x30 = 0x%04X, 0x50 = 0x%04X, 0x7D = 0x%04X, "
+                "0x13 = 0x%04X, 0x33 = 0x%04X)\n",
                 on ? "ON" : "off", (unsigned)BK4819_ReadRegister(BK4819_REG_30),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_50),
                 (unsigned)BK4819_ReadRegister(BK4819_REG_7D),
-                (unsigned)BK4819_ReadRegister(BK4819_REG_33),
-                (unsigned)bk4815_read_reg(0x0C));
+                (unsigned)BK4819_ReadRegister(BK4819_REG_13),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_33));
     if (on) {
         uart_printf("bench: candidate %u -- %s\n", tx_cand,
                     tx_cand_name(tx_cand));
-        tx_cand = (tx_cand + 1u) % 7u;
+        tx_cand = (tx_cand + 1u) % 9u;
     }
 }
 
