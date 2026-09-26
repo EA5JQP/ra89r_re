@@ -22,6 +22,8 @@
 #include "driver/fault.h"
 #include "driver/gpio.h"
 #include "driver/keypad.h"
+#include "driver/pa.h"
+#include "driver/tx.h"
 #include "driver/lcd_st7565.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
@@ -187,7 +189,9 @@ static void print_help(void)
               "          k keypad monitor (raw ADC per line + decoded key)\n"
               "          R probe both RF chips (ids)   W configure both\n"
               "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
-              "          S sample reg 0x67 for 4 s (carrier on/off comparison)\n");
+              "          S sample reg 0x67 for 4 s   C toggle PC13\n"
+              "          T transmit (DTMF tone)   Y step the PA power\n"
+              "          T transmit on/off (also: hold PTT on the radio)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -278,6 +282,38 @@ static void rf_report(void)
                   "  share PA12/PB12 -- a bus fault hits both, a select fault one.\n");
 }
 
+/* The K1 firmware's audio path is a GPIO of its own -- `GPIO_PIN_AUDIO_PATH` =
+ * PA8 on that board, driven HIGH to enable through `AUDIO_AudioPathOn()` -- and
+ * that is the call this port replaced with a callback.  On this board the line
+ * the stock holds asserted is PC13 (`FUN_080177A8` raises it and its
+ * `config+0x38` gate is 0 on this codeplug, so it stays HIGH), which leaves PC13
+ * as the amplifier-enable candidate.  It is a *static* line: nothing in the
+ * squelch path touches it, so `C` inverts it and the speaker can be listened to
+ * with the line both ways.
+ *
+ * PA13/PA14 are *not* this line: they are the status LED (PA13 red, PA14 green,
+ * both active high -- measured), which lives in `driver/led.c` behind the
+ * console's `L`.  See ra89r_led.md. */
+static void audio_path_drive(int on)
+{
+    gpio_port_clock(AUDIO_PATH_PORT);
+    gpio_config_output(AUDIO_PATH_PORT, AUDIO_PATH_PIN);
+    gpio_write(AUDIO_PATH_PORT, AUDIO_PATH_PIN, on ? 1 : 0);
+}
+
+static void audio_path_toggle(void)
+{
+    static int on;
+
+    on = !on;
+    audio_path_drive(on);
+    uart_printf("\nRF: PC13 (amp-enable candidate) -> %s (IDR %s)\n",
+                on ? "high" : "low",
+                gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN) ? "high" : "low");
+    uart_puts("  the stock holds PC13 high on this codeplug; with the RF part in\n"
+              "  RX (K) and a signal tuned in, this is the line to listen on.\n");
+}
+
 /* Set by the K1-compatible bring-up: without it the part is untuned and not in
  * RX, so 0x67 does not follow a carrier and the numbers mislead. */
 static bool rf_up;
@@ -293,6 +329,7 @@ static void rf_k1_bringup(void)
     const uint32_t freq = 14575000u;    /* 145.7500 MHz */
     uint16_t lo, hi;
 
+    BK4819_SetAudioPathCallback(audio_path_drive);
     BK4819_Init();
     rf_up = true;
     BK4819_SetFrequency(freq);
@@ -310,6 +347,244 @@ static void rf_k1_bringup(void)
                 (unsigned)BK4819_GetRSSI());
     uart_puts("  press R to see RSSI in the snapshot; 'X' still checks the\n"
               "  stock configuration path, which this command overwrites.\n");
+}
+
+/* ------------------------------------------- cable-free audio-path bench
+ *
+ * The Kenwood jack cuts the internal speaker while the programming cable is
+ * plugged in, and that jack is also the only way to type at this console -- so
+ * the audio path can only be *listened* to with the cable out.  This arms the
+ * radio with no console input at all:
+ *
+ *   - the K1 bring-up runs at boot (init, tune 145.7500, RX on, FM audio);
+ *   - PC13 is asserted, the way the stock holds it;
+ *   - a squelch mutes the chip's AF output whenever 0x67 says there is no
+ *     carrier, using the stock's own marks (open at 0xCF, close below 0xB4);
+ *   - the status LED is the read-out: GREEN = squelch open, OFF = quiet,
+ *     RED = PC13 pulled low by the bench, so the amplifier question can be
+ *     asked without the console.
+ *
+ * **PTT transmits**: the stock's TX sequence is the K1's `PrepareTransmit`
+ * (`0x37 = 0x9D1F`, `0x30 = 0xC1FE` -- PA gain + mic ADC + TX DSP) plus the
+ * power/bias register `0x7D`, which the stock computes from the codeplug level
+ * (ra89r_rfpath.md, "TX, and how the power is handled"); this radio's value is
+ * `0xE958` (level 3 -> bias 0x18).  Releasing PTT goes back to RX.
+ *
+ * SIDE1/SIDE2/PTT2 still flip PC13, and the console has 'C' (PC13), 'T' (TX)
+ * and 'K' for when the cable is in. */
+static bool audio_bench_on;
+static bool audio_path_hi = true;
+static bool squelch_open;
+static KEY_Code_t audio_bench_last = KEY_INVALID;
+
+/* The side keys ask the PC13 question; PTT is the transmitter. */
+static bool audio_bench_key(KEY_Code_t key)
+{
+    return key == KEY_SIDE2 || key == KEY_PTT2;
+}
+
+/* Green = receiving (the stock's Rx.Light), off = quiet, red = the bench has
+ * pulled PC13 low, which wins because it is the state being tested by ear. */
+static void bench_led(void)
+{
+    if (!audio_path_hi)
+        led_set(LED_RED);
+    else if (squelch_open)
+        led_set(LED_GREEN);
+    else
+        led_set(LED_OFF);
+}
+
+static void audio_bench_arm(void)
+{
+    uart_puts("\naudio bench: running 'K' at boot and asserting PC13, so the test\n"
+              "  needs no console -- unplug the cable and listen.  LED: GREEN =\n"
+              "  squelch open, OFF = quiet, RED = PC13 low.  PTT flips PC13.\n");
+    rf_k1_bringup();
+
+    /* The second transceiver is the one part of the board still left at its
+     * power-on defaults: the stock configures it on every radio bring-up
+     * (FUN_08016788 -> FUN_08006A0C), and it is on the shared RF path.  Replay
+     * that, park it in its idle/receive state, and drive the path pins the way
+     * the stock's receive select does (FUN_0800948C(0) -> FUN_08013A70(3):
+     * PA1 high, PA0 low, PA disabled) instead of leaving them floating. */
+    bk4815_configure();
+    bk4815_write_reg(0x0C, 0x0A03);
+    uart_printf("RF: BK4815 configured (%u writes, id 0x%04X, 0x0C = 0x%04X)\n",
+                bk4815_config_writes(), (unsigned)bk4815_read_reg(0),
+                (unsigned)bk4815_read_reg(0x0C));
+    gpio_config_output(GPIOA, 1u | 2u);
+    gpio_write(GPIOA, 2u, 1);
+    gpio_write(GPIOA, 1u, 0);
+
+    /* The PA bias PWM: the stock runs it from boot with a compare of 0, i.e.
+     * the PA is biased only while transmitting. */
+    tx_init();
+    uart_printf("RF: PA power PWM up (PB14/TIM1_CH2, ARR %u, 100 kHz, duty 0)\n",
+                (unsigned)PA_PWM_ARR);
+
+    audio_path_hi = true;
+    audio_path_drive(1);
+    squelch_open = false;
+    BK4819_SetAF(BK4819_AF_MUTE);       /* start quiet; the loop opens it */
+    bench_led();
+    audio_bench_on = true;
+}
+
+/* ---------------------------------------------------------------- transmit
+ *
+ * The stock never writes 0x36 (the K1's SetupPowerAmplifier register) and no
+ * timer or DAC is involved: TX is the K1's own sequence -- which this port
+ * already carries -- plus 0x7D for the power level.  There is nothing else to
+ * switch on: the chip's PA drives the antenna, and the band/path select is
+ * left where the bring-up put it. */
+#define BENCH_FREQ_HZ 14575000u
+#define BENCH_PA_7D   0xE958u
+
+static bool tx_on;
+
+/* TX, and where it stands.
+ *
+ * The chain now works as far as the antenna: the carrier is real and on
+ * frequency (detuning the other radio 50 kHz stops its squelch opening), and
+ * the *amplifier* is enabled by the chip's register `0x36` -- bit 7 (PA-CTL) with
+ * a bias in bits 15:8.  The stock's own TX path never writes `0x36`; the K1 sets
+ * it in `BK4819_SetupPowerAmplifier` and our imported `BK4819_TxOn_Beep` writes
+ * it to 0, which is why every earlier build radiated only the chip's own output.
+ * `0x8822` (bias 0x88) is the value that sounds like a real carrier here.
+ *
+ * What was still missing is the *modulation*, and it was one call: the K1's
+ * `BK4819_PlayDTMFEx` ends with `BK4819_ExitTxMute()`, and the `EnterDTMF_TX` our
+ * bench used leaves register `0x50` **muted** (`0xBB18`).  The stock's own TX
+ * writes `0x50 = 0x3B20` -- the unmute value -- which our imported
+ * `ExitTxMute` (0x3B18, the value from the K1's bk4829.c) never sent either.
+ * Muted, the carrier is there and the audio is not.
+ *
+ * Two sources so both can be checked without the console:
+ *   PTT    -> the chip's DTMF tone (deterministic, no microphone involved)
+ *   SIDE1  -> the microphone (0x30 = 0xC1FE, mic ADC, gain in 0x40)
+ */
+#define TX_SOURCE_TONE 0
+#define TX_SOURCE_MIC  1
+
+static tx_source_t bench_source;
+static unsigned pa_duty = TX_POWER_COMPARE;    /* 'Y' steps it */
+
+
+
+/* Panel read-out: the source, and the registers that decide whether the signal
+ * carries anything. */
+static void bench_screen(unsigned duty, uint16_t r50, uint16_t r36, uint16_t r7d)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    char title[20];
+    char detail[32];
+    unsigned n = 0, i;
+
+    title[n++] = 'T'; title[n++] = 'X'; title[n++] = ' ';
+    title[n++] = (bench_source == TX_SOURCE_MIC) ? 'm' : 't';
+    title[n++] = (bench_source == TX_SOURCE_MIC) ? 'i' : 'o';
+    title[n++] = (bench_source == TX_SOURCE_MIC) ? 'c' : 'n';
+    title[n++] = ' ';
+    if (duty >= 100u)
+        title[n++] = (char)('0' + duty / 100u);
+    if (duty >= 10u)
+        title[n++] = (char)('0' + (duty / 10u) % 10u);
+    title[n++] = (char)('0' + duty % 10u);
+    title[n] = '\0';
+
+    for (i = 0; i < 3u; i++) {
+        uint16_t v = (i == 0) ? r50 : (i == 1) ? r36 : r7d;
+        const char *name = (i == 0) ? "50=" : (i == 1) ? "36=" : "7D=";
+        unsigned k;
+        for (k = 0; k < 3u; k++)
+            detail[n++] = name[k];
+        detail[n++] = hex[(v >> 12) & 0xF];
+        detail[n++] = hex[(v >> 8) & 0xF];
+        detail[n++] = hex[(v >> 4) & 0xF];
+        detail[n++] = hex[v & 0xF];
+        detail[n++] = ' ';
+    }
+    detail[n] = '\0';
+
+    ui_bench(title, detail);
+    lcd_refresh();
+}
+
+static void radio_tx(int on, tx_source_t source)
+{
+    if (on) {
+        tx_start(BENCH_FREQ_HZ, source);
+        pa_power((uint16_t)pa_duty);        /* the console can step this */
+    } else {
+        tx_stop();
+        squelch_open = false;
+        bench_led();
+    }
+
+    uart_printf("\nbench: TX %s %s (0x30 = 0x%04X, 0x33 = 0x%04X, 0x36 = 0x%04X, "
+                "0x50 = 0x%04X, PA duty %u of %u)\n",
+                on ? "ON" : "off",
+                (source == TX_SOURCE_MIC) ? "mic" : "tone",
+                (unsigned)BK4819_ReadRegister(BK4819_REG_30),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_33),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_36),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_50),
+                (unsigned)TIM1->CCR2, (unsigned)PA_PWM_ARR);
+    bench_screen(pa_duty, BK4819_ReadRegister(BK4819_REG_50),
+                 BK4819_ReadRegister(BK4819_REG_36),
+                 BK4819_ReadRegister(BK4819_REG_7D));
+}
+
+static void audio_bench_step(uint32_t now)
+{
+    static uint32_t last;
+    KEY_Code_t key;
+    uint16_t rssi;
+
+    if (!audio_bench_on)
+        return;
+
+    key = keypad_poll();
+
+    if (key == KEY_PTT || key == KEY_SIDE1) {
+        radio_tx(1, (key == KEY_SIDE1) ? TX_SOURCE_TONE : TX_SOURCE_MIC);
+    } else {
+        if (tx_on)
+            radio_tx(0, bench_source);
+        if (key != audio_bench_last && audio_bench_key(key)) {
+            audio_path_hi = !audio_path_hi;
+            audio_path_drive(audio_path_hi ? 1 : 0);
+            bench_led();
+            uart_printf("\nbench: %s -> PC13 %s\n", keypad_name(key),
+                        audio_path_hi ? "HIGH" : "low");
+        }
+    }
+    audio_bench_last = key;
+
+    if (tx_on)
+        return;                         /* no squelch polling while transmitting */
+
+    if ((uint32_t)(now - last) < 50u)
+        return;
+    last = now;
+
+    /* The stock's own squelch marks on 0x67: it opens at 0xCF and closes below
+     * 0xB4, and this radio's noise floor (~0x98) and keyed carrier (~0x12E)
+     * straddle them.  The mute itself is chip-side, as in the stock -- PC13 is
+     * left asserted. */
+    rssi = BK4819_GetRSSI();
+    if (!squelch_open && rssi >= 0xCFu) {
+        squelch_open = true;
+        BK4819_SetAF(BK4819_AF_FM);
+        uart_printf("\nsquelch: open (0x%03X)\n", (unsigned)rssi);
+        bench_led();
+    } else if (squelch_open && rssi < 0xB4u) {
+        squelch_open = false;
+        BK4819_SetAF(BK4819_AF_MUTE);
+        uart_printf("\nsquelch: quiet (0x%03X)\n", (unsigned)rssi);
+        bench_led();
+    }
 }
 
 /* Sample the RSSI for a few seconds.  One reading cannot tell a carrier from a
@@ -549,10 +824,11 @@ int main(void)
     BACKLIGHT_Init();
     uart_puts("backlight: on (GPIOA pin 5 -- confirmed on the radio)\n");
     led_init();
-    uart_puts("led: PA0/PA1 driven, nothing visible on this radio; "
-              "'L' steps the test combinations\n");
+    uart_puts("led: PA13 red / PA14 green, both active high (measured); "
+              "'L' cycles off/red/green/both\n");
     draw_test_card();
     uart_puts("lcd: test card drawn\n");
+    audio_bench_arm();
     uart_puts("boot complete. 'h' for commands, 'd' dumps the screen over this\n"
               "console, 'i' shows diagnostics.\n");
     print_help();
@@ -667,6 +943,26 @@ int main(void)
             case 'S':
                 rf_watch();
                 break;
+            case 'C':
+                audio_path_toggle();
+                break;
+            case 'T':
+                radio_tx(!tx_on, TX_SOURCE_TONE);
+                break;
+            case 'Y': {
+                /* The PA bias PWM compare: the one transmit level worth tuning
+                 * by ear or S-meter now that the amplifier works. */
+                static const uint16_t steps[] = { 64, 96, 128, 160, 192, 224 };
+                static unsigned i;
+
+                pa_duty = steps[i];
+                i = (i + 1u) % (sizeof(steps) / sizeof(steps[0]));
+                if (tx_active())
+                    pa_power((uint16_t)pa_duty);
+                uart_printf("\nPA power (PB14 compare) -> %u of %u\n",
+                            (unsigned)pa_duty, (unsigned)PA_PWM_ARR);
+                break;
+            }
             default:
                 break;
             }
@@ -697,6 +993,7 @@ int main(void)
         }
 
         keypad_monitor_step();
+        audio_bench_step(now);
 
         animate_step(now);
     }

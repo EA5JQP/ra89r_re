@@ -26,4 +26,8 @@ void ui_pattern(uint8_t value);
 void ui_animate_bar(uint16_t x);
 void ui_logo_tag(uint32_t seconds);
 
+/* Bench read-out: a title on the 8x16 line and a detail line under it, so the
+ * state of a test can be read with the console cable unplugged. */
+void ui_bench(const char *title, const char *detail);
+
 #endif /* APP_UI_H */

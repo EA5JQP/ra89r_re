@@ -58,6 +58,14 @@ void ui_echo(const char *text)
     lcd_fb_text(6, 56, &font_5x7, text);
 }
 
+void ui_bench(const char *title, const char *detail)
+{
+    lcd_fb_rect(2, 21, LCD_WIDTH - 3, 38, 0, 1);
+    lcd_fb_text(6, 22, &font_8x16, title);
+    lcd_fb_rect(2, 48, LCD_WIDTH - 3, 54, 0, 1);
+    lcd_fb_text(6, 48, &font_5x7, detail);
+}
+
 void ui_border(int on)
 {
     lcd_fb_rect(0, 0, LCD_WIDTH - 1, LCD_HEIGHT - 1, on, 0);

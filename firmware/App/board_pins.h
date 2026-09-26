@@ -117,6 +117,54 @@
 #define BK4829_CS_PIN        (1u << 8)    /* PB8  */
 #define BK4815_CS_PIN        (1u << 13)   /* PB13 */
 
+/* The status LED is on `PA13`/`PA14`, and it is an MCU line after all.
+ *
+ * The stock drives this pair from its receive and transmit state machines:
+ *
+ *   state[0x21] >= 7 (signal present, squelch open) -> FUN_08004C84
+ *        -> FUN_08018A10 -> PA14 = *(char *)(0x20009F28 + 0xc)
+ *   state[0x21] <  3 (squelch closed)              -> FUN_0801D458 -> PA14 LOW
+ *   TX (mode field state[2] != 0)                  -> FUN_08015D88/15E28 -> PA14 high
+ *
+ * with `FUN_08020028` the `PA13` half of the same level pair, and both configured
+ * together as push-pull outputs by the boot GPIO init `FUN_08013C74` (GPIOA mask
+ * `0x6000`).  The level comes from bit 2 of codeplug settings byte 2
+ * (`0x20009F28 + 0xc`); this radio's block has it clear, i.e. active HIGH.  The CPS
+ * setting list carries `LED Mode`, `Led Type` and `Rx.Light`, which is what that bit
+ * and these two routines look like.
+ *
+ * *Measured on the radio*: toggling `PA14` from the console changes the LED -- it
+ * goes from green+red to red -- so this pair is the indicator, not a speaker
+ * enable.  The green/red assignment and the active level of each die are being
+ * mapped (see ra89r_led.md).  The three "toggle the pin" helpers the stock has
+ * (`FUN_08005F90` for PA13, `FUN_0800656C`/`FUN_08006070`/`FUN_08019C58` for PA14)
+ * are blinks, which is what an indicator driver looks like.
+ *
+ * `PC13` is the separate, static line: `FUN_080177A8` raises it and its
+ * `config+0x38` gate is 0 on this codeplug, so it is held HIGH.  That is the
+ * remaining candidate for the audio-path/amplifier enable, and it is what the
+ * K1-driver callback drives. */
+#define AUDIO_PATH_PIN       (1u << 13)   /* PC13 -- amplifier enable candidate, held HIGH */
+
+/* The PA power/bias is a PWM, not a register: the stock's "Pow AdjData" path
+ * (FUN_08016A2C -> FUN_0801830C -> FUN_0801BDE8 -> FUN_08018A88 -> FUN_080167B4
+ * -> FUN_0801306E) programs **TIM1 channel 2**, whose pin is configured at
+ * 0x080131AC as GPIOB mask 0x4000 with alternate function 4 -- i.e. `PB14`.  The
+ * timer runs from the 144 MHz APB2 clock with the period computed by
+ * FUN_08016C58 from the boot argument 100: 144e6 / 100 / 1000 = 1440, so
+ * ARR = 1439, PSC = 0, a 100 kHz PWM.  Compare = the codeplug's power value
+ * (0..252), clamped to ARR/2, and 0 in receive -- the PA has no bias at all
+ * unless this is programmed, which is why a bench that only set the chip's
+ * registers produced a weak, hissing signal. */
+#define PA_PWM_PIN          (1u << 14)  /* PB14, TIM1_CH2, AF4 */
+#define PA_PWM_AF           4u
+
+/* The band-path pins the stock's transmit and receive selects both leave at
+ * PA1 = 1, PA0 = 0 (FUN_08013A70(2) and (3)); only the chip's PA enable and
+ * register 0x36 differ between the two directions.  See driver/pa.c. */
+#define PA_BAND_PA1_PIN     (1u << 1)   /* PA1 */
+#define PA_BAND_PA0_PIN     (1u << 0)   /* PA0 */
+
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) talks to the
  * external SPI NOR flash (see ra89r_eeprom.md); the USB-C port goes to the
  * MCU's USB device peripheral, which nothing in the stock firmware enables. */
