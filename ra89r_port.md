@@ -326,7 +326,40 @@ here are the port's todo list:
   cancel (no digits typed, not scanning) calls `COMMON_SwitchVFOs()`, the K1's
   F + 2 action.  Recorded in NOTICE.
 
-* **Next -- step 2 (the codeplug).**  `driver/keyboard.h` bound to our `keypad.c`, then
+* **Stage 3d -- the visible gaps (unvalidated on the radio).**  `ui/battery.c`
+  and `ui/scanner.c` come in verbatim (the battery widget and the scanner screen
+  were stubs); `BK4819_ToggleGpioOut` mirrors the K1's two status-LED chip
+  outputs onto this board's MCU LED (PA13/PA14), because the application lights
+  its LED through the chip; and the backlight follows the K1's timer
+  (`gEeprom.BACKLIGHT_TIME`, 5 s per unit, 61 = always on, 0 = off).
+
+* **What is left, measured.**  Of the K1's 45k lines of application `.c`, what
+  the port does not have:
+  * **`settings.c` (1,344) -- the big one, and step 2.**  Every `SETTINGS_*` is
+    stubbed, which is why most menu items are inert and why the squelch
+    thresholds, power levels, volume/beep settings, battery calibration, VFO save
+    and factory reset have no backing store.  It needs the codeplug/EEPROM layout
+    decision (below) before it can be ported properly.
+  * features this hardware cannot run, kept off: `app/spectrum.c` (2,617),
+    `app/foxhunt.c` (1,504), `app/rxtx_log.c` (1,376), `app/fm.c` (671) +
+    `driver/bk1080.c` (the RA89R has no BK1080 FM chip), `app/aircopy.c` (482) +
+    `ui/aircopy.c`, `ui/multiboot.c` (576), `k5viewer.c`;
+  * the K1's own boot (`main.c` 343, `init.c`, `scheduler.c`, `board.c`), which
+    this repo's bring-up replaces -- except the battery ADC, which is a
+    placeholder until the gauge chip (silent, `ra89r_battery.md`) or the stock's
+    battery path is used;
+  * `driver/py25q16.c` (579): this repo's `spi_flash.c` + `port_storage.c` stand in
+    for it, with the K1's sector cache and multiboot banking left out.
+
+* **Next -- step 2 (the codeplug), design first.**  The compatibility rule the
+  radio asked for: the stock firmware must keep working on the same chip.  The
+  stock owns `0x0`-`0x3FFF` (codeplug), `0x20000`-`0x28FFF` (journal) and
+  `0x40000`-`0x10FFFF` (blob); the part is empty from `0x110000` up.  The port
+  already keeps its own blob in the empty tail (`0x1FF000`, test sector
+  `0x1FE000`), and the plan is: read the stock's codeplug for the values both
+  firmwares share (channels, names, calibration, squelch) rather than writing our
+  own format into its regions, and only ever write in the stock's own layout if a
+  shared value changes.  That mapping is the next piece of work.  `driver/keyboard.h` bound to our `keypad.c`, then
   mapping the stock codeplug into `gEeprom` (channels, names, settings, the
   calibration) so the screens show the radio's own data, then the real
   `settings.c`/`misc.c`/`radio.c` behind the facade and the key/action layer
