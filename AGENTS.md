@@ -179,10 +179,10 @@ driver/lcd                screen      -- merged; working on hardware (init, font
 driver/uart               console     -- merged; working on hardware (115200, faults)
 driver/backlight          lamp        -- merged; GPIOA pin 5 (the panel backlight), 'l'
 driver/keypad             keys        -- merged; 20 buttons, K5V3 KEY_Code_e, 'k' monitor
-driver/led                LED         -- merged, parked: PA0/PA1 do nothing visible;
-                                         the LED is on PA13/PA14, driven from the
-                                         stock's RX/squelch state machine, see
-                                         ra89r_led.md and driver/audiocontrol
+driver/led                LED         -- merged and VALIDATED: the indicator is
+                                         PA13 (red) / PA14 (green), both active
+                                         high, measured on the radio; console 'L'
+                                         cycles off/red/green/both, see ra89r_led.md
 driver/battery            gauge       -- OPEN, unmerged: the bus is silent for us
                                          although the stock reads it; see ra89r_battery.md
 driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR flash
@@ -208,7 +208,7 @@ The open features have their own write-ups, and they are the places to start:
 |---|---|---|
 | keypad | `ra89r_keypad.md` | done: 20 buttons, validated on the radio |
 | backlight | `ra89r_led.md` | done: GPIOA pin 5, confirmed on the radio |
-| status LED | `ra89r_led.md` | measured: MCU `PA13`/`PA14`; die->pin map being read off |
+| status LED | `ra89r_led.md` | done: `PA13` red, `PA14` green, active high (measured); `driver/led.c`, 'L' |
 | battery gauge | `ra89r_battery.md` | protocol decoded and implemented; the chip never answers |
 | beeper | `ra89r_beeper.md` | traced (TIM4 + a tone generator, its pin is PA4); not written |
 | EEPROM (SPI NOR) | `ra89r_eeprom.md` | read + full dump validated on the radio; write test pending |

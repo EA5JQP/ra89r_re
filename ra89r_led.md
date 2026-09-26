@@ -39,13 +39,37 @@ Both are configured as push-pull outputs together by the boot GPIO init
 `FUN_08013C74` (GPIOA mask `0x6000`); they are the `SWDIO`/`SWCLK` pads, so the
 stock gives up SWD to use them.
 
-**Still open, and it is one radio session:** which die each pin drives and at which
-level.  Expected mapping from the one measurement so far -- `PA14` = green,
-active low, `PA13` = red, active high -- because that is what turns
-`(PA13, PA14) = (high, low)` into green+red and `(high, high)` into red.  The
-console's `A` now steps the pair through `(PA13, PA14)` = 10, 11, 00, 01 so all
-four states can be read in one pass, and `C` toggles `PC13` for the separate
-question of what that static line does.
+**Settled on the radio.**  Stepping the pair through all four combinations and
+reading the colour after each:
+
+| `PA13` | `PA14` | LED |
+|---|---|---|
+| 1 | 0 | red |
+| 1 | 1 | red+green |
+| 0 | 0 | off |
+| 0 | 1 | green |
+
+so **`PA13` = red, `PA14` = green, both active HIGH** -- the `Led Type` bit is
+clear on this codeplug, which is also the branch `FUN_08018A10`/`FUN_08020028`
+take.  That makes the stock's own drive legible:
+
+* `PA14` is high while the squelch is open and driven low when it closes, so
+  **green lights on a received signal** -- the `Rx.Light` setting;
+* `PA13` is raised by `FUN_08018AB8` and cleared by `FUN_08017340`; the two are
+  the same routine with opposite mode letters (their `FUN_0800E7E2` second
+  argument is 1 against 0), which reads as TX against RX -- so **red on
+  transmit**, but that pairing is a code reading, not yet a measurement.
+
+`firmware/App/driver/led.c` implements exactly this (`LED_RED_PIN` = PA13,
+`LED_GREEN_PIN` = PA14), and the console's `L` cycles off -> red -> green -> both
+with the two levels read back from `IDR`.
+
+**Still open:** the TX half in detail.  `FUN_08018AB8` drives `PA14` low while
+`FUN_08015D88`/`FUN_08015E28` drive it to the settings level for what looks like
+the same mode, so either those two are not TX handlers or the green die is
+blanked somewhere else; and `PC13` (the static line the stock holds HIGH) is
+still only a candidate for the amplifier enable, with `C` on the
+`driver/audiocontrol` branch to settle it by ear.
 
 ### It is not GPIOA 0/1
 

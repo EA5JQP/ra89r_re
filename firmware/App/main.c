@@ -180,7 +180,8 @@ static void print_help(void)
 {
     uart_puts("\ncommands: h help   i diagnostics   d dump screen as ASCII\n"
               "          c clear  t test card   b border   f fill   p animation\n"
-              "          v/V contrast up/down  l backlight on/off  L PA0/PA1 led test  q heartbeat\n"
+              "          v/V contrast up/down  l backlight on/off  q heartbeat\n"
+              "          L status led cycle (PA13 red / PA14 green)\n"
               "          r re-init panel (standard, bootloader-proven)\n"
               "          s re-init panel (stock app variant, 8 extra bytes)\n"
               "          k keypad monitor (raw ADC per line + decoded key)\n"
@@ -277,6 +278,10 @@ static void rf_report(void)
                   "  share PA12/PB12 -- a bus fault hits both, a select fault one.\n");
 }
 
+/* Set by the K1-compatible bring-up: without it the part is untuned and not in
+ * RX, so 0x67 does not follow a carrier and the numbers mislead. */
+static bool rf_up;
+
 /* The K1-compatible path: `BK4819_Init` replays the K1's own register
  * sequences on this board's BK4829, `SetFrequency` writes the same 0x38/0x39
  * pair the stock does, and RX_TurnOn puts the part in receive.  This is the
@@ -289,6 +294,7 @@ static void rf_k1_bringup(void)
     uint16_t lo, hi;
 
     BK4819_Init();
+    rf_up = true;
     BK4819_SetFrequency(freq);
     BK4819_SetAF(BK4819_AF_FM);
     BK4819_RX_TurnOn();
@@ -318,6 +324,9 @@ static void rf_watch(void)
 
     uart_puts("\nRF: reg 0x67 every 200 ms for 4 s "
               "(0xB4 / 0xCF are the stock's squelch marks)\n");
+    if (!rf_up)
+        uart_puts("  note: 'K' has not run this boot, so the part is not tuned or\n"
+                  "  in RX and these readings will not follow a carrier.\n");
 
     for (i = 0; i < 20u; i++) {
         uint16_t v = BK4819_GetRSSI();
@@ -625,22 +634,12 @@ int main(void)
                 }
                 break;
             case 'L': {
-                /* PA0/PA1 do nothing visible on this radio; this is here so that
-                 * if they are ever identified, the test is one key away. */
-                static const struct {
-                    uint32_t mask;
-                    const char *name;
-                } test[] = {
-                    { LED_PIN_B, "PA1" },
-                    { LED_PIN_A, "PA0" },
-                    { LED_PIN_A | LED_PIN_B, "PA0+PA1" },
-                    { 0u, "off" },
-                };
-                static unsigned step;
-
-                led_drive_pins(test[step].mask);
-                uart_printf("\nled: %s\n", test[step].name);
-                step = (step + 1u) % (sizeof(test) / sizeof(test[0]));
+                /* The status LED: PA13 = red, PA14 = green, both active high
+                 * (measured, ra89r_led.md).  Cycle off -> red -> green -> both. */
+                led_set((led_colour_t)((led_get() + 1) % LED_STATE_COUNT));
+                uart_printf("\nled: %s (PA13=%u PA14=%u)\n", led_name(led_get()),
+                            gpio_read(LED_PORT, LED_RED_PIN) ? 1u : 0u,
+                            gpio_read(LED_PORT, LED_GREEN_PIN) ? 1u : 0u);
                 break;
             }
             case 'q':

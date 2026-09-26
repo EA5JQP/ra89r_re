@@ -44,13 +44,33 @@
 #define BACKLIGHT_PIN       (1u << 5)
 #define BACKLIGHT_ON_LEVEL  1
 
-/* GPIOA pins 0 and 1: configured as outputs by the stock (FUN_080138FC), and the
- * bootloader blinks PA1 three times right after the PA5 blink.  Driving either at
- * either level produces nothing visible on the radio, so what they are is still
- * open -- a status LED driven by the companion chip, or a lamp line this board
- * does not fit.  Kept as documentation only; the LED test drives them. */
-#define LED_PIN_A           (1u << 0)   /* PA0 */
-#define LED_PIN_B           (1u << 1)   /* PA1 */
+/* The status LED: a red/green pair on GPIOA 13 and 14, **both active high**.
+ * Measured on the radio by stepping the pair through all four combinations and
+ * reading the colour after each:
+ *
+ *   PA13 PA14   LED
+ *     1    0    red
+ *     1    1    red+green
+ *     0    0    off
+ *     0    1    green
+ *
+ * so PA13 is the red die and PA14 the green one.  The stock drives exactly this
+ * pair: the level comes from bit 2 of codeplug settings byte 2 (`Led Type`),
+ * `FUN_08018A10` sets PA14 and `FUN_08020028` PA13, both configured as push-pull
+ * outputs by the boot GPIO init `FUN_08013C74` (GPIOA mask `0x6000`).  PA14 is
+ * driven high while the squelch is open (`FUN_08004C84`) and low when it closes
+ * (`FUN_0801D458`) -- the `Rx.Light` behaviour -- and PA13 is raised on the TX
+ * entry path (`FUN_08018AB8`) and cleared on the RX one (`FUN_08017340`).
+ *
+ * That is why `PA13`/`PA14` are the `SWDIO`/`SWCLK` pads: the stock gives the
+ * debug port up for the indicator.  See ra89r_led.md.
+ *
+ * GPIOA pins 0 and 1, by contrast, are configured as outputs by the stock
+ * (FUN_080138FC) and the bootloader blinks PA1 three times after the backlight
+ * blink, but *driving either at either level produces nothing visible* here, so
+ * they are not an indicator on this board and are no longer driven. */
+#define LED_RED_PIN         (1u << 13)  /* PA13 */
+#define LED_GREEN_PIN       (1u << 14)  /* PA14 */
 #define LED_ON_LEVEL        1
 
 /* programming UART: USART1 on PB6 (TX) / PB7 (RX), AF2 -- the stock
