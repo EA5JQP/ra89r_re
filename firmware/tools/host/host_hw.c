@@ -5,6 +5,8 @@
 
 #include "driver/backlight.h"
 #include "driver/bk4819.h"
+#include <string.h>
+
 #include "audio.h"
 #include "dcs.h"
 #include "functions.h"
@@ -83,3 +85,4 @@ uint8_t        gScanCssResultCode;
 DCS_CodeType_t gScanCssResultType;
 bool           gScanUseCssResult;
 void UI_DisplayBattery(uint8_t Level, uint8_t blink) { (void)Level; (void)blink; }
+

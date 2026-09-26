@@ -12,6 +12,7 @@
 #include "functions.h"
 #include "helper/battery.h"
 #include "misc.h"
+#include "driver/py25q16.h"
 #include "app/common.h"
 #include "app/scanner.h"
 #include "audio.h"
@@ -285,4 +286,31 @@ unsigned long StrToUL(const char *str)
     while (*str >= '0' && *str <= '9')
         value = (value * 10u) + (unsigned long)(*str++ - '0');
     return value;
+}
+
+/* The status line and welcome screen's remaining dependencies.  APP_* is
+ * functions.c/app.c, gAirCopyBootMode is misc.c (air copy is not ported), and
+ * UI_DrawBattery is ui/status.c's own -- it is only listed here because the
+ * welcome screen references it through a feature guard. */
+bool APP_IsScreenSaverDisplayed(void) { return false; }
+bool gAirCopyBootMode;
+void UI_DrawBattery(uint8_t *bitmap, uint8_t level, uint8_t blink)
+{
+    (void)bitmap;
+    (void)level;
+    (void)blink;
+}
+
+/* ---------------------------------------------------------------------------
+ * The external SPI NOR flash -- the codeplug.  driver/py25q16.c (and this
+ * repo's own driver/eeprom, still on its unmerged branch) own this; until one
+ * of them is in the port, every read returns an empty part: the boot messages
+ * read as empty and the menus show their compiled-in defaults.  That is the
+ * seam the storage stage replaces (see ra89r_eeprom.md and ra89r_port.md).
+ * ------------------------------------------------------------------------- */
+void PY25Q16_ReadBuffer(uint32_t address, void *pBuffer, uint32_t size)
+{
+    (void)address;
+    if (pBuffer != 0)
+        memset(pBuffer, 0, size);
 }

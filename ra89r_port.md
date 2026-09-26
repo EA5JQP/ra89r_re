@@ -196,12 +196,23 @@ here are the port's todo list:
   now shows the cursor and the frame changing (the redraw was gated wrongly at
   first -- a key that set `gRequestDisplayScreen` suppressed the repaint).
 
-* **Next -- stage 2d.**  `driver/keyboard.h` bound to our `keypad.c`, then
-  `ui/status.c` (the status line, which currently renders empty) and
-  `ui/welcome.c` (the boot screen), then the real `settings.c`/`misc.c`/
-  `radio.c` behind the facade and the key/action layer (`functions.c`,
-  `app/main.c`), which retires `port_gui.c`.  Each step first on
-  `preview_k1.c`, then on the radio; the stubs in `port_state.c` come out as
+* **Stage 2d -- the status line and the boot screen (unvalidated on the
+  radio).**  `ui/status.c` (`UI_DisplayStatus`, battery drawing included) and
+  `ui/welcome.c` (`UI_DisplayWelcome`) are in; `port_gui.c` now redraws the
+  status line with every screen, which is what the K1 does from its app loop
+  (app/app.c calls UI_DisplayStatus), and console `4` shows the boot screen.
+  Both render on the host too: the welcome screen draws its "WELCOME" + voltage
+  fallback because the boot-message area of the (absent) external flash reads as
+  empty.  That read is the storage seam: `PY25Q16_ReadBuffer` is a
+  `port_state.c` stub until the SPI NOR driver lands, so the codeplug and the
+  boot messages are empty and every menu shows its compiled-in default.
+
+* **Next -- stage 2e.**  `driver/keyboard.h` bound to our `keypad.c`, then
+  the storage layer behind `PY25Q16_ReadBuffer` (the external SPI NOR flash, so
+  the codeplug and the boot messages are real), then the real
+  `settings.c`/`misc.c`/`radio.c` behind the facade and the key/action layer
+  (`functions.c`, `app/main.c`), which retires `port_gui.c`.  Each step first
+  on `preview_k1.c`, then on the radio; the stubs in `port_state.c` come out as
   their owner modules come in.
 
 ## Suggested order

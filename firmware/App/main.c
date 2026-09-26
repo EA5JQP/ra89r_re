@@ -202,7 +202,7 @@ static void print_help(void)
               "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
               "          S sample reg 0x67 for 4 s   C toggle PC13\n"
               "          G K1 VFO screen   M K1 menu screen   1 GUI mode (keys drive it)\n"
-              "          2 VFO screen    3 menu screen\n"
+              "          2 VFO screen    3 menu screen    4 boot/welcome screen\n"
               "          T transmit (DTMF tone)   Y step the PA power\n"
               "          T transmit on/off (also: hold PTT on the radio)\n");
 }
@@ -924,6 +924,17 @@ int main(void)
                     gui_mode = 0;
                     uart_puts("\nGUI mode off\n");
                 }
+                break;
+            case '4':
+                /* The K1's boot screen (App/main.c calls UI_DisplayWelcome once
+                 * at start-up, before the status line settles). */
+                if (!gui_mode) {
+                    port_state_init();
+                    port_gui_init();
+                    gui_mode = 1;
+                }
+                port_gui_welcome();
+                uart_puts("\nWelcome screen (the K1 shows it at boot)\n");
                 break;
             case '2':
                 if (!gui_mode) {

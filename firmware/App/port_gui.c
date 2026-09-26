@@ -19,6 +19,8 @@
 #include "settings.h"
 #include "ui/main.h"
 #include "ui/menu.h"
+#include "ui/status.h"
+#include "ui/welcome.h"
 #include "ui/ui.h"
 
 #define PORT_GUI_HOLD_POLLS 8u   /* polls before a key counts as held */
@@ -36,6 +38,11 @@ static GUI_DisplayType_t s_menu_return = DISPLAY_MAIN;
  * link every screen it lists, including the ones with no port behind them. */
 static void port_gui_draw(void)
 {
+    /* The K1 keeps the status line separate from the screens and redraws it from
+     * its app loop (app/app.c calls UI_DisplayStatus); doing it here keeps the
+     * top line current on every repaint. */
+    UI_DisplayStatus();
+
     switch (gScreenToDisplay) {
     case DISPLAY_MENU:
         UI_DisplayMenu();
@@ -61,6 +68,12 @@ void port_gui_screen(GUI_DisplayType_t screen)
 void port_gui_init(void)
 {
     port_gui_screen(DISPLAY_MAIN);
+}
+
+/* The K1's boot screen (App/main.c calls UI_DisplayWelcome once at start-up). */
+void port_gui_welcome(void)
+{
+    UI_DisplayWelcome();
 }
 
 /* One step of the VFO's tuning step, in Hz.  The K1 keeps StepFrequency in

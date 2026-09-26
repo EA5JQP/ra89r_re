@@ -74,6 +74,11 @@ int main(void)
     UI_DisplayMain();
     render("K1 UI_DisplayMain(): 433.5000 MHz");
 
+    /* ---- the boot screen and the status line ---------------------------- */
+    port_gui_init();
+    port_gui_welcome();
+    render("K1 UI_DisplayWelcome(): the ported boot screen");
+
     /* ---- the key loop: port_gui.c driving the K1's screens --------------- */
     gRxVfo->freq_config_RX.Frequency = 14575000u;
     gRxVfo->freq_config_TX.Frequency = 14575000u;
