@@ -108,3 +108,47 @@ uint16_t rf_bus_read(uint32_t cs, uint8_t addr)
     sda(0);
     return v;
 }
+
+/* ------------------------------------------------------------- manual mode */
+
+void rf_bus_assert(uint32_t cs)
+{
+    scl(0);
+    sel(cs, 0);
+    sda(0);
+}
+
+void rf_bus_release(uint32_t cs)
+{
+    sel(cs, 1);
+    scl(0);
+    sda(1);
+}
+
+void rf_bus_delay(void)
+{
+    rf_delay();
+}
+
+void rf_bus_bit_out(int bit)
+{
+    rf_delay();
+    sda(bit ? 1 : 0);
+    rf_delay();
+    scl(1);
+    rf_delay();
+    scl(0);
+}
+
+int rf_bus_bit_in(void)
+{
+    int v;
+
+    scl(0);
+    rf_delay();
+    v = gpio_read(SDA_PORT, SDA_PIN) ? 1 : 0;
+    rf_delay();
+    scl(1);
+    rf_delay();
+    return v;
+}

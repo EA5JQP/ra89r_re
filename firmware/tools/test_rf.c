@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include "board_pins.h"
+#include "driver/bk4819.h"
 #include "driver/bk4829.h"
 #include "driver/bk4815.h"
 #include "driver/rf_bus.h"
@@ -35,6 +36,8 @@ struct xfer {
 
 static struct xfer log_[512];
 static unsigned    log_len;
+static int         bit_log[256];
+static unsigned    bit_len;
 static uint16_t    id_bk4829 = BK4829_ID;
 static uint16_t    id_bk4815 = BK4815_ID;
 static uint16_t    other_bk4829;
@@ -43,10 +46,24 @@ static uint16_t    other_bk4815;
 static void log_reset(void)
 {
     log_len = 0;
+    bit_len = 0;
     memset(log_, 0, sizeof log_);
 }
 
+/* The manual-mode pieces bk4819.c uses for its frame fragments. */
 void rf_bus_init(void) { }
+
+void rf_bus_assert(uint32_t cs) { (void)cs; }
+void rf_bus_release(uint32_t cs) { (void)cs; }
+void rf_bus_delay(void) { }
+
+void rf_bus_bit_out(int bit)
+{
+    if (bit_len < sizeof bit_log / sizeof bit_log[0])
+        bit_log[bit_len++] = bit ? 1 : 0;
+}
+
+int rf_bus_bit_in(void) { return 0; }
 
 void rf_bus_write(uint32_t cs, uint8_t addr, const uint8_t *data, unsigned len)
 {
@@ -283,6 +300,68 @@ static void test_accessors(void)
     check_hex(value, 0x0A03, "bk4815 last entry value");
 }
 
+/* The K1-compatible layer: same bus, the K1's register sequences. */
+static void test_k1_interface(void)
+{
+    unsigned i;
+    static const int expect_a5[8] = { 1, 0, 1, 0, 0, 1, 0, 1 };
+
+    printf("k1-compatible bk4819 layer\n");
+
+    /* Its init must start with the same register-0 reset pair the stock uses. */
+    log_reset();
+    BK4819_Init();
+    check(xfer_is(&log_[0], BK4829_CS_PIN, 0x00) && log_[0].data[0] == 0x80,
+          "BK4819_Init starts with reg 0 = 0x8000 (as the stock does)");
+    check(xfer_is(&log_[1], BK4829_CS_PIN, 0x00) && log_[1].data[0] == 0x00,
+          "and then reg 0 = 0x0000");
+
+    /* 145.7500 MHz in 10 Hz units, split across 0x38/0x39 exactly as the stock
+     * writes it (FUN_08017158 does the same with no scaling). */
+    log_reset();
+    BK4819_SetFrequency(14575000u);
+    check(log_len == 2, "SetFrequency is two register writes");
+    check(xfer_is(&log_[0], BK4829_CS_PIN, 0x38) && log_[0].data[0] == 0x65 &&
+          log_[0].data[1] == 0x98, "reg 0x38 = 0x6598 (low word)");
+    check(xfer_is(&log_[1], BK4829_CS_PIN, 0x39) && log_[1].data[0] == 0x00 &&
+          log_[1].data[1] == 0xDE, "reg 0x39 = 0x00DE (high word)");
+
+    /* RSSI is the stock's register too. */
+    other_bk4829 = 0x7BCD;
+    log_reset();
+    check_hex(BK4819_GetRSSI(), 0x7BCD & 0x01FF, "GetRSSI masks reg 0x67 to 9 bits");
+    check(log_len == 1 && xfer_is(&log_[0], BK4829_CS_PIN, 0xE7),
+          "GetRSSI reads reg 0x67 with the read flag");
+
+    /* The 0x30/0x47 write caches must suppress a repeated write. */
+    log_reset();
+    BK4819_WriteRegister(BK4819_REG_30, 0x1234);
+    BK4819_WriteRegister(BK4819_REG_30, 0x1234);
+    check(log_len == 1, "a repeated reg 0x30 write is cached away");
+    log_reset();
+    BK4819_WriteRegister(BK4819_REG_47, 0x5678);
+    BK4819_WriteRegister(BK4819_REG_47, 0x9999);
+    check(log_len == 2, "a changed reg 0x47 write is not");
+
+    /* Frame fragment: MSB first, and only the bits. */
+    log_reset();
+    BK4819_WriteU8(0xA5);
+    check(bit_len == 8, "WriteU8 shifts 8 bits");
+    for (i = 0; i < 8; i++)
+        if (bit_log[i] != expect_a5[i])
+            break;
+    check(i == 8, "WriteU8 sends 0xA5 MSB first");
+
+    /* The gEeprom replacement: gains come from the driver's own setter. */
+    log_reset();
+    BK4819_SetRxAudioGains(5, 3);
+    BK4819_SetRxAudioGain();
+    check(log_len == 1 && xfer_is(&log_[0], BK4829_CS_PIN, 0x48),
+          "SetRxAudioGain writes reg 0x48");
+    check(log_[0].data[0] == 0xB0 && log_[0].data[1] == 0x53,
+          "with the driver's gains packed in ((11<<12)|(5<<4)|3)");
+}
+
 int main(void)
 {
     printf("rf register-layer test (stub bus, no radio)\n\n");
@@ -292,6 +371,7 @@ int main(void)
     test_bk4829_config();
     test_bk4815_config();
     test_accessors();
+    test_k1_interface();
 
     printf("\n%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

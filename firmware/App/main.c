@@ -15,6 +15,7 @@
 #include "board.h"
 #include "driver/backlight.h"
 #include "driver/bk4815.h"
+#include "driver/bk4819.h"
 #include "driver/bk4829.h"
 #include "driver/led.h"
 #include "driver/clock.h"
@@ -184,7 +185,7 @@ static void print_help(void)
               "          s re-init panel (stock app variant, 8 extra bytes)\n"
               "          k keypad monitor (raw ADC per line + decoded key)\n"
               "          R probe both RF chips (ids)   W configure both\n"
-              "          X read back every register the configuration wrote\n");
+              "          X verify config   K K1-compatible bring-up + tune 145.7500\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -273,6 +274,35 @@ static void rf_report(void)
     if (a != BK4829_ID || b != BK4815_ID)
         uart_puts("  one id is wrong: check that part's select, and that both\n"
                   "  share PA12/PB12 -- a bus fault hits both, a select fault one.\n");
+}
+
+/* The K1-compatible path: `BK4819_Init` replays the K1's own register
+ * sequences on this board's BK4829, `SetFrequency` writes the same 0x38/0x39
+ * pair the stock does, and RX_TurnOn puts the part in receive.  This is the
+ * first thing on this branch that can actually make the radio receive, so it is
+ * also the test that matters: watch register 0x67 move with a signal.  The
+ * frequency is in 10 Hz units, the same convention as the codeplug. */
+static void rf_k1_bringup(void)
+{
+    const uint32_t freq = 14575000u;    /* 145.7500 MHz */
+    uint16_t lo, hi;
+
+    BK4819_Init();
+    BK4819_SetFrequency(freq);
+    BK4819_SetAF(BK4819_AF_FM);
+    BK4819_RX_TurnOn();
+
+    lo = BK4819_ReadRegister(BK4819_REG_38);
+    hi = BK4819_ReadRegister(BK4819_REG_39);
+
+    uart_printf("\nRF: K1-compatible bring-up done (id 0x%04X)\n",
+                (unsigned)bk4829_read_reg(BK4829_REG_ID));
+    uart_printf("  frequency 145.7500 MHz -> reg 0x38 = 0x%04X, 0x39 = 0x%04X\n",
+                (unsigned)lo, (unsigned)hi);
+    uart_printf("  (expect 0x6598 / 0x00DE; reg 0x67 RSSI = 0x%04X)\n",
+                (unsigned)BK4819_GetRSSI());
+    uart_puts("  press R to see RSSI in the snapshot; 'X' still checks the\n"
+              "  stock configuration path, which this command overwrites.\n");
 }
 
 static void rf_configure(void)
@@ -561,6 +591,9 @@ int main(void)
                 break;
             case 'X':
                 rf_verify();
+                break;
+            case 'K':
+                rf_k1_bringup();
                 break;
             default:
                 break;
