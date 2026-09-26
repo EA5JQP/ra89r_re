@@ -601,12 +601,14 @@ static void radio_tx(int on, int source)
             /* Microphone: PrepareTransmit already left 0x30 = 0xC1FE (mic ADC),
              * so only the TX audio path has to be unmuted. */
             BK4819_WriteRegister(BK4819_REG_50, 0x3B20);
-            mic_gain = 0x10;            /* the stock's gain is a byte, not a nibble */
+            /* Validated on the radio: gain 0x70 (0x40 = 0x3700) is clearly
+             * audible on a second radio.  The stock takes this from the
+             * codeplug; 0x70 is the measured value for this one. */
+            mic_gain = 0x70;
             tx_mic_gain(mic_gain);
         }
 
-        pa_duty = 128;                  /* a level that should be audible */
-        pa_last = systick_millis();
+        pa_duty = 128;                  /* measured: clearly audible on a 2nd radio */
         pa_pwm_duty((uint16_t)pa_duty);
         led_set(LED_RED);               /* red = transmit, as the stock shows it */
     } else {
@@ -647,7 +649,7 @@ static void audio_bench_step(uint32_t now)
     key = keypad_poll();
 
     if (key == KEY_PTT || key == KEY_SIDE1) {
-        radio_tx(1, (key == KEY_SIDE1) ? TX_SRC_MIC : TX_SRC_TONE);
+        radio_tx(1, (key == KEY_SIDE1) ? TX_SRC_TONE : TX_SRC_MIC);
     } else {
         if (tx_on)
             radio_tx(0, tx_source);
@@ -667,23 +669,6 @@ static void audio_bench_step(uint32_t now)
          * seconds per step. */
         if ((uint32_t)(now - pa_last) >= 2000u) {
             pa_last = now;
-            if (tx_source == TX_SRC_MIC) {
-                if (mic_gain < 0xF0u)
-                    mic_gain += 0x10u;
-                tx_mic_gain(mic_gain);
-                uart_printf("bench: mic gain 0x%02X (0x40 = 0x%04X)\n",
-                            mic_gain, (unsigned)BK4819_ReadRegister(
-                                          (BK4819_REGISTER_t)0x40));
-            } else {
-                if (pa_duty < 224u)
-                    pa_duty += 32u;
-                pa_pwm_duty((uint16_t)pa_duty);
-                uart_printf("bench: PA duty %u (CCR2 = %u of %u)\n", pa_duty,
-                            (unsigned)TIM1->CCR2, (unsigned)PA_PWM_ARR);
-            }
-            bench_screen(pa_duty, BK4819_ReadRegister(BK4819_REG_50),
-                         BK4819_ReadRegister((BK4819_REGISTER_t)0x36),
-                         BK4819_ReadRegister(BK4819_REG_7D));
         }
         return;                         /* no squelch polling while transmitting */
     }
