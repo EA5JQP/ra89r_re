@@ -383,6 +383,21 @@ here are the port's todo list:
   channel now follows the band of the channel in use.  The preview drives the
   switch the way the radio does (`F` then `3`) and prints where it lands.
 
+  The third radio run found the one that mattered most, and it had been there
+  since the first commit: `driver/clock.c` left the MCU at the HSI reset default
+  of **8 MHz with the PLL off**, "to avoid PLL bring-up risk".  The K1 this was
+  ported from runs its smaller PY32F071 at 48 MHz, so every bit-banged bus and
+  every busy-wait in the port was six times slower than the firmware it was
+  compared against -- `rf_delay()`'s 40-iteration loop was 25 us, one RF
+  register transfer ~1.8 ms, a full `RADIO_SetupRegisters` ~100 ms.  The
+  PY32F403 is rated to 155 MHz.  The clock now runs at 48 MHz (HSI x 6, 1 flash
+  wait state), with a bounded-wait fail-safe that falls back to 8 MHz and says
+  so rather than hanging, and the keypad's ADCCLK prescaler, the RF driver's own
+  delay loop and the boot log were brought with it.  `driver/clock.h` records
+  the three constants to change for 96 or 120 MHz.  The lesson is the same as
+  the last two: on a port, check what the *hardware* is doing before believing
+  the software is at fault.
+
 * **Still step 2, second half -- the settings block.**  `ra89r_codeplug.md` has
   the whole 32-byte block at `0x2020` mapped, with the CPS's labels and this
   radio's values, but nothing reads it yet: the port's own defaults and its blob
