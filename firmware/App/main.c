@@ -417,112 +417,60 @@ static void audio_bench_arm(void)
 #define BENCH_PA_7D   0xE958u
 
 static bool tx_on;
-static unsigned tx_cand;
+static unsigned mic_gain;
+static uint32_t mic_last;
 
-/* TX, and the candidates still being settled.
+/* TX, and where it stands.
  *
- * Measured: the chip's PA_ENABLE (GPIO pin 1) together with the band-path pins
- * `PA1 = 1, PA0 = 0` -- the combination `FUN_08013A70(3)`, which is also what
- * the stock's own receive select uses -- is what makes the radio radiate.  That
- * is the base every candidate below builds on.  What is still poor is the level
- * (a second radio's squelch 2 does not open) and the microphone, so the sweep
- * varies the registers the stock's TX path sets and ours does not:
+ * Measured: the chip's PA_ENABLE (GPIO pin 1) with the band-path pins
+ * `PA1 = 1, PA0 = 0` (FUN_08013A70(3), also the stock's receive select) makes
+ * the radio radiate; the other radio's squelch opens on it.  What is wrong is
+ * the *modulation*: only noise is heard and the microphone does nothing.
  *
- *   0x50  TX audio path -- stock 0x3B20, our imported ExitTxMute writes 0x3B18
- *   0x13  the DSP/AGC value the stock's T/R path writes for TX (0x3BE / 0x3FF)
- *   0x24  cleared by the stock's TX setup
- *   0x7D  the power/bias (stock: 0xE958 for this codeplug's level 3)
+ * The stock sets the microphone gain for TX: FUN_0801C3A8 writes
+ * `0x40 = (old & 0xE000) | 0x1000 | (gain << 4)`, with the gain coming from the
+ * codeplug per channel.  Our imported K1 init leaves `0x40 = 0x3516`, a gain
+ * nibble of 1, and nothing changes it for TX.
  *
- * One candidate per TX activation, printed, so one flash finds the combination. */
-static const char *tx_cand_name(unsigned c)
-{
-    switch (c) {
-    case 0:  return "base (PA enable + path PA1=1 PA0=0)";
-    case 1:  return "base + 0x50 = 0x3B20 (stock TX audio path)";
-    case 2:  return "base + 0x50 = 0x3B20 + 0x13 = 0x3FF + 0x24 = 0";
-    case 3:  return "base + 0x13 = 0x3BE + 0x50 = 0x3B20";
-    case 4:  return "base + bias 0x7D = 0xE970";
-    case 5:  return "base + bias 0x7D = 0xE988";
-    case 6:  return "base + bias 0x7D = 0xE9C0";
-    case 7:  return "base + 0x50 = 0x3B20 + 0x13 = 0x3FF + 0x24 = 0 + 0x7D = 0xE988";
-    default: return "base + the above + BK4815 0x0C = 0x0203 / 0x70 = 0xA000";
-    }
-}
-
+ * So the bench walks the gain: holding PTT steps `0x40` from 0 (muted) to 15,
+ * two seconds per step, printing it on the panel and the console.  Gain 0 should
+ * be an *unmodulated* carrier -- if the other radio then goes quiet instead of
+ * hissing, the modulator path is sound and the microphone is on this chip; if it
+ * still hisses, the noise is not mic-makeup noise and the next thing to sweep is
+ * the AF level (0x48/0x6C) and 0x47. */
 static void tx_base(void)
 {
-    /* The working combination, measured on the radio. */
+    /* The combination measured to radiate. */
     BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, true);
     gpio_config_output(GPIOA, 1u | 2u);
     gpio_write(GPIOA, 2u, 1);              /* PA1 high */
     gpio_write(GPIOA, 1u, 0);              /* PA0 low  */
 }
 
-static void tx_level(unsigned c)
+static void tx_mic_gain(unsigned g)
 {
-    switch (c) {
-    case 1:
-        BK4819_WriteRegister(BK4819_REG_50, 0x3B20);
-        break;
-    case 2:
-    case 3:
-    case 7:
-        BK4819_WriteRegister(BK4819_REG_50, 0x3B20);
-        BK4819_WriteRegister(BK4819_REG_13, (c == 3) ? 0x03BE : 0x03FF);
-        BK4819_WriteRegister((BK4819_REGISTER_t)0x24, 0);
-        break;
-    case 4:
-        BK4819_WriteRegister(BK4819_REG_7D, 0xE970);
-        break;
-    case 5:
-        BK4819_WriteRegister(BK4819_REG_7D, 0xE988);
-        break;
-    case 6:
-        BK4819_WriteRegister(BK4819_REG_7D, 0xE9C0);
-        break;
-    case 8:
-        BK4819_WriteRegister(BK4819_REG_50, 0x3B20);
-        BK4819_WriteRegister(BK4819_REG_13, 0x03FF);
-        BK4819_WriteRegister((BK4819_REGISTER_t)0x24, 0);
-        BK4819_WriteRegister(BK4819_REG_7D, 0xE988);
-        bk4815_write_reg(0x70, 0x0000);
-        bk4815_write_reg(0x70, 0xA000);
-        bk4815_write_reg(0x0C, 0x0203);
-        break;
-    default:
-        break;
-    }
+    BK4819_WriteRegister((BK4819_REGISTER_t)0x40, (uint16_t)(0x3000u | (g << 4)));
 }
 
-/* The bench read-out on the panel: which candidate this transmission used, the
- * TX/RX state, and the three registers that decide how it sounds.  It is the
- * only way to read the state with the console cable unplugged. */
-static void bench_screen(int tx, unsigned cand, uint16_t r50, uint16_t r13,
-                         uint16_t r7d)
+/* Panel read-out: the mic gain being tried, and the registers behind it. */
+static void bench_screen(unsigned g, uint16_t r40, uint16_t r47, uint16_t r7d)
 {
     static const char hex[] = "0123456789ABCDEF";
     char title[20];
     char detail[32];
     unsigned n = 0, i;
 
-    title[n++] = tx ? 'T' : 'R';
-    title[n++] = tx ? 'X' : 'X';
-    title[n++] = ' ';
-    if (!tx) {
-        title[n++] = 'n'; title[n++] = 'e'; title[n++] = 'x'; title[n++] = 't';
-        title[n++] = ' ';
-    } else {
-        title[n++] = 'c'; title[n++] = 'a'; title[n++] = 'n'; title[n++] = 'd';
-        title[n++] = ' ';
-    }
-    if (cand >= 10u)
-        title[n++] = (char)('0' + cand / 10u);
-    title[n++] = (char)('0' + cand % 10u);
+    title[n++] = 'T'; title[n++] = 'X'; title[n++] = ' ';
+    title[n++] = 'm'; title[n++] = 'i'; title[n++] = 'c'; title[n++] = ' ';
+    title[n++] = 'g'; title[n++] = '=';
+    if (g >= 10u)
+        title[n++] = (char)('0' + g / 10u);
+    title[n++] = (char)('0' + g % 10u);
     title[n] = '\0';
 
     for (i = 0; i < 3u; i++) {
-        uint16_t v = (i == 0) ? r50 : (i == 1) ? r13 : r7d;
-        const char *name = (i == 0) ? "50=" : (i == 1) ? "13=" : "7D=";
+        uint16_t v = (i == 0) ? r40 : (i == 1) ? r47 : r7d;
+        const char *name = (i == 0) ? "40=" : (i == 1) ? "47=" : "7D=";
         unsigned k;
         for (k = 0; k < 3u; k++)
             detail[n++] = name[k];
@@ -550,39 +498,29 @@ static void radio_tx(int on)
         BK4819_WriteRegister(BK4819_REG_7D, BENCH_PA_7D);
         BK4819_PrepareTransmit();
         BK4819_SetAF(BK4819_AF_FM);     /* 0x47 = 0x6142, as the stock's TX does */
-        tx_level(tx_cand);
+        mic_gain = 0;
+        mic_last = systick_millis();
+        tx_mic_gain(mic_gain);
         led_set(LED_RED);               /* red = transmit, as the stock shows it */
     } else {
         BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false);
-        BK4819_WriteRegister(BK4819_REG_7D, BENCH_PA_7D);
-        BK4819_WriteRegister(BK4819_REG_50, 0xBB18);
         BK4819_RX_TurnOn();
         BK4819_SetAF(BK4819_AF_MUTE);
+        BK4819_WriteRegister((BK4819_REGISTER_t)0x40, 0x3516);   /* back to the RX value */
         squelch_open = false;
         bench_led();
     }
 
-    uart_printf("\nbench: TX %s (0x30 = 0x%04X, 0x50 = 0x%04X, 0x7D = 0x%04X, "
-                "0x13 = 0x%04X, 0x33 = 0x%04X)\n",
+    uart_printf("\nbench: TX %s (0x30 = 0x%04X, 0x40 = 0x%04X, 0x47 = 0x%04X, "
+                "0x50 = 0x%04X, 0x7D = 0x%04X)\n",
                 on ? "ON" : "off", (unsigned)BK4819_ReadRegister(BK4819_REG_30),
+                (unsigned)BK4819_ReadRegister((BK4819_REGISTER_t)0x40),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_47),
                 (unsigned)BK4819_ReadRegister(BK4819_REG_50),
-                (unsigned)BK4819_ReadRegister(BK4819_REG_7D),
-                (unsigned)BK4819_ReadRegister(BK4819_REG_13),
-                (unsigned)BK4819_ReadRegister(BK4819_REG_33));
-    if (on) {
-        uart_printf("bench: candidate %u -- %s\n", tx_cand,
-                    tx_cand_name(tx_cand));
-        bench_screen(1, tx_cand,
-                     BK4819_ReadRegister(BK4819_REG_50),
-                     BK4819_ReadRegister(BK4819_REG_13),
-                     BK4819_ReadRegister(BK4819_REG_7D));
-        tx_cand = (tx_cand + 1u) % 9u;
-    } else {
-        bench_screen(0, tx_cand,
-                     BK4819_ReadRegister(BK4819_REG_50),
-                     BK4819_ReadRegister(BK4819_REG_13),
-                     BK4819_ReadRegister(BK4819_REG_7D));
-    }
+                (unsigned)BK4819_ReadRegister(BK4819_REG_7D));
+    bench_screen(mic_gain, BK4819_ReadRegister((BK4819_REGISTER_t)0x40),
+                 BK4819_ReadRegister(BK4819_REG_47),
+                 BK4819_ReadRegister(BK4819_REG_7D));
 }
 
 static void audio_bench_step(uint32_t now)
@@ -611,8 +549,21 @@ static void audio_bench_step(uint32_t now)
     }
     audio_bench_last = key;
 
-    if (tx_on)
+    if (tx_on) {
+        /* Walk the microphone gain while the operator listens on the other
+         * radio: two seconds per step, 0 (muted) up to 15. */
+        if ((uint32_t)(now - mic_last) >= 2000u) {
+            mic_last = now;
+            mic_gain = (mic_gain + 1u) & 0xFu;
+            tx_mic_gain(mic_gain);
+            uart_printf("bench: mic gain %u (0x40 = 0x%04X)\n", mic_gain,
+                        (unsigned)BK4819_ReadRegister((BK4819_REGISTER_t)0x40));
+            bench_screen(mic_gain, BK4819_ReadRegister((BK4819_REGISTER_t)0x40),
+                         BK4819_ReadRegister(BK4819_REG_47),
+                         BK4819_ReadRegister(BK4819_REG_7D));
+        }
         return;                         /* no squelch polling while transmitting */
+    }
 
     if ((uint32_t)(now - last) < 50u)
         return;
