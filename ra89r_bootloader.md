@@ -212,12 +212,14 @@ Nothing anywhere validates the application: the bootloader's only test of the
 image is the trampoline's SP sanity check.
 
 **How flashing ends up, either way.**  After `EXIT` the chip resets and runs the
-above.  Without any write to that byte the reset sees 0xFF and starts the
-application immediately; with `--request-update` (or the CPS's `Reset`+`'0'`)
-the reset enters update mode, finds no host, consumes the request and then
-reaches the 0x08003382 trampoline, which starts the application anyway.  Both
-end with **0xFF in flash and our firmware running**, which is exactly what the
-radio reports.
+above.  With the flasher's default write (`0x11`, as `tools/ra89r_flash.py` has
+always done, and what the CPS's `Reset`+`'0'` does) the reset enters update mode,
+finds no host, consumes the request and then reaches the 0x08003382 trampoline,
+which starts the application anyway; with `--no-valid-marker` the reset sees
+`0xFF` and starts the application immediately.  Both end with **0xFF in flash and
+our firmware running**, which is exactly what the radio reports.  The write is
+therefore not needed to flash -- it only routes the first boot through the
+bootloader once more.
 
 **The old confusion, for the record.**  The earlier version of this section read
 that `cbz` the wrong way round and concluded that 0x11 was required to start the

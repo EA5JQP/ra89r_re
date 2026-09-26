@@ -21,18 +21,20 @@ Protocol shape (all frames are ``FE FE EE EF <cmd> <payload> FD``):
 The bootloader only accepts records whose address is outside
 0x08000000-0x08003FFF (its own region), so this tool refuses those too.
 
-**The byte at 0x0805FFF0 (nothing to do with flashing).**  It is the
-bootloader's *update-mode request*, and the polarity is the opposite of what
-this file used to claim: `0xFF` (the normal value) makes the bootloader start
-the application, and `0x11` makes it enter update mode (0x08003328-0x0800335A).
-The bootloader *consumes* the request -- entering update mode writes 0xFF back
-(0x08000566-0x08000578) -- and the stock application sets 0x11 from its serial
-command handler when the PC sends `"Reset"` + `'0'` (0x08015710, then
-`SYSRESETREQ`), which is how the CPS reboots a running radio into the
-bootloader.  This tool therefore writes nothing there by default: after `EXIT`
-the reset runs the application, and leaving 0xFF alone is what makes that work.
-`--request-update` writes 0x11 deliberately (the next reset enters update mode);
-`--no-valid-marker` is accepted and ignored, for older command lines.
+**The byte at 0x0805FFF0: the bootloader's update-mode request.**  Not a
+validity flag, and the polarity is the opposite of what this file used to say:
+`0xFF` (the normal value) makes the bootloader start the application, and `0x11`
+makes it enter update mode (0x08003328-0x0800335A).  The bootloader *consumes*
+the request -- entering update mode writes 0xFF back (0x08000566-0x08000578) --
+and the stock application sets 0x11 from its serial command handler when the PC
+sends `"Reset"` + `'0'` (0x08015710, then `SYSRESETREQ`), which is how the CPS
+reboots a running radio into the bootloader.
+
+This tool writes that byte after the image records by default, as it always has.
+It is not needed to flash -- `EXIT` resets the radio and the bootloader consumes
+the request and then starts the image, so the radio comes back with 0xFF either
+way -- but it changes nothing for the worse and stays the default;
+`--no-valid-marker` skips it if the extra update-mode trip is unwanted.
 
 Speed notes (see ra89r_bootloader.md section 5):
 
@@ -407,11 +409,11 @@ def cmd_probe(args):
 
 def cmd_flash(args):
     records, baseline = load_records(args.icf)
-    if args.request_update:
+    if not args.no_valid_marker:
         if add_update_request(records, baseline):
-            print("adding the update-mode request (%02X at 0x%08X): the next "
-                  "reset enters the bootloader" % (UPDATE_REQUEST_VALUE,
-                                                   UPDATE_REQUEST_ADDRESS))
+            print("adding the update-mode request (%02X at 0x%08X); the "
+                  "bootloader consumes it on the next reset and starts the image"
+                  % (UPDATE_REQUEST_VALUE, UPDATE_REQUEST_ADDRESS))
     check_addresses(records, args.allow_bootloader_region)
     # 'auto' starts from the fastest rate and the sweep drops down as needed
     baud_index = (BAUD_CANDIDATES[0] if args.baud == "auto"
@@ -567,12 +569,11 @@ def main(argv=None):
     ap.add_argument("--retries", type=int, default=3)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the frames instead of using the port")
-    ap.add_argument("--request-update", action="store_true",
-                    help="write 0x11 to 0x0805FFF0 as well, i.e. ask for update "
-                         "mode on the next reset (the bootloader consumes it)")
     ap.add_argument("--no-valid-marker", action="store_true",
-                    help="accepted and ignored: writing that byte is no longer "
-                         "the default, and 0xFF is the normal value")
+                    help="do not write 0x11 to 0x0805FFF0; that byte is the "
+                         "bootloader's update-mode request (0xFF, the normal "
+                         "value, is what runs the app, and a request is consumed "
+                         "on the next reset), so skipping it is harmless")
     ap.add_argument("--erase-first", action="store_true",
                     help="send the E1/CLEAR command before programming")
     ap.add_argument("--allow-bootloader-region", action="store_true",
