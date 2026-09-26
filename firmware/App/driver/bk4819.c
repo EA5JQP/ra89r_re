@@ -1040,7 +1040,12 @@ void BK4819_EnterTxMute(void)
 
 void BK4819_ExitTxMute(void)
 {
-    BK4819_WriteRegister(BK4819_REG_50, 0x3B18);
+    /* 0x3B20, not the 0x3B18 this port imported from the K1's bk4829.c: the
+     * stock's own transmit path writes 0x3B20 in three places, the K1's
+     * bk4819.c agrees, and a muted TX audio path is a carrier that carries
+     * nothing.  Measured -- with it the microphone and the tone are audible on
+     * a second receiver; see ra89r_rfpath.md. */
+    BK4819_WriteRegister(BK4819_REG_50, 0x3B20);
 }
 
 void BK4819_Sleep(void)
