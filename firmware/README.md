@@ -78,7 +78,8 @@ swaps `rf_bus.c` for a recording stub and asserts the exact transfers:
 
 ```sh
 gcc -std=c11 -Wall -Wextra -I App -I App/driver tools/test_rf.c \
-    App/driver/bk4829.c App/driver/bk4815.c -o /tmp/test_rf && /tmp/test_rf
+    App/driver/bk4829.c App/driver/bk4815.c App/driver/bk4819.c \
+    -o /tmp/test_rf && /tmp/test_rf
 ```
 
 It covers the identity handshake (register 0 must read `0x4829` / `0x4816`),
@@ -142,6 +143,8 @@ the stacked registers on the console instead of dying silently
 | `l` | backlight on/off (GPIOA pin 5) |
 | `R` | probe both RF parts: read register 0 of each and compare with the expected id (`0x4829` BK4829, `0x4816` BK4815), plus one more register from each |
 | `W` | replay both parts' stock boot configuration and re-probe (incl. the BK4829's `0x7d` read-back) |
+| `X` | read every register the configuration wrote back and list the ones that differ |
+| `K` | K1-compatible bring-up: `BK4819_Init`, tune 145.7500 MHz, AF on, RX on, read the frequency and RSSI back |
 | `q` | heartbeat lines on the console (every 5 s) on/off |
 | other printable keys | echoed to the UART and shown on the display |
 
