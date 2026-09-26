@@ -22,6 +22,8 @@
 #include "driver/fault.h"
 #include "driver/gpio.h"
 #include "driver/keypad.h"
+#include "driver/pa.h"
+#include "driver/tx.h"
 #include "driver/lcd_st7565.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
@@ -187,7 +189,8 @@ static void print_help(void)
               "          k keypad monitor (raw ADC per line + decoded key)\n"
               "          R probe both RF chips (ids)   W configure both\n"
               "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
-              "          S sample reg 0x67 for 4 s   C toggle PC13 (amp-enable)\n"
+              "          S sample reg 0x67 for 4 s   C toggle PC13\n"
+              "          T transmit (DTMF tone)   Y step the PA power\n"
               "          T transmit on/off (also: hold PTT on the radio)\n");
 }
 
@@ -392,9 +395,6 @@ static void bench_led(void)
         led_set(LED_OFF);
 }
 
-static void pa_pwm_init(void);
-static void pa_pwm_duty(uint16_t duty);
-
 static void audio_bench_arm(void)
 {
     uart_puts("\naudio bench: running 'K' at boot and asserting PC13, so the test\n"
@@ -419,7 +419,7 @@ static void audio_bench_arm(void)
 
     /* The PA bias PWM: the stock runs it from boot with a compare of 0, i.e.
      * the PA is biased only while transmitting. */
-    pa_pwm_init();
+    tx_init();
     uart_printf("RF: PA power PWM up (PB14/TIM1_CH2, ARR %u, 100 kHz, duty 0)\n",
                 (unsigned)PA_PWM_ARR);
 
@@ -464,68 +464,13 @@ static bool tx_on;
  *   PTT    -> the chip's DTMF tone (deterministic, no microphone involved)
  *   SIDE1  -> the microphone (0x30 = 0xC1FE, mic ADC, gain in 0x40)
  */
-#define TX_SRC_TONE 0
-#define TX_SRC_MIC  1
+#define TX_SOURCE_TONE 0
+#define TX_SOURCE_MIC  1
 
-static uint16_t tx_reg36 = 0x8822u;    /* PA-CTL + bias: the amplifier enabler */
-static int tx_source;
-static unsigned pa_duty;
-static uint32_t pa_last;
-static unsigned mic_gain;
+static tx_source_t bench_source;
+static unsigned pa_duty = TX_POWER_COMPARE;    /* 'Y' steps it */
 
-static void tx_base(void)
-{
-    /* The stock's transmit path clears all seven chip GPIO outputs and sets only
-     * pin 1, rather than inheriting the K1 init's 0x9000 base. */
-    BK4819_WriteRegister(BK4819_REG_33, 0x0020u);
-    /* PA0/PA1: the stock's transmit select is PA1 = 1, PA0 = 0. */
-    gpio_config_output(GPIOA, 1u | 2u);
-    gpio_write(GPIOA, 2u, 1);
-    gpio_write(GPIOA, 1u, 0);
-}
 
-/* ------------------------------------------------------ PA power PWM (PB14)
- *
- * The PA bias is not a register: it is TIM1 channel 2 on PB14, exactly as the
- * stock sets it up (0x080131AC configures the pin, FUN_08016C58/FUN_08016764
- * program the timer, FUN_08018A88/FUN_080167B4 set the compare from the
- * codeplug's power value).  144 MHz APB2 / (0+1) / (1439+1) = 100 kHz, compare
- * clamped to half the period, and 0 in receive. */
-static void pa_pwm_init(void)
-{
-    gpio_port_clock(GPIOB);
-    RCC->APB2ENR |= (1u << 11);                 /* TIM1 */
-    (void)RCC->APB2ENR;
-
-    GPIOB->AFR[1] = (GPIOB->AFR[1] & ~(0xFu << 24)) | (PA_PWM_AF << 24);
-    GPIOB->MODER = (GPIOB->MODER & ~(3u << 28)) | (2u << 28);      /* AF   */
-    GPIOB->OSPEEDR = (GPIOB->OSPEEDR & ~(3u << 28)) | (1u << 28);
-    GPIOB->PUPDR = (GPIOB->PUPDR & ~(3u << 28)) | (2u << 28);      /* pull-down */
-
-    TIM1->PSC = 0;
-    TIM1->ARR = PA_PWM_ARR;
-    TIM1->CCMR1 = (TIM1->CCMR1 & ~0xFF00u) | 0x6000u;   /* OC2M = PWM mode 1 */
-    TIM1->CCER &= ~0x30u;                                /* CC2P/CC2NE = 0  */
-    TIM1->CCR2 = 0;
-    TIM1->BDTR |= 0x8000u;                               /* MOE: TIM1 needs it */
-    TIM1->EGR = 1u;                                      /* UG */
-    TIM1->CR1 |= 1u;                                     /* CEN */
-}
-
-static void pa_pwm_duty(uint16_t duty)
-{
-    if (duty > PA_PWM_MAX_DUTY)
-        duty = PA_PWM_MAX_DUTY;
-    TIM1->CCR2 = duty;
-}
-
-/* The stock's microphone gain for TX: FUN_0801C3A8 writes
- * 0x40 = (old & 0xE000) | 0x1000 | (gain << 4), the gain from the codeplug. */
-static void tx_mic_gain(unsigned g)
-{
-    BK4819_WriteRegister((BK4819_REGISTER_t)0x40,
-                         (uint16_t)(0x3000u | (g << 4)));
-}
 
 /* Panel read-out: the source, and the registers that decide whether the signal
  * carries anything. */
@@ -537,20 +482,15 @@ static void bench_screen(unsigned duty, uint16_t r50, uint16_t r36, uint16_t r7d
     unsigned n = 0, i;
 
     title[n++] = 'T'; title[n++] = 'X'; title[n++] = ' ';
-    title[n++] = (tx_source == TX_SRC_MIC) ? 'm' : 't';
-    title[n++] = (tx_source == TX_SRC_MIC) ? 'i' : 'o';
-    title[n++] = (tx_source == TX_SRC_MIC) ? 'c' : 'n';
+    title[n++] = (bench_source == TX_SOURCE_MIC) ? 'm' : 't';
+    title[n++] = (bench_source == TX_SOURCE_MIC) ? 'i' : 'o';
+    title[n++] = (bench_source == TX_SOURCE_MIC) ? 'c' : 'n';
     title[n++] = ' ';
-    if (tx_source == TX_SRC_MIC) {
-        title[n++] = hex[(mic_gain >> 4) & 0xF];
-        title[n++] = hex[mic_gain & 0xF];
-    } else {
-        if (duty >= 100u)
-            title[n++] = (char)('0' + duty / 100u);
-        if (duty >= 10u)
-            title[n++] = (char)('0' + (duty / 10u) % 10u);
-        title[n++] = (char)('0' + duty % 10u);
-    }
+    if (duty >= 100u)
+        title[n++] = (char)('0' + duty / 100u);
+    if (duty >= 10u)
+        title[n++] = (char)('0' + (duty / 10u) % 10u);
+    title[n++] = (char)('0' + duty % 10u);
     title[n] = '\0';
 
     for (i = 0; i < 3u; i++) {
@@ -571,54 +511,13 @@ static void bench_screen(unsigned duty, uint16_t r50, uint16_t r36, uint16_t r7d
     lcd_refresh();
 }
 
-static void radio_tx(int on, int source)
+static void radio_tx(int on, tx_source_t source)
 {
-    if (on && tx_on && source == tx_source)
-        return;
-    if (!on && !tx_on)
-        return;
-
-    tx_on = on;
-    tx_source = source;
-
     if (on) {
-        tx_base();
-        bk4815_write_reg(0x0C, 0x0203);     /* the stock's T/R path, other branch */
-        BK4819_SetFrequency(BENCH_FREQ_HZ);
-        BK4819_WriteRegister(BK4819_REG_7D, BENCH_PA_7D);
-        BK4819_PrepareTransmit();
-        BK4819_WriteRegister((BK4819_REGISTER_t)0x36, tx_reg36);
-        BK4819_SetAF(BK4819_AF_MUTE);
-
-        if (source == TX_SRC_TONE) {
-            /* The chip's own tone generator, over the air: match the K1's
-             * BK4819_PlayDTMFEx, which unmutes after loading the tone. */
-            BK4819_EnterDTMF_TX(false);
-            BK4819_PlayDTMF('5');
-            BK4819_ExitTxMute();
-            BK4819_WriteRegister(BK4819_REG_50, 0x3B20);   /* the stock's TX unmute */
-        } else {
-            /* Microphone: PrepareTransmit already left 0x30 = 0xC1FE (mic ADC),
-             * so only the TX audio path has to be unmuted. */
-            BK4819_WriteRegister(BK4819_REG_50, 0x3B20);
-            /* Validated on the radio: gain 0x70 (0x40 = 0x3700) is clearly
-             * audible on a second radio.  The stock takes this from the
-             * codeplug; 0x70 is the measured value for this one. */
-            mic_gain = 0x70;
-            tx_mic_gain(mic_gain);
-        }
-
-        pa_duty = 128;                  /* measured: clearly audible on a 2nd radio */
-        pa_pwm_duty((uint16_t)pa_duty);
-        led_set(LED_RED);               /* red = transmit, as the stock shows it */
+        tx_start(BENCH_FREQ_HZ, source);
+        pa_power((uint16_t)pa_duty);        /* the console can step this */
     } else {
-        BK4819_WriteRegister(BK4819_REG_33, 0x9000u);   /* back to the RX state */
-        bk4815_write_reg(0x0C, 0x0A03);
-        BK4819_RX_TurnOn();
-        BK4819_SetAF(BK4819_AF_MUTE);
-        BK4819_WriteRegister(BK4819_REG_50, 0xBB18);
-        BK4819_WriteRegister((BK4819_REGISTER_t)0x40, 0x3516);
-        pa_pwm_duty(0);
+        tx_stop();
         squelch_open = false;
         bench_led();
     }
@@ -626,14 +525,14 @@ static void radio_tx(int on, int source)
     uart_printf("\nbench: TX %s %s (0x30 = 0x%04X, 0x33 = 0x%04X, 0x36 = 0x%04X, "
                 "0x50 = 0x%04X, PA duty %u of %u)\n",
                 on ? "ON" : "off",
-                (source == TX_SRC_MIC) ? "mic" : "tone",
+                (source == TX_SOURCE_MIC) ? "mic" : "tone",
                 (unsigned)BK4819_ReadRegister(BK4819_REG_30),
                 (unsigned)BK4819_ReadRegister(BK4819_REG_33),
-                (unsigned)BK4819_ReadRegister((BK4819_REGISTER_t)0x36),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_36),
                 (unsigned)BK4819_ReadRegister(BK4819_REG_50),
                 (unsigned)TIM1->CCR2, (unsigned)PA_PWM_ARR);
     bench_screen(pa_duty, BK4819_ReadRegister(BK4819_REG_50),
-                 BK4819_ReadRegister((BK4819_REGISTER_t)0x36),
+                 BK4819_ReadRegister(BK4819_REG_36),
                  BK4819_ReadRegister(BK4819_REG_7D));
 }
 
@@ -649,10 +548,10 @@ static void audio_bench_step(uint32_t now)
     key = keypad_poll();
 
     if (key == KEY_PTT || key == KEY_SIDE1) {
-        radio_tx(1, (key == KEY_SIDE1) ? TX_SRC_TONE : TX_SRC_MIC);
+        radio_tx(1, (key == KEY_SIDE1) ? TX_SOURCE_TONE : TX_SOURCE_MIC);
     } else {
         if (tx_on)
-            radio_tx(0, tx_source);
+            radio_tx(0, bench_source);
         if (key != audio_bench_last && audio_bench_key(key)) {
             audio_path_hi = !audio_path_hi;
             audio_path_drive(audio_path_hi ? 1 : 0);
@@ -663,15 +562,8 @@ static void audio_bench_step(uint32_t now)
     }
     audio_bench_last = key;
 
-    if (tx_on) {
-        /* Speak into the radio while this walks: the microphone gain across the
-         * stock's full byte range for SIDE1, the PA power for the tone.  Two
-         * seconds per step. */
-        if ((uint32_t)(now - pa_last) >= 2000u) {
-            pa_last = now;
-        }
+    if (tx_on)
         return;                         /* no squelch polling while transmitting */
-    }
 
     if ((uint32_t)(now - last) < 50u)
         return;
@@ -1055,8 +947,22 @@ int main(void)
                 audio_path_toggle();
                 break;
             case 'T':
-                radio_tx(!tx_on, TX_SRC_TONE);
+                radio_tx(!tx_on, TX_SOURCE_TONE);
                 break;
+            case 'Y': {
+                /* The PA bias PWM compare: the one transmit level worth tuning
+                 * by ear or S-meter now that the amplifier works. */
+                static const uint16_t steps[] = { 64, 96, 128, 160, 192, 224 };
+                static unsigned i;
+
+                pa_duty = steps[i];
+                i = (i + 1u) % (sizeof(steps) / sizeof(steps[0]));
+                if (tx_active())
+                    pa_power((uint16_t)pa_duty);
+                uart_printf("\nPA power (PB14 compare) -> %u of %u\n",
+                            (unsigned)pa_duty, (unsigned)PA_PWM_ARR);
+                break;
+            }
             default:
                 break;
             }

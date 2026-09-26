@@ -158,8 +158,12 @@
  * registers produced a weak, hissing signal. */
 #define PA_PWM_PIN          (1u << 14)  /* PB14, TIM1_CH2, AF4 */
 #define PA_PWM_AF           4u
-#define PA_PWM_ARR          1439u
-#define PA_PWM_MAX_DUTY     (PA_PWM_ARR / 2u)   /* the stock's clamp */
+
+/* The band-path pins the stock's transmit and receive selects both leave at
+ * PA1 = 1, PA0 = 0 (FUN_08013A70(2) and (3)); only the chip's PA enable and
+ * register 0x36 differ between the two directions.  See driver/pa.c. */
+#define PA_BAND_PA1_PIN     (1u << 1)   /* PA1 */
+#define PA_BAND_PA0_PIN     (1u << 0)   /* PA0 */
 
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) talks to the
  * external SPI NOR flash (see ra89r_eeprom.md); the USB-C port goes to the
