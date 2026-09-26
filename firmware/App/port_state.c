@@ -66,7 +66,6 @@ uint8_t         gSetting_set_pwr = 2;             /* settings.c  */
 bool            gSetting_set_gui = true;          /* settings.c  */
 bool            gSetting_live_DTMF_decoder;       /* settings.c  */
 VfoState_t      VfoState[2];                      /* radio.c     */
-GUI_DisplayType_t gScreenToDisplay = DISPLAY_MAIN;/* ui/ui.c     */
 
 const char gModulationStr[MODULATION_UKNOWN][4] = { "FM", "AM", "USB" };
 
@@ -101,7 +100,6 @@ void SETTINGS_FetchChannelName(char *s, const uint16_t channel)
  * real values (misc.c): the dB/2 steps for the mic gain menu. */
 uint8_t          gMenuListCount;                  /* misc.c */
 const uint8_t    gMicGain_dB2[9] = { 3, 8, 16, 24, 32, 40, 48, 56, 63 };
-uint8_t          gAskForConfirmation;             /* ui/ui.c */
 
 bool RADIO_CheckValidChannel(uint16_t channel, bool checkScanList, uint8_t scanList)
 {
@@ -137,7 +135,7 @@ void COMMON_KeypadLockToggle(void) { }
 void COMMON_SwitchVFOMode(void) { }
 void COMMON_SwitchVFOs(void) { }
 void DTMF_clear_input_box_memory(void) { }
-void GUI_SelectNextDisplay(GUI_DisplayType_t Display) { gRequestDisplayScreen = Display; }
+void DTMF_clear_input_box(void) { }   /* app/dtmf.c */
 bool SCANNER_IsScanning(void) { return false; }
 void CHFRSCANNER_ManualResume(const int8_t scan_direction) { (void)scan_direction; }
 void CHFRSCANNER_Start(const bool storeBackupSettings, const int8_t scan_direction)
@@ -160,7 +158,6 @@ bool             gDualWatchActive;                /* radio.c */
 bool             gFlagReconfigureVfos;            /* radio.c */
 bool             gMute;                           /* audio.c */
 uint16_t         gNextMrChannel;                  /* radio.c */
-GUI_DisplayType_t gRequestDisplayScreen;          /* ui/ui.c */
 uint16_t         gRequestSaveChannel;             /* misc.c  */
 bool             gRequestSaveSettings;            /* misc.c  */
 bool             gSaveRxMode;                     /* radio.c */
@@ -170,6 +167,122 @@ volatile bool    gScheduleScanListen;             /* app/scanner.c */
 bool             gSetting_350EN;                  /* settings.c */
 uint8_t          gSetting_F_LOCK;                 /* settings.c */
 bool             gF_LOCK;                         /* misc.c */
+bool             gUpdateDisplay = true;           /* ui/ui.c */
 bool             gSetting_set_ptt_session;        /* settings.c */
 uint8_t          gUpdateStatus;                   /* misc.c */
 const uint16_t   scan_pause_delay_in_1_10ms = 0;  /* app/scanner.c */
+
+/* ui/scanner.c owns this; the scanner screen is not ported yet. */
+void UI_DisplayScanner(void) { }
+
+/* ---------------------------------------------------------------------------
+ * The menu's settings, scanner and key-action surface.  Same rule as above:
+ * every one of these is owned by a K1 module the port has not brought in yet,
+ * and each is inert or a faithful copy of the small pure ones.
+ * Owners: settings.c (SETTINGS_*, gSetting_*), app/scanner.c (SCANNER_*),
+ * app/generic.c (GENERIC_Key_*), misc.c (NUMBER_AddWithWraparound, StrToUL,
+ * gMenuCountdown, menu_timeout_*), audio.c/driver/beeper (gBeepToPlay),
+ * radio.c (RADIO_FindNextChannel, gVfoConfigureMode, gFlagResetVfos),
+ * functions.c (gFlagAcceptSetting, gFlagRefreshSetting, gPttWasReleased),
+ * driver/backlight.c (gBackLight), misc.c (the remaining g* state).
+ * ------------------------------------------------------------------------- */
+
+bool             gBackLight = true;               /* driver/backlight.c */
+BEEP_Type_t      gBeepToPlay;                     /* audio.c / beeper */
+uint8_t          gCB;                             /* misc.c */
+uint8_t          gDW;                             /* misc.c */
+bool             gFlagAcceptSetting;              /* functions.c */
+bool             gFlagRefreshSetting;             /* functions.c */
+bool             gFlagResetVfos;                  /* radio.c */
+uint8_t          gKeyLockCountdown;                /* misc.c */
+uint16_t         gMenuCountdown;                  /* misc.c */
+bool             gPttWasReleased;                 /* functions.c */
+enum BacklightOnRxTx_t gSetting_backlight_on_tx_rx;  /* settings.c */
+uint8_t          gSetting_battery_text;           /* settings.c */
+uint8_t          gSetting_set_eot;                /* settings.c */
+bool             gSetting_set_inv;                /* settings.c */
+uint8_t          gSetting_set_lck;                /* settings.c */
+bool             gSetting_set_met;                /* settings.c */
+bool             gSetting_set_ptt;                /* settings.c */
+bool             gSetting_set_tmr;                /* settings.c */
+uint8_t          gSetting_set_tot;                /* settings.c */
+uint8_t          gSquelchLevelOriginal;           /* settings.c */
+uint8_t          gVfoConfigureMode;               /* radio.c */
+const uint8_t    menu_timeout_500ms = 0;          /* misc.c */
+const uint16_t   menu_timeout_long_500ms = 0;     /* misc.c */
+
+void GENERIC_Key_F(bool bKeyPressed, bool bKeyHeld)
+{
+    (void)bKeyPressed;
+    (void)bKeyHeld;
+}
+
+void GENERIC_Key_PTT(bool bKeyPressed)
+{
+    (void)bKeyPressed;
+}
+
+void SCANNER_Start(bool singleFreq)
+{
+    (void)singleFreq;
+}
+
+void SCANNER_Stop(void) { }
+
+void SETTINGS_FactoryReset(bool bIsAll)
+{
+    (void)bIsAll;
+}
+
+void SETTINGS_LoadCalibration(void) { }
+
+void SETTINGS_ResetTxLock(void) { }
+
+void SETTINGS_SaveBatteryCalibration(const uint16_t *batteryCalibration)
+{
+    (void)batteryCalibration;
+}
+
+void SETTINGS_SaveChannelName(uint16_t channel, const char *name)
+{
+    (void)channel;
+    (void)name;
+}
+
+void SETTINGS_UpdateChannel(uint16_t channel, const VFO_Info_t *pVFO, bool keep)
+{
+    (void)channel;
+    (void)pVFO;
+    (void)keep;
+}
+
+uint16_t RADIO_FindNextChannel(uint16_t ChNum, int8_t Direction, bool bCheckScanList,
+                               uint8_t RadioNum)
+{
+    (void)Direction;
+    (void)bCheckScanList;
+    (void)RadioNum;
+    return ChNum;
+}
+
+/* The two the port can have outright: both are pure. */
+int32_t NUMBER_AddWithWraparound(int32_t Base, int32_t Add, int32_t LowerLimit,
+                                 int32_t UpperLimit)
+{
+    Base += Add;
+
+    if (Base == 0x7fffffff || Base < LowerLimit)
+        return UpperLimit;
+    if (Base > UpperLimit)
+        return LowerLimit;
+    return Base;
+}
+
+unsigned long StrToUL(const char *str)
+{
+    unsigned long value = 0;
+
+    while (*str >= '0' && *str <= '9')
+        value = (value * 10u) + (unsigned long)(*str++ - '0');
+    return value;
+}

@@ -21,29 +21,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum KEY_Code_e {
-    KEY_0 = 0,  // 0
-    KEY_1,      // 1
-    KEY_2,      // 2
-    KEY_3,      // 3
-    KEY_4,      // 4
-    KEY_5,      // 5
-    KEY_6,      // 6
-    KEY_7,      // 7
-    KEY_8,      // 8
-    KEY_9,      // 9
-    KEY_MENU,   // A
-    KEY_UP,     // B
-    KEY_DOWN,   // C
-    KEY_EXIT,   // D
-    KEY_STAR,   // *
-    KEY_F,      // #
-    KEY_PTT,    //
-    KEY_SIDE2,  //
-    KEY_SIDE1,  //
-    KEY_INVALID //
-};
-typedef enum KEY_Code_e KEY_Code_t;
+/* Port adaptation (see NOTICE): the key codes come from this repo's keypad
+ * driver, which reads the RA89R's ADC key ladder and returns the same K5V3 /
+ * F4HWN enumeration the K1 uses (plus KEY_PTT2, which this radio has and the
+ * K5V3 does not, and which moves KEY_INVALID up by one).  Keeping one
+ * definition avoids two `enum KEY_Code_e`s in one translation unit. */
+#include "driver/keypad.h"
 
 typedef enum {
     STATE_IDLE = 0,

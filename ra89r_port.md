@@ -182,12 +182,26 @@ here are the port's todo list:
   stand-in for the backlight and the two `BK4819_*` calls the screens make.
   Console `M` draws the menu on the radio, `G` the VFO.
 
-* **Next -- stage 2c.**  `driver/keyboard.h` bound to our `keypad.c`, then
-  `driver/keyboard.h` bound to our `keypad.c` so the menu can be driven by the
-  radio's own keys, then `ui/ui.c` (the screen dispatcher) and
-  `ui/status.c`/`ui/welcome.c`, then the real `settings.c`/`misc.c`/`radio.c`
-  behind the facade and the key/action layer (`functions.c`) -- each step first
-  on `preview_k1.c`, then on the radio.  The stubs in `port_state.c` come out as
+* **Stage 2c -- the GUI is driven by the radio's own keys (unvalidated on the
+  radio).**  `App/driver/keyboard.{c,h}` is the adapter: the K1's keyboard
+  interface over this repo's ADC-ladder reader (its `KEY_Code_e` now comes from
+  `driver/keypad.h`, so there is one definition of the codes), and
+  `App/port_gui.c` is the port's small stand-in for the K1 `app/main.c` key
+  routing -- press/hold edges, `MENU_ProcessKeys` for the menu screen, tuning
+  for the VFO, and screen switching through `gRequestDisplayScreen`.  `ui/ui.c`
+  (the K1's dispatcher) is in as well; the port still draws its two screens
+  directly rather than through `UI_DisplayFunctions[]`, because that table
+  links every screen it lists.  Console `1` toggles the interactive GUI, `2`
+  the VFO and `3` the menu; `preview_k1.c` presses the same keys on a PC and
+  now shows the cursor and the frame changing (the redraw was gated wrongly at
+  first -- a key that set `gRequestDisplayScreen` suppressed the repaint).
+
+* **Next -- stage 2d.**  `driver/keyboard.h` bound to our `keypad.c`, then
+  `ui/status.c` (the status line, which currently renders empty) and
+  `ui/welcome.c` (the boot screen), then the real `settings.c`/`misc.c`/
+  `radio.c` behind the facade and the key/action layer (`functions.c`,
+  `app/main.c`), which retires `port_gui.c`.  Each step first on
+  `preview_k1.c`, then on the radio; the stubs in `port_state.c` come out as
   their owner modules come in.
 
 ## Suggested order

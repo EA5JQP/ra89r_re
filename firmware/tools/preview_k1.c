@@ -15,10 +15,13 @@
 #include <stdio.h>
 
 #include "driver/st7565.h"
+#include "host_hw.h"
+#include "misc.h"
 #include "port_state.h"
 #include "radio.h"
 #include "settings.h"
 #include "ui/main.h"
+#include "port_gui.h"
 #include "ui/menu.h"
 
 static void render(const char *title)
@@ -70,6 +73,34 @@ int main(void)
     gRxVfo->freq_config_TX.Frequency = 43350000u;
     UI_DisplayMain();
     render("K1 UI_DisplayMain(): 433.5000 MHz");
+
+    /* ---- the key loop: port_gui.c driving the K1's screens --------------- */
+    gRxVfo->freq_config_RX.Frequency = 14575000u;
+    gRxVfo->freq_config_TX.Frequency = 14575000u;
+    port_gui_init();
+
+    host_set_key(KEY_UP);              /* tune up one 12.5 kHz step ... */
+    port_gui_poll();
+    host_set_key(KEY_INVALID);
+    port_gui_poll();
+    render("port_gui_poll(): VFO after one KEY_UP step (145.7625)");
+
+    host_set_key(KEY_MENU);            /* ... then open the menu ... */
+    port_gui_poll();
+    host_set_key(KEY_INVALID);
+    port_gui_poll();
+    render("port_gui_poll(): KEY_MENU opened the menu");
+
+    {
+        int i;
+        for (i = 0; i < 3; i++) {      /* ... and walk down three items */
+            host_set_key(KEY_DOWN);
+            port_gui_poll();
+            host_set_key(KEY_INVALID);
+            port_gui_poll();
+        }
+    }
+    render("port_gui_poll(): three KEY_DOWN presses moved the cursor");
 
     return 0;
 }

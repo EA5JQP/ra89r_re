@@ -22,6 +22,7 @@
 /* K1-compatible state. */
 extern uint16_t gBacklightCountdown_500ms;
 extern uint8_t  gBacklightBrightness;
+extern uint8_t  gBacklightBrightnessOld;
 extern const uint8_t value[11];
 
 void BACKLIGHT_Init(void);

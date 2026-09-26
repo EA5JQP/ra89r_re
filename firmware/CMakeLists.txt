@@ -62,6 +62,9 @@ set(APP_SOURCES
     App/ui/inputbox.c
     App/ui/main.c
     App/ui/menu.c
+    App/ui/ui.c
+    App/driver/keyboard.c
+    App/port_gui.c
     App/app/menu.c
     App/app/action.c
     App/version.c

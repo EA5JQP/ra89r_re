@@ -1,0 +1,151 @@
+/* The port's screen and key loop.
+ *
+ * The K1's equivalent is app/main.c: it polls KEYBOARD_GetKey(), turns the raw
+ * readings into press/hold edges, and routes them to the screen that is up --
+ * MENU_ProcessKeys() for the menu, MAIN_Key_UP_DOWN() and friends for the VFO.
+ * Only the second half of that exists here yet (app/menu.c came in with the
+ * menu screen); this file is the small, explicit stand-in for the routing, so
+ * the GUI can be driven by the radio's own keys now.  It is replaced by the
+ * K1's app/main.c once the RF/audio engine behind it is in place.
+ */
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "app/menu.h"
+#include "driver/keyboard.h"
+#include "driver/st7565.h"
+#include "frequencies.h"
+#include "radio.h"
+#include "settings.h"
+#include "ui/main.h"
+#include "ui/menu.h"
+#include "ui/ui.h"
+
+#define PORT_GUI_HOLD_POLLS 8u   /* polls before a key counts as held */
+
+static KEY_Code_t s_last = KEY_INVALID;
+static uint8_t    s_hold;
+static bool       s_dirty = true;
+
+/* Where the menu was opened from, so EXIT can go back to it. */
+static GUI_DisplayType_t s_menu_return = DISPLAY_MAIN;
+
+/* The port draws the two screens it has directly.  ui/ui.c's
+ * UI_DisplayFunctions[] table (GUI_DisplayScreen) is the K1's way and takes
+ * over as the remaining screens come in -- it is not used yet because it would
+ * link every screen it lists, including the ones with no port behind them. */
+static void port_gui_draw(void)
+{
+    switch (gScreenToDisplay) {
+    case DISPLAY_MENU:
+        UI_DisplayMenu();
+        break;
+    case DISPLAY_MAIN:
+    default:
+        UI_DisplayMain();
+        break;
+    }
+}
+
+static void port_gui_request(GUI_DisplayType_t screen)
+{
+    gRequestDisplayScreen = screen;
+}
+
+void port_gui_screen(GUI_DisplayType_t screen)
+{
+    gScreenToDisplay = screen;
+    s_dirty = true;
+}
+
+void port_gui_init(void)
+{
+    port_gui_screen(DISPLAY_MAIN);
+}
+
+/* One step of the VFO's tuning step, in Hz.  The K1 keeps StepFrequency in
+ * 10 Hz units (STEP_12_5kHz = 1250). */
+static uint32_t port_gui_step(void)
+{
+    uint32_t step = gRxVfo->StepFrequency;
+
+    if (step == 0u)
+        step = 1250u;
+    return step * 10u;
+}
+
+static void port_gui_main_key(KEY_Code_t key, bool pressed, bool held)
+{
+    if (!pressed && !held)
+        return;
+
+    switch (key) {
+    case KEY_UP:
+    case KEY_DOWN: {
+        uint32_t step = port_gui_step();
+        uint32_t freq = gRxVfo->freq_config_RX.Frequency;
+
+        if (key == KEY_UP)
+            freq += step;
+        else
+            freq = (freq > step) ? freq - step : freq;
+
+        gRxVfo->freq_config_RX.Frequency = freq;
+        gRxVfo->freq_config_TX.Frequency = freq;
+        s_dirty = true;
+        break;
+    }
+    case KEY_MENU:
+        if (pressed) {
+            s_menu_return = gScreenToDisplay;
+            UI_MENU_BuildView();
+            port_gui_request(DISPLAY_MENU);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+void port_gui_poll(void)
+{
+    KEY_Code_t key = KEYBOARD_GetKey();
+    bool       pressed = false;
+    bool       held = false;
+
+    if (key == KEY_INVALID) {
+        s_last = KEY_INVALID;
+        s_hold = 0;
+    } else if (key != s_last) {
+        s_last = key;
+        s_hold = 1;
+        pressed = true;
+    } else if (s_hold < 0xFFu) {
+        s_hold++;
+        held = (s_hold >= PORT_GUI_HOLD_POLLS);
+    }
+
+    /* Consume a pending screen request: the K1's screens set
+     * gRequestDisplayScreen to ask to be replaced, and never clear it. */
+    if (gRequestDisplayScreen != DISPLAY_INVALID) {
+        if (gRequestDisplayScreen != gScreenToDisplay) {
+            gScreenToDisplay = gRequestDisplayScreen;
+            s_dirty = true;
+        }
+        gRequestDisplayScreen = DISPLAY_INVALID;
+    }
+
+    if (gScreenToDisplay == DISPLAY_MENU) {
+        if (key != KEY_INVALID) {
+            MENU_ProcessKeys(key, pressed, held);
+            s_dirty = true;
+        }
+    } else {
+        port_gui_main_key(key, pressed, held);
+    }
+
+    if (s_dirty) {
+        s_dirty = false;
+        port_gui_draw();
+    }
+}

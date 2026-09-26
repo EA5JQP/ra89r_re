@@ -29,6 +29,7 @@
 #include "driver/lcd_st7565.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
+#include "port_gui.h"
 #include "port_state.h"
 #include "radio.h"
 #include "ui/main.h"
@@ -46,6 +47,7 @@
 #define UPDATE_REQUEST  ((volatile uint8_t *)0x0805FFF0)
 
 static uint8_t contrast = 0x19u;
+static int     gui_mode;      /* '1': the radio's keys drive the ported GUI */
 static int show_border;
 static int animate;
 static int heartbeat = 1;
@@ -199,7 +201,8 @@ static void print_help(void)
               "          R probe both RF chips (ids)   W configure both\n"
               "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
               "          S sample reg 0x67 for 4 s   C toggle PC13\n"
-              "          G ported K1 VFO screen   M ported K1 menu screen\n"
+              "          G K1 VFO screen   M K1 menu screen   1 GUI mode (keys drive it)\n"
+              "          2 VFO screen    3 menu screen\n"
               "          T transmit (DTMF tone)   Y step the PA power\n"
               "          T transmit on/off (also: hold PTT on the radio)\n");
 }
@@ -907,6 +910,40 @@ int main(void)
             case 'S':
                 rf_watch();
                 break;
+            case '1':
+                /* Interactive GUI: the radio's own keys drive the ported K1
+                 * screens.  See port_gui.c and, for the preview equivalent,
+                 * tools/preview_k1.c. */
+                if (!gui_mode) {
+                    port_state_init();
+                    port_gui_init();
+                    gui_mode = 1;
+                    uart_puts("\nGUI mode on: UP/DOWN tune or move, MENU opens the "
+                              "menu, EXIT goes back ('1' ends it)\n");
+                } else {
+                    gui_mode = 0;
+                    uart_puts("\nGUI mode off\n");
+                }
+                break;
+            case '2':
+                if (!gui_mode) {
+                    port_state_init();
+                    port_gui_init();
+                    gui_mode = 1;
+                }
+                port_gui_screen(DISPLAY_MAIN);
+                uart_puts("\nVFO screen\n");
+                break;
+            case '3':
+                if (!gui_mode) {
+                    port_state_init();
+                    port_gui_init();
+                    gui_mode = 1;
+                }
+                UI_MENU_BuildView();
+                port_gui_screen(DISPLAY_MENU);
+                uart_puts("\nMenu screen\n");
+                break;
             case 'M': {
                 /* The ported K1 menu: ui/menu.c's UI_DisplayMenu() over the same
                  * state facade (its entry sequence builds the list first). */
@@ -988,8 +1025,16 @@ int main(void)
         }
 
         keypad_monitor_step();
-        audio_bench_step(now);
 
-        animate_step(now);
+        if (gui_mode) {
+            /* The ported GUI owns the screen and the keys: port_gui_poll()
+             * reads the keypad reader and routes the keys to whichever of the
+             * K1's screens is up.  The bench read-outs above still run, so the
+             * console stays a debugging channel. */
+            port_gui_poll();
+        } else {
+            audio_bench_step(now);
+            animate_step(now);
+        }
     }
 }
