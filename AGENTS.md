@@ -189,10 +189,14 @@ driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR fl
                                          ("EEPROM") reads and dumps; the write test has
                                          not run yet, see ra89r_eeprom.md
 driver/audiocontrol       audio       -- OPEN, unmerged: the K1 audio-path callback
-                                         drives PC13 (the amp-enable candidate the
-                                         stock holds HIGH), plus pin tests: `A`
-                                         steps the PA13/PA14 status-LED pair and
-                                         `C` toggles PC13 -- see ra89r_led.md
+                                         drives PC13, the amp-enable candidate the
+                                         stock holds HIGH.  `C` toggles it, and the
+                                         branch also boots straight into a
+                                         cable-free bench: K + PC13 high at boot,
+                                         PTT flips PC13 with GREEN = high / RED =
+                                         low on the status LED, because the Kenwood
+                                         jack cuts the speaker while it is plugged
+                                         in -- see ra89r_led.md
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all
