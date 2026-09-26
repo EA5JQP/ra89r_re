@@ -123,7 +123,7 @@ If instead you get:
 
 On reset it brings the **UART console up first** (so a dark panel is still
 diagnosable), prints a boot log with the clock, reset cause, vector table,
-app-valid marker and panel variant, then initialises the panel, paints the test
+update-request byte and panel variant, then initialises the panel, paints the test
 card and runs a command console.  Any Cortex-M fault prints the fault status and
 the stacked registers on the console instead of dying silently
 (`App/driver/fault.c`).

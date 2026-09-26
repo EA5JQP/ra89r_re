@@ -155,78 +155,75 @@ The trampoline's own validity test is only that the application's first vector
 word is a `0x2000xxxx` SRAM address: no header, signature or checksum is
 required, and our image starts with `SP = 0x20010000`.  What the trampoline does
 *not* decide is whether to run the app at all -- for a cold start that is the
-marker byte plus the two key pins, and the `EXIT` handler resets the chip, so a
-flash is always followed by that gate: §4c.
+update-mode request byte plus the two key pins, and the `EXIT` handler resets the
+chip, so a flash is always followed by that gate: §4c.
 
-## 4c. The application-valid marker at 0x0805FFF0 (critical)
+## 4c. The byte at 0x0805FFF0 is the *update-mode request* (0xFF runs the app)
 
-The bootloader does **not** start the application unconditionally, and the reset
-vector leads straight into this decision: 0x08000144 runs `SystemInit` and jumps
-to the stub at 0x08000130, which loads SP (`0x20003190`) and jumps to
-**0x0800330C**.  So every reset -- power-on, pin, and the `EXIT` handler's
-`SYSRESETREQ` (§4b) -- executes 0x08003318-0x080033AE:
+This section used to call that byte an "application-valid marker" that had to
+hold 0x11 for the radio to boot.  That was **backwards**, and the radio says so
+plainly: our firmware runs with the byte at 0xFF.  The corrected reading:
+
+* **0xFF** -- normal.  The bootloader starts the application.
+* **0x11** -- "enter update mode on the next reset".  The bootloader enters
+  update mode and then **consumes** the request by writing 0xFF back.
+
+The reset vector leads straight into that decision: 0x08000144 runs
+`SystemInit` and jumps to the stub at 0x08000130, which loads SP (`0x20003190`)
+and jumps to **0x0800330C**.  So every reset -- power-on, pin, and the `EXIT`
+handler's `SYSRESETREQ` (§4b) -- executes 0x08003318-0x080033AE:
 
 ```
 0x0800331E  memcpy(0x20000004, 0x0805FFF0, 1)     /* flash byte -> RAM copy */
 0x08003322  flag (RAM 0x20000005) = 0
-0x0800332C  if (RAM byte == 0x11) flag = 2
-0x08003336  if ((GPIOB.IDR & 0x200) == 0          /* PB9 low */
-0x08003342   && (GPIOA.IDR & 0x004) == 0)         /* and PA2 low */
-0x08003354      bl 0x08000564                     /* update mode */
+0x0800332C  if (RAM byte == 0x11) flag = 2         /* flag = "update was asked" */
+0x08003336  if ((GPIOB.IDR & 0x200) == 0          /* PB9 low ... */
+0x08003342   && (GPIOA.IDR & 0x004) == 0)         /* ... and PA2 low */
+0x08003354      bl 0x08000564                     /* update mode, byte ignored */
 0x0800334E  else if (flag == 0)
-0x08003354      bl 0x08000564                     /* marker invalid too */
-0x0800335A  else { msp = *(0x08004000);           /* vector[0] */
-                    if ((msp & 0x2FFE0000) == 0x20000000)
-                        ((void (*)(void))*(0x08004004))();   /* the app */ }
+0x0800335A      msp = *(0x08004000);              /* run the app ... */
+0x08003354  else  bl 0x08000564                   /* ... unless 0x11 asked for it */
 ```
 
 Read off that listing, not inferred:
 
-* The marker is consulted **only while PB9 or PA2 reads high**; with both low the
-  radio goes to update mode whatever the byte says.  A released pin reads high
-  (a normal power-on, nothing pressed, runs the application), so the update-mode
-  entry condition is "hold both pins low through power-on" -- the key
-  combination `firmware/FLASHING.md` §6 is still missing.  The earlier version of
-  this section said "key not held && flag != 0" and had the sense of that gate
-  wrong.
-* 0x0805FFF0 is referenced in exactly **two** places in the 16 KiB image: the
-  read above and the write below.  The jump into the application exists once, in
-  the trampoline at 0x0800335A; the copy at 0x08003382 is what runs when
-  0x08000564 returns.
-* Entering update mode (0x08000564) **writes 0xFF over that byte** when it was
-  valid (flag != 0) before serving the host, i.e. entering update mode
-  invalidates the application: a power cut in the middle of an update leaves the
-  radio in the bootloader -- recoverable, never half-flashed.
+* `cbz r0, 0x0800335A` at 0x08003352 branches to the **application launch** when
+  the flag is 0 -- i.e. when the byte is *not* 0x11.  The launch trampoline (SP
+  sanity check, `msr msp`, `blx`) is at 0x0800335A; the copy at 0x08003382 is
+  what runs when 0x08000564 returns, and it tests nothing at all.
+* With PB9 and PA2 both low the radio goes to update mode whatever the byte says:
+  that is the key combination `firmware/FLASHING.md` §6 is still missing.  A
+  released pin reads high (a normal power-on, nothing pressed, runs the
+  application); the level convention is an inference from that, not from the
+  code.
+* 0x0805FFF0 is referenced in exactly **two** places in the 16 KiB bootloader:
+  the read above, and the write at 0x08000566-0x08000578, which stores 0xFF into
+  the RAM copy and flashes it -- but only when the request was set.  So a power
+  cut during an update leaves the radio in the bootloader: recoverable, never
+  half-flashed.
 
-So the byte must be 0x11 for the radio to come back after a restart.  The stock
-application writes it itself (`0x08015724`: state byte `'0'` -> write `0x11`
-through its flash driver `0x080190C0`), which is why the stock radio always
-boots; since our firmware is a different program, the **flashing tool must write
-the marker**: `tools/ra89r_flash.py` appends a 241-byte record at 0x0805FF00
-(256-byte aligned, so the marker sits at offset 0xF0) with 0x11 at 0x0805FFF0
-and 0xFF elsewhere, unless `--no-valid-marker` is given.  The same applies when
-restoring the stock `.icf`, which does not contain that byte either.
+**Who sets 0x11.**  The stock application, from its PC command handler at
+0x08015710: it compares 5 received bytes against `"Reset"` (the string lives at
+0x080248A5) and then looks at a command byte -- `'0'` stores 0x11 at 0x0805FFF0
+through its flash driver (`0x080190C0`) and falls into the same `SYSRESETREQ`
+tail as the bootloader (0x0801576C).  That is how the CPS reboots a *running*
+radio into the bootloader; the key combination is the manual equivalent.
+Nothing anywhere validates the application: the bootloader's only test of the
+image is the trampoline's SP sanity check.
 
-**The write is not the whole story: one launch path skips the test.**  When the
-update-mode routine 0x08000564 returns -- a session that ended without `EXIT`, a
-host that never talked -- control falls into the trampoline copy at 0x08003382,
-which enters the application with **no marker test at all**, and by then the
-update-mode entry has already cleared the byte.  So "it answered on the console
-after flashing" is not evidence that the marker is valid: the application may
-have been started by that path with the byte at 0xFF.  Which one ran is visible
-from the application itself: a `SYSRESETREQ` (the `EXIT` reset) can only have
-reached the app through the check, while a launch out of the fall-through leaves
-the reset cause at power-on/pin.
+**How flashing ends up, either way.**  After `EXIT` the chip resets and runs the
+above.  Without any write to that byte the reset sees 0xFF and starts the
+application immediately; with `--request-update` (or the CPS's `Reset`+`'0'`)
+the reset enters update mode, finds no host, consumes the request and then
+reaches the 0x08003382 trampoline, which starts the application anyway.  Both
+end with **0xFF in flash and our firmware running**, which is exactly what the
+radio reports.
 
-**Open point.**  Our firmware reports `app-valid marker at 0x0805FFF0 = 0xFF`
-while the flasher wrote that record and the bootloader acknowledged it.  Either
-the byte is fine and our *read* is at fault, or the byte really is 0xFF because
-the app came out of the fall-through above -- in which case the next ordinary
-power-on lands in the bootloader (black screen, silent 115200 console; `probe`
-still answers at 9600).  `firmware/App/main.c`'s `reset cause` line is what
-distinguishes them, and a byte-at-a-time dump of the last short sector
-(0x0805FF00-0x0805FFF0) is the next diagnostic if it says the app reset through
-the check.
+**The old confusion, for the record.**  The earlier version of this section read
+that `cbz` the wrong way round and concluded that 0x11 was required to start the
+app, that the flashing tool had to write it, and that a cleared byte meant a
+black screen.  All three are inverted.  What should have caught it immediately:
+our own firmware answering on the console while printing `0xFF`.
 
 ## 4d. The bootloader drives the same panel
 

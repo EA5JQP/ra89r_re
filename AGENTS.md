@@ -213,10 +213,9 @@ port                      integration -- OPEN: the K1/F4HWN application port, of
                                          reaching the app's path, TX power from the
                                          codeplug, per-band path and BK4815 handling,
                                          the squelch ramp, the whole gEeprom/storage
-                                         group, the license, and having the app write
-                                         the 0x0805FFF0 boot marker itself the way the
-                                         stock does -- that last one is a boot-time
-                                         one-liner, not a blocker)
+                                         group, the license, and answering the CPS's
+                                         `Reset`+`'0'` command so it can ask for update
+                                         mode -- a small serial handler, not a blocker)
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all
@@ -272,25 +271,21 @@ generator, its pin is PA4 = `DAC_OUT1`).
 
 ## Firmware / flashing
 
-- **Known discrepancy, unresolved:** on the radio this firmware reports
-  `app-valid marker at 0x0805FFF0 = 0xff (expected 0x11)`, while `tools/ra89r_flash.py`
-  writes `0x11` there by default and the bootloader acknowledges that record.  The
-  application answering at all fits two readings: the byte really is 0x11 and our
-  *read* is wrong, or the app came out of the bootloader's update-mode fall-through,
-  which launches it without testing the marker.  The app's `reset cause` line tells
-  them apart -- `software (bootloader EXIT)` means the chip reset through the marker
-  check, so the byte is valid and the read is at fault; `power-on`/`pin reset` means
-  the app was launched with the byte at 0xFF, and then the next ordinary power-on
-  lands in the bootloader.
-- **The bootloader starts the application only while `0x0805FFF0` holds `0x11`**
-  *and* PB9 or PA2 reads high at reset (ra89r_bootloader.md §4c) -- with both pins low
-  it goes to update mode whatever the byte says, and the reset vector leads through
-  that decision.  Entering update mode clears the byte, so a flashing tool must set it
-  again or the radio comes back in the bootloader (black screen, silent console);
-  `tools/ra89r_flash.py` does that by default and `firmware/App/main.c` reports the
-  byte at boot.  The stock application also writes the byte itself on a good start
-  (`0x08015724`), which is worth copying: the tool's write does not survive a flash
-  session that ends without `EXIT`.
+- **`0x0805FFF0` is the bootloader's *update-mode request*, not an
+  application-valid flag** (ra89r_bootloader.md §4c).  `0xFF` is the normal value
+  and makes the bootloader start the application; `0x11` makes it enter update mode,
+  and it consumes the request (writes `0xFF` back) on the way in.  The stock
+  application sets `0x11` when the PC sends `Reset` + `'0'` over its serial command
+  channel (0x08015710, then `SYSRESETREQ`) -- that is how the CPS reboots a *running*
+  radio into the bootloader, and the key combination (`firmware/FLASHING.md` §6) is
+  the manual equivalent.  `tools/ra89r_flash.py` writes nothing there by default
+  (`--request-update` sets it deliberately) and `firmware/App/main.c` reports the
+  byte at boot.  Nothing validates the image.
+- **The bootloader also enters update mode when PB9 and PA2 are both low at reset**
+  (ra89r_bootloader.md §4c), whatever that byte says: the reset vector leads through
+  the decision, and `EXIT` is a `SYSRESETREQ`, so every flash ends at it.  The launch
+  trampoline (0x0800335A) only checks that vector[0] looks like SRAM, and the copy at
+  0x08003382 -- what runs after update mode returns -- checks nothing at all.
 - The firmware is linked for flash address **`0x08004000`** with a **368K** flash
   region: the stock bootloader at `0x08000000-0x08003FFF` must stay intact, and
   the stock application lives exactly where our image goes.
@@ -432,14 +427,15 @@ reasons that have nothing to do with the code):
   is never silent.
 - `firmware/App/main.c` brings the console up **before** the panel, prints a boot
   log (the CFGR/CR/FLASH_ACR and the USART1 CR1/CR2/CR3 the bootloader left,
-  clock, reset cause, app-valid marker) and then runs a command console: `i`
+  clock, reset cause, update request) and then runs a command console: `i`
   diagnostics, `d` framebuffer dump as ASCII, `r`/`s` panel re-init variants
   (`r` = standard sequence, i.e. the bootloader-proven one **and the default**;
   `s` = the stock application's variant, 8 extra bytes), `v`/`V` contrast,
   `l` backlight on/off, `q` heartbeat on/off, plus `h`/`c`/`t`/`b`/`f`/`p`.
 - Console: USART1, PB6/PB7, **115200 8N1** — the same Kenwood jack the
   bootloader uses at 9600.  If the console is silent too, the application is not
-  running; check `probe` (still in the bootloader?) and the marker byte.
+  running; run `probe` (still in the bootloader at 9600?) and check the
+  0x0805FFF0 byte the boot log prints.
 
 ## Reference inputs (also outside the tooling)
 
