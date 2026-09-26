@@ -42,6 +42,10 @@ the CPS sources) lives outside the workspace (see "Reference inputs").
 - `ra89r_rffeatures.md` — the stock's feature routines above the part: where AF,
   AGC, the CTCSS/CDCSS/DTMF/scramble/VOX group and the sleep/idle/mode-restore
   states live, by register.
+- `ra89r_port.md` — the port itself: what the RA89R side already provides, the
+  fixes and the missing modules the K1 application needs before it can run, the
+  board facts to re-point, and the order to do it in.  The `port` branch's
+  working document.
 
 **Every feature gets its own `ra89r_<feature>.md`**, next to the code, holding more
 than a summary: the protocol or register semantics, the evidence for each hardware
@@ -203,6 +207,16 @@ driver/audiocontrol       audio       -- MERGED.  It receives and transmits: the
                                          `0x7D`, PrepareTransmit, the `0x50 = 0x3B20`
                                          unmute the import was not sending, the mic
                                          gain in `0x40`).  See ra89r_rfpath.md
+port                      integration -- OPEN: the K1/F4HWN application port, off
+                                         develop.  Nothing ported yet; ra89r_port.md
+                                         is the plan and the fix list (the TX chain
+                                         reaching the app's path, TX power from the
+                                         codeplug, per-band path and BK4815 handling,
+                                         the squelch ramp, the whole gEeprom/storage
+                                         group, the license, and having the app write
+                                         the 0x0805FFF0 boot marker itself the way the
+                                         stock does -- that last one is a boot-time
+                                         one-liner, not a blocker)
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all
@@ -260,14 +274,23 @@ generator, its pin is PA4 = `DAC_OUT1`).
 
 - **Known discrepancy, unresolved:** on the radio this firmware reports
   `app-valid marker at 0x0805FFF0 = 0xff (expected 0x11)`, while `tools/ra89r_flash.py`
-  writes `0x11` there by default.  Either the read or the write is landing somewhere
-  else.  It matters because a cleared marker is what leaves the radio sitting in the
-  bootloader; one power cycle tells which of the two it is.
-- **The bootloader only starts the application while `0x0805FFF0` holds `0x11`**
-  (ra89r_bootloader.md §4c).  It clears that byte when it enters update mode, so
-  a flashing tool must set it again or the radio reboots into the bootloader
-  (black screen, silent UART).  `tools/ra89r_flash.py` does this by default;
-  `firmware/App/main.c` reports the byte at boot over the UART.
+  writes `0x11` there by default and the bootloader acknowledges that record.  The
+  application answering at all fits two readings: the byte really is 0x11 and our
+  *read* is wrong, or the app came out of the bootloader's update-mode fall-through,
+  which launches it without testing the marker.  The app's `reset cause` line tells
+  them apart -- `software (bootloader EXIT)` means the chip reset through the marker
+  check, so the byte is valid and the read is at fault; `power-on`/`pin reset` means
+  the app was launched with the byte at 0xFF, and then the next ordinary power-on
+  lands in the bootloader.
+- **The bootloader starts the application only while `0x0805FFF0` holds `0x11`**
+  *and* PB9 or PA2 reads high at reset (ra89r_bootloader.md §4c) -- with both pins low
+  it goes to update mode whatever the byte says, and the reset vector leads through
+  that decision.  Entering update mode clears the byte, so a flashing tool must set it
+  again or the radio comes back in the bootloader (black screen, silent console);
+  `tools/ra89r_flash.py` does that by default and `firmware/App/main.c` reports the
+  byte at boot.  The stock application also writes the byte itself on a good start
+  (`0x08015724`), which is worth copying: the tool's write does not survive a flash
+  session that ends without `EXIT`.
 - The firmware is linked for flash address **`0x08004000`** with a **368K** flash
   region: the stock bootloader at `0x08000000-0x08003FFF` must stay intact, and
   the stock application lives exactly where our image goes.
