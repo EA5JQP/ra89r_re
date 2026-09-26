@@ -169,6 +169,13 @@ bool RADIO_CheckValidChannel(uint16_t channel, bool checkScanList, uint8_t scanL
     // return true if the channel appears valid
     if (!IS_MR_CHANNEL(channel))
         return false;
+    /* Port fix: the K1 never tests the "no such channel" marker, so on a
+     * codeplug with only a few channels programmed the channel-up/down walk
+     * would stop on an unused slot and RADIO_ConfigureChannel would bounce the
+     * radio to the frequency channel.  This radio's codeplug really is sparse
+     * (four channels out of 210), so the marker has to be honoured here. */
+    if (att->__val == 0xFFFF)
+        return false;
     if (checkScanList && att->exclude == true)
         return false;
     if (att->band > BAND7_470MHz)
@@ -329,103 +336,52 @@ void RADIO_ConfigureChannel(const unsigned int VFO, const unsigned int configure
     pVfo->SCANLIST_PARTICIPATION  = bParticipation;
     pVfo->CHANNEL_SAVE            = channel;
 
-    uint32_t base;
-    if (IS_MR_CHANNEL(channel))
-        base = channel * 16;
-    else
-        base = 0x009000 + ((channel - FREQ_CHANNEL_FIRST) * 32) + (VFO * 16);
-
     if (configure == VFO_CONFIGURE_RELOAD || IS_FREQ_CHANNEL(channel))
     {
-        uint8_t tmp;
-        uint8_t data[8];
-        
-        // ***************
+        /* Port adaptation: the K1 reads its own 16-byte channel record here
+         * (channel*16, or 0x009000 for a frequency channel).  This radio's
+         * codeplug is a different format on a different chip, so the read --
+         * and every bit of layout knowledge with it -- lives behind
+         * SETTINGS_FetchChannelScanDisplayInfo() in settings.c/port_codeplug.c,
+         * including where a frequency channel's own frequency is kept. */
+        ChannelScanDisplayInfo_t info;
 
-        PY25Q16_ReadBuffer(base + 8, data, sizeof(data));
-
-        tmp = data[3] & 0x0F;
-        if (tmp > TX_OFFSET_FREQUENCY_DIRECTION_SUB)
-            tmp = 0;
-        pVfo->TX_OFFSET_FREQUENCY_DIRECTION = tmp;
-        tmp = data[3] >> 4;
-        if (tmp >= MODULATION_UKNOWN)
-            tmp = MODULATION_FM;
-        pVfo->Modulation = tmp;
-
-        tmp = data[6];
-        if (tmp >= STEP_N_ELEM)
-            tmp = STEP_12_5kHz;
-        pVfo->STEP_SETTING  = tmp;
-        pVfo->StepFrequency = gStepFrequencyTable[tmp];
-
-        tmp = data[7];
-#ifndef ENABLE_FEAT_F4HWN
-        if (tmp > (ARRAY_SIZE(gSubMenu_SCRAMBLER) - 1))
-            tmp = 0;
-        pVfo->SCRAMBLING_TYPE = tmp;
-#else
-        pVfo->SCRAMBLING_TYPE = 0;
-#endif
-
-        pVfo->freq_config_RX.CodeType = (data[2] >> 0) & 0x0F;
-        pVfo->freq_config_TX.CodeType = (data[2] >> 4) & 0x0F;
-
-        RADIO_ValidateAndSetCode(&pVfo->freq_config_RX, data[0]);
-        RADIO_ValidateAndSetCode(&pVfo->freq_config_TX, data[1]);
-
-        if (data[4] == 0xFF)
+        if (SETTINGS_FetchChannelScanDisplayInfo(channel, &info))
         {
-            pVfo->FrequencyReverse  = false;
-            pVfo->CHANNEL_BANDWIDTH = BK4819_FILTER_BW_WIDE;
-            pVfo->OUTPUT_POWER      = OUTPUT_POWER_LOW1;
-            pVfo->BUSY_CHANNEL_LOCK = false;
-            pVfo->TX_LOCK = true;
-        }
-        else
-        {
-            const uint8_t d4 = data[4];
-            pVfo->FrequencyReverse  = !!((d4 >> 0) & 1u);
-            pVfo->CHANNEL_BANDWIDTH = !!((d4 >> 1) & 1u);
-            pVfo->OUTPUT_POWER      =   ((d4 >> 2) & 7u);
-            pVfo->BUSY_CHANNEL_LOCK = !!((d4 >> 5) & 1u);
-            pVfo->TX_LOCK           = !!((d4 >> 6) & 1u);
-        }
+            pVfo->TX_OFFSET_FREQUENCY_DIRECTION = info.txOffsetFrequencyDirection;
+            pVfo->Modulation                    = info.modulation;
+            pVfo->STEP_SETTING                  = info.stepSetting;
+            pVfo->StepFrequency                 = info.stepFrequency;
+            pVfo->SCRAMBLING_TYPE               = 0;
 
-        if (data[5] == 0xFF)
-        {
+            pVfo->freq_config_RX.CodeType = info.rx.CodeType;
+            pVfo->freq_config_TX.CodeType = info.tx.CodeType;
+
+            RADIO_ValidateAndSetCode(&pVfo->freq_config_RX, info.rx.Code);
+            RADIO_ValidateAndSetCode(&pVfo->freq_config_TX, info.tx.Code);
+
+            pVfo->FrequencyReverse  = info.frequencyReverse;
+            pVfo->CHANNEL_BANDWIDTH = info.channelBandwidth;
+            pVfo->OUTPUT_POWER      = info.outputPower;
+            pVfo->BUSY_CHANNEL_LOCK = info.busyChannelLock;
+            pVfo->TX_LOCK           = info.txLock;
 #ifdef ENABLE_DTMF_CALLING
-            pVfo->DTMF_DECODING_ENABLE = false;
+            pVfo->DTMF_DECODING_ENABLE = info.dtmfDecodingEnable;
 #endif
-            pVfo->DTMF_PTT_ID_TX_MODE  = PTT_ID_OFF;
+            pVfo->DTMF_PTT_ID_TX_MODE  = info.dtmfPttIdTxMode;
+
+            if (info.rx.Frequency == 0xFFFFFFFFu)
+                pVfo->freq_config_RX.Frequency = frequencyBandTable[band].lower;
+            else
+                pVfo->freq_config_RX.Frequency = info.rx.Frequency;
+
+            pVfo->TX_OFFSET_FREQUENCY = info.offset;
         }
         else
         {
-#ifdef ENABLE_DTMF_CALLING
-            pVfo->DTMF_DECODING_ENABLE = ((data[5] >> 0) & 1u) ? true : false;
-#endif
-            uint8_t pttId = ((data[5] >> 1) & 7u);
-            pVfo->DTMF_PTT_ID_TX_MODE  = pttId < ARRAY_SIZE(gSubMenu_PTT_ID) ? pttId : PTT_ID_OFF;
+            RADIO_InitInfo(pVfo, channel, frequencyBandTable[band].lower);
+            return;
         }
-
-        // ***************
-
-        struct {
-            uint32_t Frequency;
-            uint32_t Offset;
-        } __attribute__((packed)) info;
-        PY25Q16_ReadBuffer(base, &info, sizeof(info));
-        if(info.Frequency==0xFFFFFFFF)
-            pVfo->freq_config_RX.Frequency = frequencyBandTable[band].lower;
-        else
-            pVfo->freq_config_RX.Frequency = info.Frequency;
-
-        if (info.Offset >= _1GHz_in_KHz)
-            info.Offset = _1GHz_in_KHz / 100;
-
-        pVfo->TX_OFFSET_FREQUENCY = info.Offset;
-
-        // ***************
     }
 
     uint32_t frequency = pVfo->freq_config_RX.Frequency;

@@ -40,14 +40,20 @@ Imported from the UV-K1/K5V3 project
 | `firmware/App/port_board.c`, `App/driver/system.c` | port code | the K1's `BOARD_*` surface (only the battery read is left for the application: a placeholder pack, because this radio's gauge chip never answers) and `SYSTEM_DelayMs` over this repo's SysTick |
 | `firmware/App/driver/keyboard.c`, `App/port_gui.c` | port code | not imported: the K1's matrix scan replaced by this repo's ADC-ladder reader, and the port's small stand-in for the K1 `app/main.c` key routing (the K1's `MENU_ProcessKeys` for the menu, tuning for the VFO), to be replaced as more of the application lands |
 | `firmware/App/driver/backlight.h` `.c` | extended | this repo's backlight driver plus the K1's names (`gBacklightCountdown_500ms`, `gBacklightBrightness`, `value[]`, `BACKLIGHT_InitHardware/_Update/_UpdateTickless/_SetBrightness`); the brightness is kept as state, the panel stays on -- the DAC dimming is not implemented |
+| `firmware/App/radio.c` | adapted | `RADIO_ConfigureChannel`'s channel read -- the K1's own 16-byte record at `channel*16` and its `0x009000` frequency-channel block -- is replaced by one call to `SETTINGS_FetchChannelScanDisplayInfo()`, so every byte of codeplug layout lives in `settings.c`/`port_codeplug.c`; and `RADIO_CheckValidChannel` now rejects the K1's `0xFFFF` "no such channel" marker, without which the channel walk stops on an unused slot (this radio's codeplug really is sparse: four channels of 210).  Everything else, including the bit meaning of the K1's `data[]`, is unchanged -- the port's decoder produces that same shape |
+| `firmware/App/misc.c` | adapted | `MR_LoadChannelAttributesFromFlash` / `MR_SaveChannelAttributesToFlash` no longer touch the K1's 2-byte attribute table at `0x8000` -- on this chip that address is the middle of the stock's channel records.  The loader maps the stock's used/scan-allow bitmaps instead; the saver is refused.  The attribute cache and every caller are the K1's |
+| `firmware/App/settings.c` `.h` | port code, replacing the K1's 1344-line module | the K1's `SETTINGS_*` interface over this radio's codeplug (`port_codeplug.c`) and the port's own blob; the K1's flat-EEPROM layout is not implemented and not needed |
+| `firmware/App/port_codeplug.c`, `App/port_codeplug.h` | port code | the RA89R codeplug decoder: the 21-byte channel records, the two bitmaps, the tone encoding and the K1's channel-attribute mapping.  Read-only (see `ra89r_codeplug.md`) |
+| `firmware/App/port_state.c` | port code | the boot order the K1's own `main()` performs (`SETTINGS_InitEEPROM`, `SETTINGS_LoadCalibration`, `RADIO_ConfigureChannel` twice, `RADIO_SelectVfos`) and the VFO self-pointer fixup |
 
 | `firmware/App/py32f0xx.h`, `App/external/printf/printf.h` | shims | the vendor device header of the K1's PY32F071 and its embedded printf, mapped to this repo's `py32f4xx.h` and to newlib |
-| `firmware/tools/host/py32f4xx.h`, `tools/host/host_hw.c` | test double | a host-only device header (CMSIS's `__DSB()` is ARM assembly, so a PC build cannot use the real one) plus stand-ins for the backlight and the two `BK4819_*` calls the screens make |
+| `firmware/tools/host/py32f4xx.h`, `tools/host/host_hw.c` | test double | a host-only device header (CMSIS's `__DSB()` is ARM assembly, so a PC build cannot use the real one) plus stand-ins for the backlight and the two `BK4819_*` calls the screens make, and a RAM stand-in for the external SPI NOR that carries a factory-shaped codeplug so the preview exercises the channel decoder |
+| `firmware/tools/host/host_led.c` | test double | the status LED, for the tools that link `driver/bk4819.c` (which mirrors the chip's GPIO outputs onto it) without this repo's GPIO layer |
 
 Not imported on purpose: the K1's `board.h`, `driver/{gpio,uart,systick}.h` and
-its `driver/st7565.c` body stay this repo's; its `settings.c`, `radio.c`,
-`misc.c` and the `app/*` modules are replaced for now by
-`firmware/App/port_state.c`, whose stubs each name the K1 module that owns them.
+its `driver/st7565.c` body stay this repo's; its `settings.c` is replaced by this
+repo's (`settings.c` + `port_codeplug.c`), because the layout behind it is this
+radio's, and its `driver/py25q16.c` sector cache and multiboot banking stay out.
 
 Feature macros for the imported files live in `firmware/App/port_features.h` and
 are force-included by the build (`-include`), so the imported sources stay

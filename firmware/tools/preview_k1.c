@@ -1,22 +1,22 @@
 /* preview_k1.c -- render the ported K1 screens on a PC.
  *
  * The VFO screen is the K1's own ui/main.c (UI_DisplayMain) compiled against
- * the port's headers, buffers and state facade; this tool just sets the state
- * up, calls it, and prints the panel as text.  Page 0 is the status line,
+ * the port's headers, buffers and settings layer; this tool sets the state up,
+ * calls it, and prints the panel as text.  Page 0 is the status line,
  * pages 1..7 are gFrameBuffer[0..6].
  *
- *   gcc -std=c11 -I App -I App/driver -include App/port_features.h \
- *       -DST7565_HOST_TEST tools/preview_k1.c App/ui/main.c App/ui/helper.c \
- *       App/ui/inputbox.c App/port_state.c App/settings.c App/font.c \
- *       App/bitmaps.c App/driver/st7565.c -o /tmp/preview_k1 && /tmp/preview_k1
- *
- * (AGENTS.md, "Offline checks", has the same command with the SDK path.)
+ * It links the whole application core, not just the screens: port_state_init()
+ * runs the K1's real boot sequence and the key loop runs the K1's real
+ * CheckKeys(), so the codeplug decoder and the key routing are exercised too.
+ * AGENTS.md, "Offline checks", has the current command.
  */
 #include <stdio.h>
 
+#include "app/app.h"
 #include "driver/st7565.h"
 #include "host_hw.h"
 #include "misc.h"
+#include "port_codeplug.h"
 #include "port_state.h"
 #include "radio.h"
 #include "settings.h"
@@ -24,6 +24,33 @@
 #include "port_gui.h"
 #include "port_storage.h"
 #include "ui/menu.h"
+
+/* One pass of the firmware's own loop (firmware/App/main.c): the application
+ * state machine and panel, the port's transmit check, then the 10 ms slice --
+ * which is where the K1's CheckKeys() lives and therefore the only place a key
+ * does anything.  The preview has to run all three or it is only pressing keys
+ * at a radio that is not listening. */
+static void step(void)
+{
+    APP_Update();
+    port_gui_poll();
+    APP_TimeSlice10ms();
+}
+
+/* A key event, as the radio sees it: hold the key for enough 10 ms slices that
+ * CheckKeys()'s debounce (key_debounce_10ms) passes, then release it and give
+ * the release the same treatment. */
+static void press(KEY_Code_t key)
+{
+    unsigned int i;
+
+    host_set_key(key);
+    for (i = 0; i < 4; i++)
+        step();
+    host_set_key(KEY_INVALID);
+    for (i = 0; i < 4; i++)
+        step();
+}
 
 static void render(const char *title)
 {
@@ -53,6 +80,47 @@ int main(void)
 {
     ST7565_Init();
     port_state_init();
+
+    /* ---- the codeplug: what the stock's records decode to ---------------- */
+    {
+        unsigned int channel;
+
+        printf("\n[codeplug] the host's synthetic stock image\n");
+        printf("  screen A = %u, screen B = %u (the first two channels it has)\n",
+               (unsigned)gEeprom.ScreenChannel[0], (unsigned)gEeprom.ScreenChannel[1]);
+
+        for (channel = 0; channel < 8u; channel++) {
+            ChannelScanDisplayInfo_t info;
+            char name[16];
+
+            if (!port_codeplug_scan_info(channel, &info)) {
+                printf("  CH %2u  -- not used\n", channel);
+                continue;
+            }
+
+            port_codeplug_name(name, sizeof name, channel);
+            printf("  CH %2u  %3u.%05u MHz  tx %3u.%05u  %-6s  code rx %u/%u tx %u/%u  "
+                   "step %u  power %u  bw %u  txlock %u  excl %u\n",
+                   channel,
+                   (unsigned)(info.rx.Frequency / 100000u), (unsigned)(info.rx.Frequency % 100000u),
+                   (unsigned)(info.tx.Frequency / 100000u), (unsigned)(info.tx.Frequency % 100000u),
+                   name,
+                   (unsigned)info.rx.CodeType, (unsigned)info.rx.Code,
+                   (unsigned)info.tx.CodeType, (unsigned)info.tx.Code,
+                   (unsigned)info.stepSetting, (unsigned)info.outputPower,
+                   (unsigned)info.channelBandwidth, (unsigned)info.txLock,
+                   (unsigned)port_codeplug_excluded(channel));
+        }
+
+        printf("  VFO A: %3u.%05u MHz, bandwidth %u, power %u, TX_LOCK %u\n",
+               (unsigned)(gRxVfo->freq_config_RX.Frequency / 100000u),
+               (unsigned)(gRxVfo->freq_config_RX.Frequency % 100000u),
+               (unsigned)gRxVfo->CHANNEL_BANDWIDTH, (unsigned)gRxVfo->OUTPUT_POWER,
+               (unsigned)gRxVfo->TX_LOCK);
+    }
+
+    UI_DisplayMain();
+    render("K1 UI_DisplayMain(): as the codeplug configured it (CH-01, 144.9750)");
 
     gRxVfo->freq_config_RX.Frequency = 14575000u;
     gRxVfo->freq_config_TX.Frequency = 14575000u;
@@ -104,33 +172,37 @@ int main(void)
     port_gui_welcome();
     render("K1 UI_DisplayWelcome(): the ported boot screen");
 
-    /* ---- the key loop: port_gui.c driving the K1's screens --------------- */
+    /* ---- the key loop: the K1's own CheckKeys() driving the screens ------- */
     gRxVfo->freq_config_RX.Frequency = 14575000u;
     gRxVfo->freq_config_TX.Frequency = 14575000u;
     port_gui_init();
+    printf("\n[keys] start: screen A = %u, VFO A %u.%05u MHz\n",
+           (unsigned)gEeprom.ScreenChannel[0],
+           (unsigned)(gRxVfo->freq_config_RX.Frequency / 100000u),
+           (unsigned)(gRxVfo->freq_config_RX.Frequency % 100000u));
 
-    host_set_key(KEY_UP);              /* tune up one 12.5 kHz step ... */
-    port_gui_poll();
-    host_set_key(KEY_INVALID);
-    port_gui_poll();
-    render("port_gui_poll(): VFO after one KEY_UP step (145.7625)");
+    press(KEY_UP);                     /* the K1's UP/DOWN key action ... */
+    printf("[keys] after KEY_UP: screen A = %u, VFO A %u.%05u MHz\n",
+           (unsigned)gEeprom.ScreenChannel[0],
+           (unsigned)(gRxVfo->freq_config_RX.Frequency / 100000u),
+           (unsigned)(gRxVfo->freq_config_RX.Frequency % 100000u));
+    render("CheckKeys(): after a KEY_UP press (see the [keys] line above)");
 
-    host_set_key(KEY_MENU);            /* ... then open the menu ... */
-    port_gui_poll();
-    host_set_key(KEY_INVALID);
-    port_gui_poll();
-    render("port_gui_poll(): KEY_MENU opened the menu");
+    press(KEY_MENU);                   /* ... then open the menu ... */
+    printf("[keys] after KEY_MENU: screen = %u (DISPLAY_MENU = %u)\n",
+           (unsigned)gScreenToDisplay, (unsigned)DISPLAY_MENU);
+    render("CheckKeys(): KEY_MENU opened the menu");
 
     {
+        const unsigned int before = gMenuCursor;
         int i;
-        for (i = 0; i < 3; i++) {      /* ... and walk down three items */
-            host_set_key(KEY_DOWN);
-            port_gui_poll();
-            host_set_key(KEY_INVALID);
-            port_gui_poll();
-        }
+
+        for (i = 0; i < 3; i++)        /* ... and walk down three items */
+            press(KEY_DOWN);
+        printf("[keys] after three KEY_DOWN: menu cursor %u -> %u\n",
+               before, (unsigned)gMenuCursor);
     }
-    render("port_gui_poll(): three KEY_DOWN presses moved the cursor");
+    render("CheckKeys(): three KEY_DOWN presses moved the cursor");
 
     return 0;
 }

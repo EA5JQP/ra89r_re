@@ -1,30 +1,41 @@
-/* The port's settings state.
+/* The port's settings layer.
  *
- * The K1 keeps its codeplug in `gEeprom` (EEPROM_Config_t, settings.h) and
- * reads it through SETTINGS_* accessors in its settings.c, backed by the
- * external SPI NOR flash.  The port has the external-NOR driver on an unmerged
- * branch (driver/eeprom) and its write test is still pending, so for now:
+ * The K1's settings.c reads and writes a flat blob in the K1's own EEPROM
+ * format.  This radio's codeplug is a different format on a different chip
+ * (ra89r_codeplug.md), so the *interface* is the K1's and the *layout* is the
+ * stock's: every function below is the K1's contract, implemented against
+ * port_codeplug.c for the stock's regions and against the port's own blob
+ * (port_storage.c) for the values the stock has no place for.
  *
- *   * gEeprom is a plain RAM object (definition here) filled by
- *     PORT_SettingsDefaults();
- *   * the accessors the screens call live in port_state.c with the rest of the
- *     facade, and are replaced by the K1's real settings.c once the storage
- *     backend is validated.
- *
- * gKeypadLocked lives in the K1's misc.c, which the port has not brought in
- * yet, so it is defined here until it does.
+ * What is deliberately read-only: the stock's codeplug.  Nothing here writes a
+ * channel, a name or the settings block, so the stock firmware and the CPS keep
+ * seeing exactly the radio they wrote.  The port's own state -- VFO
+ * frequencies, its menu settings -- lives in the blob at 0x1FF000, which the
+ * 2 MB part leaves empty.
  */
 #include <string.h>
 
+#include "app/dtmf.h"
+#include "frequencies.h"
 #include "misc.h"
+#include "port_codeplug.h"
+#include "port_storage.h"
 #include "settings.h"
+#include "version.h"
 
 EEPROM_Config_t gEeprom;
 
+/* The port's own state, saved in the blob next to gEeprom. */
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t reserved;
+    uint8_t  freq_channels[7 * 2 * 16];   /* port_codeplug_freq_snapshot() */
+} port_settings_extra_t;
 
-/* Values that make the VFO screen show something sane before the codeplug is
- * readable: a channel (rather than a bare frequency), 145.7500 MHz, FM, the
- * stock squelch level and the stock display mode. */
+#define PORT_EXTRA_MAGIC   0x58545241u    /* "ARTX" */
+#define PORT_EXTRA_VERSION 1u
+
 void PORT_SettingsDefaults(void)
 {
     memset(&gEeprom, 0, sizeof gEeprom);
@@ -60,4 +71,267 @@ void PORT_SettingsDefaults(void)
     gEeprom.SCAN_LIST_ENABLED = false;
     gEeprom.CURRENT_STATE = 0;
     gEeprom.CURRENT_LIST = 0;
+
+    gEeprom.MIC_SENSITIVITY = 4;
+    gEeprom.MIC_SENSITIVITY_TUNING = 0;
+    gEeprom.VOLUME_GAIN = 8;
+    gEeprom.DAC_GAIN = 8;
+    gEeprom.BATTERY_TYPE = BATTERY_TYPE_1600_MAH;
+    gEeprom.POWER_ON_DISPLAY_MODE = POWER_ON_DISPLAY_MODE_ALL;
+    gEeprom.ROGER = ROGER_MODE_OFF;
+    gEeprom.BACKLIGHT_MIN = 1;
+    gEeprom.BACKLIGHT_MAX = 5;
+}
+
+/* The first channel the codeplug has at or after `start`, or 0xFFFF. */
+static uint16_t settings_first_channel(uint16_t start)
+{
+    uint16_t channel;
+
+    for (channel = start; channel < RA89R_CP_RECORD_COUNT; channel++) {
+        ra89r_codeplug_record_t record;
+
+        if (!port_codeplug_used(channel))
+            continue;
+        if (!port_codeplug_read(channel, &record))
+            continue;
+        if (record.rx_frequency == 0u || record.rx_frequency == 0xFFFFFFFFu)
+            continue;
+        return channel;
+    }
+
+    return 0xFFFFu;
+}
+
+void SETTINGS_InitEEPROM(void)
+{
+    PORT_SettingsDefaults();
+
+    /* The external NOR driver first: everything below reads the chip, and a
+     * read taken before the bus is up caches 0xFF -- a radio with no channels
+     * and no stored settings, which is exactly what it is not. */
+    port_storage_init();
+    port_codeplug_init();
+
+    /* The K1's channel-attribute cache marks an unused slot with
+     * channel_id == 0xFFFF, so it has to be initialised before the first lookup
+     * -- otherwise a lookup of channel 0 hits the zeroed slot and is told the
+     * channel has band 0 and no scan lists.  misc.c has the function; its own
+     * comment says it belongs in this boot sequence. */
+    MR_InitChannelAttributesCache();
+
+    /* The stock's shared settings next: they are what a radio configured by
+     * the stock firmware or its CPS already carries. */
+    port_codeplug_shared_settings();
+
+    /* Then the port's own blob, which wins where the two overlap: it is what
+     * the user last set with this firmware. */
+    if (port_storage_load_settings()) {
+        port_settings_extra_t extra;
+
+        memset(&extra, 0, sizeof extra);
+        if (port_storage_get_extra(&extra, sizeof extra) &&
+            extra.magic == PORT_EXTRA_MAGIC &&
+            extra.version == PORT_EXTRA_VERSION) {
+            port_codeplug_freq_restore(extra.freq_channels, sizeof extra.freq_channels);
+        }
+    } else {
+        /* No blob yet: land the two VFOs on the first two channels the codeplug
+         * actually has, so the double-channel screen shows two real rows on any
+         * radio rather than a bare frequency. */
+        const uint16_t first = settings_first_channel(0);
+        const uint16_t second = (first == 0xFFFFu) ? 0xFFFFu
+                                                   : settings_first_channel((uint16_t)(first + 1u));
+
+        if (first != 0xFFFFu) {
+            gEeprom.ScreenChannel[0] = first;
+            gEeprom.MrChannel[0]     = first;
+        }
+        if (second != 0xFFFFu) {
+            gEeprom.ScreenChannel[1] = second;
+            gEeprom.MrChannel[1]     = second;
+        }
+    }
+}
+
+void SETTINGS_LoadCalibration(void)
+{
+    /* The stock's calibration lives in the codeplug's calibration block
+     * (ra89r_codeplug.md) and is not mapped yet.  The RF driver runs on the
+     * values measured on this radio (ra89r_bk4829.md), so there is nothing to
+     * load here -- and nothing that may overwrite the stock's calibration. */
+}
+
+/* ---------------------------------------------------------------------------
+ * Channels
+ * ------------------------------------------------------------------------- */
+
+uint32_t SETTINGS_FetchChannelFrequency(const uint16_t channel)
+{
+    ra89r_codeplug_record_t record;
+
+    if (IS_MR_CHANNEL(channel)) {
+        if (!port_codeplug_read(channel, &record))
+            return 0u;
+        if (record.rx_frequency == 0xFFFFFFFFu)
+            return 0u;
+        return record.rx_frequency;
+    }
+
+    if (IS_FREQ_CHANNEL(channel)) {
+        ChannelScanDisplayInfo_t info;
+
+        if (!port_codeplug_freq_get(channel, gEeprom.RX_VFO, &info))
+            return 0u;
+        return info.rx.Frequency;
+    }
+
+    return 0u;
+}
+
+bool SETTINGS_FetchChannelScanInfo(const uint16_t channel, uint32_t *frequency, ModulationMode_t *modulation)
+{
+    ChannelScanDisplayInfo_t info;
+
+    if (!SETTINGS_FetchChannelScanDisplayInfo(channel, &info)) {
+        if (frequency != 0)
+            *frequency = 0u;
+        if (modulation != 0)
+            *modulation = MODULATION_FM;
+        return false;
+    }
+
+    if (frequency != 0)
+        *frequency = info.rx.Frequency;
+    if (modulation != 0)
+        *modulation = info.modulation;
+    return true;
+}
+
+bool SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDisplayInfo_t *info)
+{
+    if (info == 0)
+        return false;
+
+    if (IS_MR_CHANNEL(channel))
+        return port_codeplug_scan_info(channel, info);
+
+    if (IS_FREQ_CHANNEL(channel))
+        return port_codeplug_freq_get(channel, gEeprom.RX_VFO, info);
+
+    return false;
+}
+
+void SETTINGS_FetchChannelName(char *s, const uint16_t channel)
+{
+    if (s == 0)
+        return;
+
+    s[0] = 0;
+
+    if (!IS_MR_CHANNEL(channel))
+        return;
+
+    port_codeplug_name(s, 16u, channel);
+}
+
+/* ---------------------------------------------------------------------------
+ * Writing.  The stock's regions stay untouched; the port's own state goes to
+ * its blob.  A channel the user edits is a write into the stock's codeplug and
+ * is not implemented yet (ra89r_codeplug.md, "Writing").
+ * ------------------------------------------------------------------------- */
+
+static bool settings_save_all(void)
+{
+    port_settings_extra_t extra;
+
+    memset(&extra, 0, sizeof extra);
+    extra.magic = PORT_EXTRA_MAGIC;
+    extra.version = PORT_EXTRA_VERSION;
+    port_codeplug_freq_snapshot(extra.freq_channels, sizeof extra.freq_channels);
+
+    if (!port_storage_set_extra(&extra, sizeof extra))
+        return false;
+
+    return port_storage_save_settings();
+}
+
+void SETTINGS_SaveSettings(void)
+{
+    (void)settings_save_all();
+}
+
+void SETTINGS_SaveVfoIndices(void)
+{
+    (void)settings_save_all();
+}
+
+void SETTINGS_SaveVfoIndicesFlush(void)
+{
+    (void)settings_save_all();
+}
+
+void SETTINGS_SaveChannel(uint16_t Channel, uint8_t VFO, const VFO_Info_t *pVFO, uint8_t Mode)
+{
+    (void)Channel;
+    (void)VFO;
+    (void)pVFO;
+    (void)Mode;
+    /* A memory channel lives in the stock's records, which this firmware does
+     * not write yet.  A frequency channel is the port's own, so it can. */
+    if (IS_FREQ_CHANNEL(Channel) && pVFO != 0) {
+        ChannelScanDisplayInfo_t info;
+
+        memset(&info, 0, sizeof info);
+        info.rx = pVFO->freq_config_RX;
+        info.tx = pVFO->freq_config_TX;
+        info.offset = pVFO->TX_OFFSET_FREQUENCY;
+        info.stepSetting = pVFO->STEP_SETTING;
+        info.stepFrequency = pVFO->StepFrequency;
+        info.modulation = pVFO->Modulation;
+        info.txOffsetFrequencyDirection = pVFO->TX_OFFSET_FREQUENCY_DIRECTION;
+        info.outputPower = pVFO->OUTPUT_POWER;
+        info.frequencyReverse = pVFO->FrequencyReverse;
+        info.channelBandwidth = pVFO->CHANNEL_BANDWIDTH;
+        info.busyChannelLock = pVFO->BUSY_CHANNEL_LOCK;
+        info.txLock = pVFO->TX_LOCK;
+        info.dtmfPttIdTxMode = pVFO->DTMF_PTT_ID_TX_MODE;
+        port_codeplug_freq_set(Channel, gEeprom.TX_VFO, &info);
+    }
+
+    (void)settings_save_all();
+}
+
+void SETTINGS_SaveChannelName(uint16_t channel, const char *name)
+{
+    (void)channel;
+    (void)name;
+    /* The stock's channel names are the codeplug's; writing one is a write into
+     * a stock region, which waits for the journal work. */
+}
+
+void SETTINGS_UpdateChannel(uint16_t channel, const VFO_Info_t *pVFO, bool keep)
+{
+    SETTINGS_SaveChannel(channel, gEeprom.TX_VFO, pVFO, keep ? 1u : 0u);
+}
+
+void SETTINGS_FactoryReset(bool bIsAll)
+{
+    (void)bIsAll;
+    /* Never: this would erase the stock's codeplug.  A factory reset here would
+     * have to restore the port's own blob, and that is not needed yet. */
+}
+
+void SETTINGS_SaveBatteryCalibration(const uint16_t *batteryCalibration)
+{
+    (void)batteryCalibration;
+    /* The gauge chip has not answered yet (ra89r_battery.md); there is nothing
+     * to calibrate against. */
+}
+
+void SETTINGS_ResetTxLock(void)
+{
+    /* The K1 walks its channel table clearing TX_LOCK.  Here that is a write
+     * into the stock's records; the lock is per channel and the user can still
+     * change one from the radio. */
 }

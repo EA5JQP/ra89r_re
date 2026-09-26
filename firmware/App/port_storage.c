@@ -28,15 +28,24 @@
 #define PORT_BLOB_ADDR      0x1FF000u
 #define PORT_TEST_ADDR      0x1FE000u
 #define PORT_BLOB_MAGIC     0x52393852u   /* "R89R" */
-#define PORT_BLOB_VERSION   1u
+#define PORT_BLOB_VERSION   2u
 
 typedef struct {
     uint32_t magic;
     uint16_t version;
-    uint16_t size;
-    uint32_t sum;                          /* additive checksum of the payload */
+    uint16_t size;                          /* sizeof(EEPROM_Config_t) */
+    uint16_t extra_size;                    /* bytes of extra[] in use */
+    uint16_t reserved;
+    uint32_t sum;                           /* additive checksum of settings */
+    uint32_t extra_sum;                     /* and of extra[0..extra_size) */
     EEPROM_Config_t settings;
+    uint8_t extra[PORT_STORAGE_EXTRA_MAX];
 } port_blob_t;
+
+/* The payload in RAM: what a load produced, and what the next save writes.
+ * Kept outside the blob so saving the settings does not have to understand it. */
+static uint8_t blob_extra[PORT_STORAGE_EXTRA_MAX];
+static uint16_t blob_extra_size;
 
 static uint32_t blob_sum(const void *data, uint32_t size)
 {
@@ -47,6 +56,26 @@ static uint32_t blob_sum(const void *data, uint32_t size)
     for (i = 0; i < size; i++)
         sum += p[i];
     return sum;
+}
+
+bool port_storage_set_extra(const void *data, uint32_t size)
+{
+    if (data == 0 || size > PORT_STORAGE_EXTRA_MAX)
+        return false;
+
+    memset(blob_extra, 0, sizeof blob_extra);
+    memcpy(blob_extra, data, size);
+    blob_extra_size = (uint16_t)size;
+    return true;
+}
+
+bool port_storage_get_extra(void *data, uint32_t size)
+{
+    if (data == 0 || size > blob_extra_size)
+        return false;
+
+    memcpy(data, blob_extra, size);
+    return true;
 }
 
 /* ---------------------------------------------------------------------------
@@ -125,10 +154,17 @@ bool port_storage_load_settings(void)
 
     if (blob.magic != PORT_BLOB_MAGIC ||
         blob.version != PORT_BLOB_VERSION ||
-        blob.size != (uint16_t)sizeof(EEPROM_Config_t))
+        blob.size != (uint16_t)sizeof(EEPROM_Config_t) ||
+        blob.extra_size > PORT_STORAGE_EXTRA_MAX)
         return false;
     if (blob.sum != blob_sum(&blob.settings, sizeof blob.settings))
         return false;
+    if (blob.extra_sum != blob_sum(blob.extra, blob.extra_size))
+        return false;
+
+    memset(blob_extra, 0, sizeof blob_extra);
+    memcpy(blob_extra, blob.extra, blob.extra_size);
+    blob_extra_size = blob.extra_size;
 
     gEeprom = blob.settings;
     /* The struct carries pointers into itself, which a flash round-trip cannot
@@ -145,8 +181,11 @@ bool port_storage_save_settings(void)
     blob.magic = PORT_BLOB_MAGIC;
     blob.version = PORT_BLOB_VERSION;
     blob.size = (uint16_t)sizeof(EEPROM_Config_t);
+    blob.extra_size = blob_extra_size;
     blob.settings = gEeprom;
     blob.sum = blob_sum(&blob.settings, sizeof blob.settings);
+    memcpy(blob.extra, blob_extra, sizeof blob_extra);
+    blob.extra_sum = blob_sum(blob.extra, blob.extra_size);
 
     spi_flash_sector_erase(PORT_BLOB_ADDR);
     spi_flash_program(PORT_BLOB_ADDR, (const uint8_t *)&blob, sizeof blob);
@@ -158,7 +197,8 @@ bool port_storage_save_settings(void)
 
         memset(&check, 0, sizeof check);
         spi_flash_read(PORT_BLOB_ADDR, (uint8_t *)&check, sizeof check);
-        return check.magic == PORT_BLOB_MAGIC && check.sum == blob.sum;
+        return check.magic == PORT_BLOB_MAGIC && check.sum == blob.sum &&
+               check.extra_sum == blob.extra_sum;
     }
 }
 

@@ -17,6 +17,7 @@
 #include <string.h>
 
 #include "misc.h"
+#include "port_codeplug.h"
 #include "settings.h"
 #include "driver/py25q16.h"
 
@@ -377,6 +378,10 @@ unsigned long StrToUL(const char * str)
 
 // Flash address where channel attributes start
 // NOTE: Verify this matches your Flash layout!
+//
+// Port: unused on this radio -- 0x8000 is the middle of the stock's channel
+// records, and the attributes come from the stock's bitmaps instead
+// (port_codeplug.c).  Kept so the diff against the K1 stays legible.
 
 #define FLASH_CHANNEL_ATTR_BASE 0x8000
 
@@ -448,34 +453,33 @@ static uint32_t GetCurrentTime(void)
 // ════════════════════════════════════════════════════════════════════════════
 
 // Load channel attributes from Flash
+//
+// Port adaptation: the K1 keeps a 2-byte attribute per channel at 0x8000; on
+// this chip 0x8000 is the middle of the stock's channel records, so the mapping
+// is the port's instead -- the stock's own "channel used" and "scan allow"
+// bitmaps, decoded in port_codeplug.c.  The cache around this function, and
+// every caller of MR_GetChannelAttributes(), are the K1's, unchanged.
 void MR_LoadChannelAttributesFromFlash(uint16_t channel_id, ChannelAttributes_t* attributes)
 {
-    // CRITICAL: Validate channel_id
+    if (attributes == NULL)
+        return;
     if (channel_id >= (MR_CHANNELS_MAX + 7)) {
         attributes->__val = 0;
         return;
     }
-    
-    // Calculate Flash address
-    uint32_t flash_addr = FLASH_CHANNEL_ATTR_BASE + (channel_id * sizeof(ChannelAttributes_t));
-    
-    // Read 2 bytes from Flash
-    PY25Q16_ReadBuffer(flash_addr, attributes, sizeof(ChannelAttributes_t));
+
+    attributes->__val = port_codeplug_attributes(channel_id);
 }
 
 // Save channel attributes to Flash
+//
+// Port adaptation: this would write the stock's scan-allow bitmap, which is a
+// write into a stock region the port does not do yet (ra89r_codeplug.md), and
+// the K1's 0x8000 is not ours to touch.  Refused, deliberately.
 void MR_SaveChannelAttributesToFlash(uint16_t channel_id, const ChannelAttributes_t* attributes)
 {
-    // CRITICAL: Validate channel_id
-    if (channel_id >= (MR_CHANNELS_MAX + 7)) {
-        return;
-    }
-    
-    // Calculate Flash address
-    uint16_t flash_addr = FLASH_CHANNEL_ATTR_BASE + (channel_id * FLASH_CHANNEL_ATTR_SIZE);
-    
-    // Write 2 bytes to Flash
-    PY25Q16_WriteBuffer(flash_addr, attributes, sizeof(ChannelAttributes_t), false);
+    (void)channel_id;
+    (void)attributes;
 }
 
 // Get channel attributes (from cache or Flash)

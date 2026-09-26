@@ -397,8 +397,15 @@ static void bench_led(void)
  * bench UI does not. */
 static void radio_boot(void)
 {
+    const uint32_t frequency = (gRxVfo != 0 && gRxVfo->freq_config_RX.Frequency != 0u)
+                                   ? gRxVfo->freq_config_RX.Frequency : BENCH_FREQ_HZ;
+
     uart_puts("\nradio: bring-up (the GUI's radio init lands with the RF layer)\n");
-    rx_init(BENCH_FREQ_HZ);
+    uart_printf("radio: channel %u, %u.%05u MHz\n",
+                (unsigned)gEeprom.ScreenChannel[gEeprom.RX_VFO],
+                (unsigned)(frequency / 100000u),
+                (unsigned)(frequency % 100000u));
+    rx_init(frequency);
     uart_printf("RF: up -- BK4829 id 0x%04X, BK4815 configured (%u writes, "
                 "0x0C = 0x%04X), PA PWM ARR %u, audio path %s\n",
                 (unsigned)bk4829_read_reg(BK4829_REG_ID), bk4815_config_writes(),
@@ -806,9 +813,11 @@ int main(void)
               "'L' cycles off/red/green/both\n");
     /* The radio's interface is the ported K1 application from here on.  The
      * bring-up test card and its bench loop are console diagnostics ('0' hands
-     * the panel back to them); at boot the K1 shows its own screen instead. */
-    radio_boot();
+     * the panel back to them); at boot the K1 shows its own screen instead.
+     * The settings and the codeplug come first, so radio_boot() tunes the
+     * measured receive chain to the channel the codeplug put the radio on. */
     port_state_init();
+    radio_boot();
     port_gui_init();
     /* The K1's main() builds the menu view once, before its loop: the menu key
      * only asks for DISPLAY_MENU, so without this the menu screen would have an

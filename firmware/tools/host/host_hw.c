@@ -81,27 +81,102 @@ void BK4819_ToggleGpioOut(BK4819_GPIO_PIN_t pin, bool enable) { (void)pin; (void
 
 
 /* ---------------------------------------------------------------------------
- * A tiny in-RAM stand-in for the external SPI NOR flash, covering the two
- * sectors the port's storage uses (0x1FE000..0x1FFFFF, both empty on this
- * radio).  Program ANDs bits and erase sets 0xFF, like the real part, so the
- * host can exercise the settings blob round-trip and the write test.
+ * A tiny in-RAM stand-in for the external SPI NOR flash, covering the codeplug
+ * (0x0000..0x1FFF, which the preview preloads with a factory-shaped image) and
+ * the two sectors the port's storage uses (0x1FE000..0x1FFFFF, both empty on
+ * this radio).  Program ANDs bits and erase sets 0xFF, like the real part, so
+ * the host can exercise the channel decoder, the settings blob round-trip and
+ * the write test.
  * ------------------------------------------------------------------------- */
 #define HOST_FLASH_BASE 0x1FE000u
 #define HOST_FLASH_SIZE 0x2000u
 static uint8_t s_host_flash[HOST_FLASH_SIZE];
 
+#define HOST_CP_BASE 0x0000u
+#define HOST_CP_SIZE 0x2000u
+static uint8_t s_host_codeplug[HOST_CP_SIZE];
+
 static int host_flash_at(uint32_t addr, uint32_t *off)
 {
+    if (addr >= HOST_CP_BASE && addr < HOST_CP_BASE + HOST_CP_SIZE) {
+        *off = addr - HOST_CP_BASE;
+        return 1;
+    }
     if (addr < HOST_FLASH_BASE || addr >= HOST_FLASH_BASE + HOST_FLASH_SIZE)
         return 0;
     *off = addr - HOST_FLASH_BASE;
-    return 1;
+    return 2;
+}
+
+static uint8_t *host_flash_ptr(uint32_t addr)
+{
+    uint32_t off;
+    const int which = host_flash_at(addr, &off);
+
+    if (which == 1)
+        return &s_host_codeplug[off];
+    if (which == 2)
+        return &s_host_flash[off];
+    return 0;
+}
+
+/* A codeplug shaped like the one this radio shipped with: four channels with
+ * the stock's 21-byte records (rx, tx, rx tone, tx tone, three flag bytes, six
+ * characters of name) and both bitmaps marking those four channels. */
+static void host_codeplug_defaults(void)
+{
+    static const struct {
+        uint32_t rx;
+        uint32_t tx;
+        uint16_t rx_tone;              /* 0x0FFF = none */
+        uint16_t tx_tone;
+        const char *name;
+    } channels[4] = {
+        { 14497500u, 14497500u, 0x0FFFu, 0x0FFFu, "CH-01 " },
+        { 14575000u, 14575000u, 0x0FFFu, 0x0FFFu, "CH-02 " },
+        /* 885 = CTCSS 88.5 Hz; 0x0013 + bit 15 = DCS 023 inverted. */
+        { 43037500u, 43037500u, 0x0375u, 0x8013u, "CH-03 " },
+        { 43865000u, 43865000u, 0x0FFFu, 0x0FFFu, "CH-04 " },
+    };
+    unsigned int i;
+
+    memset(s_host_codeplug, 0xFF, sizeof s_host_codeplug);
+
+    for (i = 0; i < 4; i++) {
+        uint8_t *record = s_host_codeplug + i * 21u;
+
+        record[0] = (uint8_t)(channels[i].rx);
+        record[1] = (uint8_t)(channels[i].rx >> 8);
+        record[2] = (uint8_t)(channels[i].rx >> 16);
+        record[3] = (uint8_t)(channels[i].rx >> 24);
+        record[4] = (uint8_t)(channels[i].tx);
+        record[5] = (uint8_t)(channels[i].tx >> 8);
+        record[6] = (uint8_t)(channels[i].tx >> 16);
+        record[7] = (uint8_t)(channels[i].tx >> 24);
+        record[8] = (uint8_t)(channels[i].rx_tone);
+        record[9] = (uint8_t)(channels[i].rx_tone >> 8);
+        record[10] = (uint8_t)(channels[i].tx_tone);
+        record[11] = (uint8_t)(channels[i].tx_tone >> 8);
+        record[12] = 0x00;             /* flags A: wide, high power */
+        record[13] = 0x00;             /* flags B */
+        record[14] = 0x04;             /* flags C: 12.5 kHz step */
+        memcpy(record + 15, channels[i].name, 6);
+    }
+
+    /* 7936: channel used; 7968: scan allow.  Both mark the first four. */
+    s_host_codeplug[7936] = 0x0Fu;
+    s_host_codeplug[7968] = 0x0Fu;
 }
 
 void spi_flash_init(void)
 {
-    if (s_host_flash[0] == 0 && s_host_flash[1] == 0)
+    static bool initialised;
+
+    if (!initialised) {
         memset(s_host_flash, 0xFF, sizeof s_host_flash);
+        host_codeplug_defaults();
+        initialised = true;
+    }
 }
 
 bool spi_flash_id(uint16_t *man_dev, uint32_t *jedec)
@@ -122,26 +197,28 @@ uint32_t spi_flash_size(uint32_t jedec)
 void spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len)
 {
     while (len--) {
-        uint32_t off;
-        *buf++ = host_flash_at(addr, &off) ? s_host_flash[off] : 0xFFu;
+        const uint8_t *p = host_flash_ptr(addr);
+
+        *buf++ = (p != 0) ? *p : 0xFFu;
         addr++;
     }
 }
 
 void spi_flash_sector_erase(uint32_t addr)
 {
-    uint32_t off;
+    uint8_t *p = host_flash_ptr(addr);
 
-    if (host_flash_at(addr, &off))
-        memset(s_host_flash + off, 0xFF, SPI_FLASH_SECTOR_SIZE);
+    if (p != 0)
+        memset(p, 0xFF, SPI_FLASH_SECTOR_SIZE);
 }
 
 void spi_flash_program(uint32_t addr, const uint8_t *buf, uint32_t len)
 {
     while (len--) {
-        uint32_t off;
-        if (host_flash_at(addr, &off))
-            s_host_flash[off] &= *buf;
+        uint8_t *p = host_flash_ptr(addr);
+
+        if (p != 0)
+            *p &= *buf;
         buf++;
         addr++;
     }
@@ -213,6 +290,18 @@ void BK4819_PlayTone(uint16_t Frequency, bool bTuningGainSwitch)
 { (void)Frequency; (void)bTuningGainSwitch; }
 void BK4819_PlayToneRaw(const unsigned int tone_Hz, const unsigned int delay)
 { (void)tone_Hz; (void)delay; }
+
+/* The receive-side decoders the application polls every slice.  Nothing in the
+ * host has a carrier, so they have nothing to report. */
+uint8_t BK4819_GetCTCType(void) { return BK4819_CSS_RESULT_NOT_FOUND; }
+uint8_t BK4819_GetCDCSSCodeType(void) { return BK4819_CSS_RESULT_NOT_FOUND; }
+uint8_t BK4819_GetDTMF_5TONE_Code(void) { return 0; }
+
+/* driver/gpio.c owns these; on this radio PTT is the measured transmit chain
+ * rather than a GPIO the K1 reads (see port_gui.c), so the host says "not
+ * pressed" exactly as the target does. */
+bool GPIO_IsPttPressed(void) { return false; }
+void GPIO_TogglePin(uint32_t Pin) { (void)Pin; }
 
 /* driver/bk4819.c owns this; the host needs it for radio.c/app.c. */
 bool gRxIdleMode;

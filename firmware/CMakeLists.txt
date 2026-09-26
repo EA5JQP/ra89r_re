@@ -90,6 +90,7 @@ set(APP_SOURCES
     App/misc.c
     App/port_state.c
     App/port_storage.c
+    App/port_codeplug.c
     App/driver/spi_flash.c
     # --- end of imported sources ---------------------------------------------
     App/settings.c

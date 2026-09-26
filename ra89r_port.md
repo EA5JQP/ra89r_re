@@ -333,13 +333,43 @@ here are the port's todo list:
   its LED through the chip; and the backlight follows the K1's timer
   (`gEeprom.BACKLIGHT_TIME`, 5 s per unit, 61 = always on, 0 = off).
 
+* **Stage 4a -- the codeplug is decoded and the channels are real (unvalidated on
+  the radio).**  Step 2's first half.  `ra89r_codeplug.md` now holds the layout,
+  from the CPS's own reader/writer and confirmed against the dump;
+  `App/port_codeplug.c` implements the read side (the 21-byte channel records,
+  the channel-used and scan-allow bitmaps, the tone encoding, the K1's
+  `ChannelAttributes_t`), and `App/settings.c` is the K1's `SETTINGS_*`
+  interface over it instead of a stub.  Two imported files were adapted for it
+  and both are in `NOTICE`: `radio.c`'s `RADIO_ConfigureChannel` reads through
+  `SETTINGS_FetchChannelScanDisplayInfo()` instead of the K1's own 16-byte
+  record (so all layout knowledge lives in one file), and `misc.c`'s two
+  channel-attribute flash functions map the stock's bitmaps rather than the
+  K1's table at `0x8000` -- which on this chip is the middle of the codeplug.
+  `RADIO_CheckValidChannel` also had to learn the K1's `0xFFFF` marker, or the
+  channel walk stops on an unused slot: this radio really has four channels out
+  of 210.  `port_state_init()` now performs the K1's own boot order
+  (`SETTINGS_InitEEPROM`, `SETTINGS_LoadCalibration`, `RADIO_ConfigureChannel`
+  twice, `RADIO_SelectVfos`) instead of leaving placeholder frequencies in
+  `gEeprom`, which is why the screens showed a channel they never loaded.  The
+  boot lands on the first two channels the codeplug has (CH-01 144.9750 and
+  CH-02 145.7500 on this radio) and the measured receive chain tunes to
+  whichever one is up.  On a PC the preview preloads a factory-shaped codeplug
+  into its RAM flash and prints what the decoder made of it, tones included.
+
+* **Still step 2, second half -- the settings block.**  `ra89r_codeplug.md` has
+  the whole 32-byte block at `0x2020` mapped, with the CPS's labels and this
+  radio's values, but nothing reads it yet: the port's own defaults and its blob
+  decide.  Reading it into `EEPROM_Config_t` is the next piece, and it is what
+  makes squelch, backlight, power-on display and the rest agree with what the
+  stock firmware shows.  The stock's regions stay read-only until a channel
+  editor needs the journal (`ra89r_eeprom.md`).
+
 * **What is left, measured.**  Of the K1's 45k lines of application `.c`, what
   the port does not have:
-  * **`settings.c` (1,344) -- the big one, and step 2.**  Every `SETTINGS_*` is
-    stubbed, which is why most menu items are inert and why the squelch
-    thresholds, power levels, volume/beep settings, battery calibration, VFO save
-    and factory reset have no backing store.  It needs the codeplug/EEPROM layout
-    decision (below) before it can be ported properly.
+  * the settings-block mapping above (the read side of `settings.c` now exists;
+    what it lacks is the stock's own values behind it);
+  * the K1's channel and name *writes*, deliberately: they are writes into the
+    stock's codeplug, and the stock's own journal is how that has to be done;
   * features this hardware cannot run, kept off: `app/spectrum.c` (2,617),
     `app/foxhunt.c` (1,504), `app/rxtx_log.c` (1,376), `app/fm.c` (671) +
     `driver/bk1080.c` (the RA89R has no BK1080 FM chip), `app/aircopy.c` (482) +
@@ -351,21 +381,16 @@ here are the port's todo list:
   * `driver/py25q16.c` (579): this repo's `spi_flash.c` + `port_storage.c` stand in
     for it, with the K1's sector cache and multiboot banking left out.
 
-* **Next -- step 2 (the codeplug), design first.**  The compatibility rule the
-  radio asked for: the stock firmware must keep working on the same chip.  The
-  stock owns `0x0`-`0x3FFF` (codeplug), `0x20000`-`0x28FFF` (journal) and
-  `0x40000`-`0x10FFFF` (blob); the part is empty from `0x110000` up.  The port
-  already keeps its own blob in the empty tail (`0x1FF000`, test sector
-  `0x1FE000`), and the plan is: read the stock's codeplug for the values both
-  firmwares share (channels, names, calibration, squelch) rather than writing our
-  own format into its regions, and only ever write in the stock's own layout if a
-  shared value changes.  That mapping is the next piece of work.  `driver/keyboard.h` bound to our `keypad.c`, then
-  mapping the stock codeplug into `gEeprom` (channels, names, settings, the
-  calibration) so the screens show the radio's own data, then the real
-  `settings.c`/`misc.c`/`radio.c` behind the facade and the key/action layer
-  (`functions.c`, `app/main.c`), which retires `port_gui.c`.  Each step first
-  on `preview_k1.c`, then on the radio; the stubs in `port_state.c` come out as
-  their owner modules come in.
+* **The compatibility rule, as built.**  The stock firmware keeps working on the
+  same chip because nothing in the port writes a stock region: the codeplug, the
+  journal, the blob, the calibration window and the `TYTDXC` signature are
+  read-only, and the port's own state lives in its blob at `0x1FF000` (test
+  sector `0x1FE000`) in the tail the dump shows erased from `0x10FE41`.  The
+  channels the port shows are the stock's channels, so both firmwares and the
+  CPS see the same radio.  When a channel editor does arrive it has to write
+  through the stock's journal, in the stock's own layout; `ra89r_codeplug.md`
+  records the two regions it must never assume it owns -- the calibration window
+  and the signature.
 
 ## Suggested order
 
