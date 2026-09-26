@@ -250,10 +250,12 @@ void SETTINGS_FetchChannelName(char *s, const uint16_t channel)
  * is not implemented yet (ra89r_codeplug.md, "Writing").
  * ------------------------------------------------------------------------- */
 
+/* A deferred save has been asked for (see SETTINGS_SaveVfoIndices). */
+static bool settings_dirty;
+
 static bool settings_save_all(void)
 {
     port_settings_extra_t extra;
-
     memset(&extra, 0, sizeof extra);
     extra.magic = PORT_EXTRA_MAGIC;
     extra.version = PORT_EXTRA_VERSION;
@@ -267,16 +269,27 @@ static bool settings_save_all(void)
 
 void SETTINGS_SaveSettings(void)
 {
+    /* A menu change: write now, and there is nothing left pending afterwards. */
+    settings_dirty = false;
     (void)settings_save_all();
 }
 
+/* The VFO indices are the K1's *deferred* save: SETTINGS_SaveVfoIndices() asks
+ * for one and SETTINGS_SaveVfoIndicesFlush() -- which APP_TimeSlice10ms() calls
+ * on every 10 ms slice -- performs it if it was asked for.  Writing here
+ * unconditionally would erase and program a 4 KB sector a hundred times a
+ * second, which is slow enough to stop the radio behaving like a radio. */
 void SETTINGS_SaveVfoIndices(void)
 {
-    (void)settings_save_all();
+    settings_dirty = true;
 }
 
 void SETTINGS_SaveVfoIndicesFlush(void)
 {
+    if (!settings_dirty)
+        return;
+
+    settings_dirty = false;
     (void)settings_save_all();
 }
 

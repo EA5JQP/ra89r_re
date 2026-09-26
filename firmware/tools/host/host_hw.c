@@ -23,20 +23,19 @@ void host_nvic_system_reset(void)
     /* A menu item that reboots the radio; a preview just stops here. */
 }
 
-/* Backlight: the drawing code switches it, the host only records it. */
-static int s_host_backlight = 1;
+/* Backlight: the real driver is App/driver/backlight.c, which the preview links
+ * so its timeout is exercised rather than stubbed -- it is armed in 500 ms
+ * units and decremented only by APP_TimeSlice500ms(), and a stub hides exactly
+ * the mistake of decrementing it on the 10 ms slice.  All it needs from the
+ * hardware is one GPIO write. */
+/* The scratch the device-header double points the GPIO ports at (see
+ * tools/host/py32f4xx.h), plus the two GPIO configuration calls the backlight
+ * driver makes on its way up.  Its pin writes go through the inline
+ * `gpio_write`, which lands here and is simply recorded. */
+GPIO_TypeDef host_gpio_scratch[6];
 
-void BACKLIGHT_Init(void) { s_host_backlight = 1; }
-void BACKLIGHT_InitHardware(void) { BACKLIGHT_Init(); }
-void BACKLIGHT_TurnOn(void) { s_host_backlight = 1; }
-void BACKLIGHT_TurnOff(void) { s_host_backlight = 0; }
-bool BACKLIGHT_IsOn(void) { return s_host_backlight != 0; }
-void BACKLIGHT_SetBrightness(uint8_t b) { gBacklightBrightness = b; s_host_backlight = (b != 0); }
-void BACKLIGHT_UpdateTickless(void) { }
-void BACKLIGHT_Update(void) { }
-uint16_t gBacklightCountdown_500ms;
-uint8_t  gBacklightBrightness = 10;
-const uint8_t value[11] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+void gpio_port_clock(GPIO_TypeDef *port) { (void)port; }
+void gpio_config_output(GPIO_TypeDef *port, uint32_t mask) { (void)port; (void)mask; }
 
 /* RF: the real driver (App/driver/bk4819.c) owns these; the host preview
  * compiles no hardware, so it records the calls instead. */
@@ -204,10 +203,18 @@ void spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len)
     }
 }
 
+static unsigned s_host_erase_count;
+
+unsigned host_flash_erase_count(void)
+{
+    return s_host_erase_count;
+}
+
 void spi_flash_sector_erase(uint32_t addr)
 {
     uint8_t *p = host_flash_ptr(addr);
 
+    s_host_erase_count++;
     if (p != 0)
         memset(p, 0xFF, SPI_FLASH_SECTOR_SIZE);
 }

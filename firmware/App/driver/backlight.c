@@ -29,6 +29,9 @@ void BACKLIGHT_TurnOff(void)
 {
     gpio_write(BACKLIGHT_PORT, BACKLIGHT_PIN, BACKLIGHT_ON_LEVEL ? 0 : 1);
     s_on = false;
+    /* The K1 clears the countdown here too, so a manual off cannot be undone by
+     * a countdown that is still running. */
+    gBacklightCountdown_500ms = 0;
 }
 
 bool BACKLIGHT_IsOn(void)
@@ -77,18 +80,19 @@ void BACKLIGHT_SetBrightness(uint8_t brightness)
 }
 
 /* The K1 arms a 500 ms countdown from gEeprom.BACKLIGHT_TIME (5 s per unit,
- * 61 = always on) and turns the panel light off when it expires; the callback
- * keeps the panel lit while the user is doing something. */
+ * 61 = always on) *beside* its brightness fade, and the countdown is decremented
+ * in exactly one place: APP_TimeSlice500ms().  These two are the *fade*
+ * ("Update") and the blocking fade drain ("UpdateTickless") -- they must never
+ * touch the countdown.  APP_TimeSlice10ms() calls BACKLIGHT_Update(), so a
+ * decrement here would run the 20-second timer out in a fifth of a second. */
 void BACKLIGHT_UpdateTickless(void)
 {
-    if (gBacklightCountdown_500ms > 0u) {
-        gBacklightCountdown_500ms--;
-        if (gBacklightCountdown_500ms == 0u)
-            BACKLIGHT_TurnOff();
-    }
+    /* The K1 busy-waits here while a fade is in flight; this board's backlight
+     * has no brightness ramp (see above), so there is nothing to drain. */
 }
 
 void BACKLIGHT_Update(void)
 {
-    BACKLIGHT_UpdateTickless();
+    /* Brightness fade step.  Not implemented: the panel light is a plain GPIO,
+     * so it is either on or off.  The timeout lives in APP_TimeSlice500ms(). */
 }

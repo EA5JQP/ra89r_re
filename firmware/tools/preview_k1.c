@@ -13,6 +13,7 @@
 #include <stdio.h>
 
 #include "app/app.h"
+#include "driver/backlight.h"
 #include "driver/st7565.h"
 #include "host_hw.h"
 #include "misc.h"
@@ -181,12 +182,37 @@ int main(void)
            (unsigned)(gRxVfo->freq_config_RX.Frequency / 100000u),
            (unsigned)(gRxVfo->freq_config_RX.Frequency % 100000u));
 
-    press(KEY_UP);                     /* the K1's UP/DOWN key action ... */
-    printf("[keys] after KEY_UP: screen A = %u, VFO A %u.%05u MHz\n",
-           (unsigned)gEeprom.ScreenChannel[0],
-           (unsigned)(gRxVfo->freq_config_RX.Frequency / 100000u),
-           (unsigned)(gRxVfo->freq_config_RX.Frequency % 100000u));
-    render("CheckKeys(): after a KEY_UP press (see the [keys] line above)");
+    /* Two things must not happen on the 10 ms slice, and both once did: a flash
+     * sector erase (a whole-blob save flushed on every slice) and a backlight
+     * countdown decrement (the fade step mistaken for the timeout).  A key that
+     * changes the channel may ask for *one* deferred save; the idle slices that
+     * follow must ask for none. */
+    {
+        unsigned int erases;
+
+        BACKLIGHT_TurnOn();
+        erases = host_flash_erase_count();
+        press(KEY_UP);                 /* the K1's UP/DOWN key action ... */
+        printf("[keys] after KEY_UP: screen A = %u, VFO A %u.%05u MHz\n",
+               (unsigned)gEeprom.ScreenChannel[0],
+               (unsigned)(gRxVfo->freq_config_RX.Frequency / 100000u),
+               (unsigned)(gRxVfo->freq_config_RX.Frequency % 100000u));
+        printf("[keys] flash erases for the channel change: %u (one deferred save)\n",
+               host_flash_erase_count() - erases);
+        printf("[keys] backlight countdown: %u of %u (unchanged by the 10 ms slices)\n",
+               (unsigned)gBacklightCountdown_500ms,
+               (unsigned)(1u + (gEeprom.BACKLIGHT_TIME * 5u) * 2u));
+        render("CheckKeys(): after a KEY_UP press (see the [keys] line above)");
+
+        erases = host_flash_erase_count();
+        {
+            int i;
+            for (i = 0; i < 40; i++)
+                step();
+        }
+        printf("[keys] flash erases over 40 idle slices: %u (must be 0)\n",
+               host_flash_erase_count() - erases);
+    }
 
     press(KEY_MENU);                   /* ... then open the menu ... */
     printf("[keys] after KEY_MENU: screen = %u (DISPLAY_MENU = %u)\n",

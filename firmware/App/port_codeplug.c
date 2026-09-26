@@ -35,9 +35,17 @@ static uint8_t cp_enable[RA89R_CP_BITMAP_BYTES];
 static uint8_t cp_skip[RA89R_CP_BITMAP_BYTES];
 static bool    cp_bitmaps_valid;
 
+/* The K1's band for a channel, stored as band + 1 with 0 meaning "not looked up
+ * yet".  Deriving it needs the record's frequency, and the K1 asks for a
+ * channel's attributes far more often than once -- its own cache holds ten at a
+ * time while a scan walks all of them -- so the record is read once per channel
+ * instead of once per lookup. */
+static uint8_t cp_band[RA89R_CP_RECORD_COUNT];
+
 void port_codeplug_init(void)
 {
     cp_bitmaps_valid = false;
+    memset(cp_band, 0, sizeof cp_band);
 }
 
 /* ---------------------------------------------------------------------------
@@ -266,7 +274,6 @@ void port_codeplug_name(char *out, size_t size, uint16_t channel)
 
 uint16_t port_codeplug_attributes(uint16_t channel)
 {
-    ra89r_codeplug_record_t record;
     uint16_t value;
     uint8_t  band;
     uint8_t  scanlist;
@@ -278,10 +285,17 @@ uint16_t port_codeplug_attributes(uint16_t channel)
         band     = (uint8_t)(channel - FREQ_CHANNEL_FIRST);
         scanlist = MR_CHANNELS_LIST + 1;
         exclude  = 0;
-    } else if (channel < RA89R_CP_RECORD_COUNT && port_codeplug_used(channel) &&
-               port_codeplug_read(channel, &record) && record.rx_frequency != 0u &&
-               record.rx_frequency != 0xFFFFFFFFu) {
-        band     = (uint8_t)FREQUENCY_GetBand(record.rx_frequency);
+    } else if (channel < RA89R_CP_RECORD_COUNT && port_codeplug_used(channel)) {
+        if (cp_band[channel] == 0u) {
+            ra89r_codeplug_record_t record;
+
+            if (!port_codeplug_read(channel, &record) || record.rx_frequency == 0u ||
+                record.rx_frequency == 0xFFFFFFFFu)
+                return 0xFFFFu;
+
+            cp_band[channel] = (uint8_t)(FREQUENCY_GetBand(record.rx_frequency) + 1);
+        }
+        band     = (uint8_t)(cp_band[channel] - 1u);
         scanlist = MR_CHANNELS_LIST + 1;   /* the stock has one set, not lists */
         exclude  = port_codeplug_excluded(channel) ? 1u : 0u;
     } else {

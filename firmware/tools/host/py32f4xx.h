@@ -79,11 +79,17 @@ typedef struct {
     __IO uint32_t CSR;
 } RCC_TypeDef;
 
-#define GPIOA ((GPIO_TypeDef *)0u)
-#define GPIOB ((GPIO_TypeDef *)0u)
-#define GPIOC ((GPIO_TypeDef *)0u)
-#define GPIOD ((GPIO_TypeDef *)0u)
-#define GPIOF ((GPIO_TypeDef *)0u)
+#define GPIOA ((GPIO_TypeDef *)&host_gpio_scratch[0])
+#define GPIOB ((GPIO_TypeDef *)&host_gpio_scratch[1])
+#define GPIOC ((GPIO_TypeDef *)&host_gpio_scratch[2])
+#define GPIOD ((GPIO_TypeDef *)&host_gpio_scratch[3])
+#define GPIOF ((GPIO_TypeDef *)&host_gpio_scratch[5])
+
+/* The peripherals point at a scratch struct instead of address 0: the imported
+ * sources do reach some register-level helpers -- `driver/backlight.c` writes
+ * its pin through the inline `gpio_write` -- and a preview should run through
+ * them rather than fault.  Nothing reads a value back. */
+extern GPIO_TypeDef host_gpio_scratch[6];
 
 #define ADC1  ((ADC_TypeDef *)0u)
 #define USART1 ((USART_TypeDef *)0u)
