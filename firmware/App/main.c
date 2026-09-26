@@ -30,6 +30,7 @@
 #include "driver/systick.h"
 #include "driver/uart.h"
 #include "port_gui.h"
+#include "port_storage.h"
 #include "port_state.h"
 #include "radio.h"
 #include "ui/main.h"
@@ -203,6 +204,7 @@ static void print_help(void)
               "          S sample reg 0x67 for 4 s   C toggle PC13\n"
               "          G K1 VFO screen   M K1 menu screen   1 GUI mode (keys drive it)\n"
               "          2 VFO screen    3 menu screen    4 boot/welcome screen\n"
+              "          5 save settings   6 flash write test   e flash dump\n"
               "          T transmit (DTMF tone)   Y step the PA power\n"
               "          T transmit on/off (also: hold PTT on the radio)\n");
 }
@@ -910,6 +912,60 @@ int main(void)
             case 'S':
                 rf_watch();
                 break;
+            case 'e': {
+                /* The external SPI NOR flash: identity, then a hexdump. */
+                uint16_t man_dev = 0;
+                uint32_t jedec = 0;
+                uint32_t addr;
+                const uint32_t at = 0x00000000u;   /* the codeplug area */
+
+                if (!port_storage_id(&man_dev, &jedec)) {
+                    uart_puts("\nstorage: no answer (MISO idle high -- absent or "
+                              "unpowered chip?)\n");
+                    break;
+                }
+                uart_printf("\nstorage: 0x90 -> 0x%04X, JEDEC 0x%06X, size %u KB\n",
+                            (unsigned)man_dev, (unsigned)jedec,
+                            (unsigned)(port_storage_size() / 1024u));
+
+                for (addr = at; addr < at + 64u; addr += 16u) {
+                    uint8_t buf[16];
+                    unsigned i;
+
+                    PY25Q16_ReadBuffer(addr, buf, sizeof buf);
+                    uart_printf("  %06X:", (unsigned)addr);
+                    for (i = 0; i < sizeof buf; i++)
+                        uart_printf(" %02X", buf[i]);
+                    uart_puts("\n");
+                }
+                break;
+            }
+            case '5':
+                /* Save the port's settings to the external flash (blob in the
+                 * empty tail of the part -- see port_storage.c). */
+                if (!gui_mode) {
+                    port_state_init();
+                    port_gui_init();
+                    gui_mode = 1;
+                }
+                uart_printf("\nstorage: settings save %s\n",
+                            port_storage_save_settings() ? "PASS (read back)"
+                                                         : "FAILED");
+                break;
+            case '6': {
+                /* The write test ra89r_eeprom.md has been carrying as pending:
+                 * erase + program + read back on a scratch sector. */
+                uint32_t bad = 0;
+
+                if (port_storage_write_test(&bad)) {
+                    uart_puts("\nstorage: write test PASS (erase, program and "
+                              "read back of 256 bytes)\n");
+                } else {
+                    uart_printf("\nstorage: write test FAILED at 0x%06X\n",
+                                (unsigned)bad);
+                }
+                break;
+            }
             case '1':
                 /* Interactive GUI: the radio's own keys drive the ported K1
                  * screens.  See port_gui.c and, for the preview equivalent,

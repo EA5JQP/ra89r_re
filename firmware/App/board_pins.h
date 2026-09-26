@@ -165,8 +165,19 @@
 #define PA_BAND_PA1_PIN     (1u << 1)   /* PA1 */
 #define PA_BAND_PA0_PIN     (1u << 0)   /* PA0 */
 
-/* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) talks to the
- * external SPI NOR flash (see ra89r_eeprom.md); the USB-C port goes to the
- * MCU's USB device peripheral, which nothing in the stock firmware enables. */
+/* External SPI NOR flash -- what the CPS calls the "EEPROM" (channels, names,
+ * band ranges, settings, tone tables).  The stock assumes a Winbond 32 Mbit part
+ * (it sends 0x90 and compares with 0xEF16); the fitted part is a Puya
+ * PY25Q16HB, 2 MB, JEDEC id 0x852015, so driver/spi_flash.c derives the size
+ * from the JEDEC id instead.  It sits on SPI1's *remapped* pins and the stock
+ * drives chip select by hand as a plain GPIO (PA15), which is what the driver
+ * does too: SCK PB3, MISO PB4, MOSI PB5, CS PA15.  See ra89r_eeprom.md. */
+#define SPI_FLASH_CS_PIN     (1u << 15)   /* PA15 */
+#define SPI_FLASH_SCK_PIN    (1u << 3)    /* PB3  */
+#define SPI_FLASH_MISO_PIN   (1u << 4)    /* PB4  */
+#define SPI_FLASH_MOSI_PIN   (1u << 5)    /* PB5  */
+
+/* Not mapped yet: the USB-C port goes to the MCU's USB device peripheral, which
+ * nothing in the stock firmware enables. */
 
 #endif /* APP_BOARD_PINS_H */

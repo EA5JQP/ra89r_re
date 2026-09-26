@@ -22,6 +22,7 @@
 #include "settings.h"
 #include "ui/main.h"
 #include "port_gui.h"
+#include "port_storage.h"
 #include "ui/menu.h"
 
 static void render(const char *title)
@@ -73,6 +74,28 @@ int main(void)
     gRxVfo->freq_config_TX.Frequency = 43350000u;
     UI_DisplayMain();
     render("K1 UI_DisplayMain(): 433.5000 MHz");
+
+    /* ---- storage: the settings blob on the external flash --------------- */
+    {
+        uint32_t bad = 0;
+        bool saved, loaded;
+
+        gEeprom.SQUELCH_LEVEL = 7;
+        gEeprom.CHANNEL_DISPLAY_MODE = 2;
+        saved = port_storage_save_settings();
+
+        gEeprom.SQUELCH_LEVEL = 0;
+        gEeprom.CHANNEL_DISPLAY_MODE = 0;
+        loaded = port_storage_load_settings();
+
+        printf("\n[storage] save=%d load=%d -> squelch=%u chdisp=%u (expected 7/2)\n",
+               saved, loaded, (unsigned)gEeprom.SQUELCH_LEVEL,
+               (unsigned)gEeprom.CHANNEL_DISPLAY_MODE);
+        printf("[storage] write test=%d\n", port_storage_write_test(&bad));
+
+        /* Put the defaults back so the screens below render the same as before. */
+        PORT_SettingsDefaults();
+    }
 
     /* ---- the boot screen and the status line ---------------------------- */
     port_gui_init();

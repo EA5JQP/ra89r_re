@@ -74,6 +74,8 @@ set(APP_SOURCES
     App/frequencies.c
     App/helper/battery.c
     App/port_state.c
+    App/port_storage.c
+    App/driver/spi_flash.c
     # --- end of imported sources ---------------------------------------------
     App/settings.c
     App/syscalls.c)

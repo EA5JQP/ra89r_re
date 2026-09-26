@@ -33,8 +33,13 @@
 #define BK4815_CS_PORT       GPIOB
 #define AUDIO_PATH_PORT      GPIOC
 
-/* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) drives the
- * external SPI NOR flash, and the USB-C port goes to the MCU's USB peripheral
- * -- unused by the stock firmware, so none of it is wired up here yet. */
+/* External SPI NOR flash -- the radio's "EEPROM" (see board_pins.h) */
+#define SPI_FLASH_CS_PORT    GPIOA
+#define SPI_FLASH_SCK_PORT   GPIOB
+#define SPI_FLASH_MISO_PORT  GPIOB
+#define SPI_FLASH_MOSI_PORT  GPIOB
+
+/* Not mapped yet: the USB-C port goes to the MCU's USB peripheral -- nothing in
+ * the stock firmware enables it, so it is not wired up here. */
 
 #endif /* APP_BOARD_H */

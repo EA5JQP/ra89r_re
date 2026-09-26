@@ -12,10 +12,10 @@
 #include "functions.h"
 #include "helper/battery.h"
 #include "misc.h"
-#include "driver/py25q16.h"
 #include "app/common.h"
 #include "app/scanner.h"
 #include "audio.h"
+#include "port_storage.h"
 #include "radio.h"
 #include "ui/ui.h"
 #include "version.h"
@@ -30,6 +30,12 @@ void port_state_init(void)
     unsigned i;
 
     PORT_SettingsDefaults();
+
+    /* If the port saved its settings on the external flash, they win over the
+     * defaults.  (The stock codeplug itself is a different format and is not
+     * mapped in yet -- see port_storage.c.) */
+    port_storage_init();
+    (void)port_storage_load_settings();
 
     /* The screens read gEeprom.VfoInfo[] directly, and the pointers alias it. */
     for (i = 0; i < 2; i++) {
@@ -299,18 +305,4 @@ void UI_DrawBattery(uint8_t *bitmap, uint8_t level, uint8_t blink)
     (void)bitmap;
     (void)level;
     (void)blink;
-}
-
-/* ---------------------------------------------------------------------------
- * The external SPI NOR flash -- the codeplug.  driver/py25q16.c (and this
- * repo's own driver/eeprom, still on its unmerged branch) own this; until one
- * of them is in the port, every read returns an empty part: the boot messages
- * read as empty and the menus show their compiled-in defaults.  That is the
- * seam the storage stage replaces (see ra89r_eeprom.md and ra89r_port.md).
- * ------------------------------------------------------------------------- */
-void PY25Q16_ReadBuffer(uint32_t address, void *pBuffer, uint32_t size)
-{
-    (void)address;
-    if (pBuffer != 0)
-        memset(pBuffer, 0, size);
 }

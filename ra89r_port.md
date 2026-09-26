@@ -207,9 +207,28 @@ here are the port's todo list:
   `port_state.c` stub until the SPI NOR driver lands, so the codeplug and the
   boot messages are empty and every menu shows its compiled-in default.
 
-* **Next -- stage 2e.**  `driver/keyboard.h` bound to our `keypad.c`, then
-  the storage layer behind `PY25Q16_ReadBuffer` (the external SPI NOR flash, so
-  the codeplug and the boot messages are real), then the real
+* **Stage 2e -- storage: the external flash answers, and the port keeps its
+  settings on it (unvalidated on the radio).**  `driver/spi_flash.c` (this
+  repo's bit-banged SPI NOR driver, brought over from branch `driver/eeprom`)
+  gained the write path -- write-enable, page program split at page boundaries,
+  sector erase, WIP polling -- and `App/port_storage.c` implements the K1's
+  `PY25Q16_*` interface over it plus the port's own settings blob in the part's
+  empty tail (`0x1FF000`; the write test uses `0x1FE000`).  `port_state_init()`
+  now loads that blob if it is valid, so the menus see saved settings instead of
+  defaults; console `5` saves it, `6` runs the write test and `e` prints the
+  flash identity and a hexdump.  The host fake in `tools/host/host_hw.c` models
+  the two sectors (AND on program, `0xFF` on erase), and `preview_k1.c` checks
+  the round-trip there: save -> change -> load returns the saved values, and the
+  write test passes.
+
+  Not done yet, and the reason this is not "storage finished": the *stock
+  codeplug* is a different format and is not mapped into `gEeprom` yet, so the
+  channels and names the menus show are still the compiled-in defaults rather
+  than the radio's own data (ra89r_eeprom.md has the layout).
+
+* **Next -- stage 2f.**  `driver/keyboard.h` bound to our `keypad.c`, then
+  mapping the stock codeplug into `gEeprom` (channels, names, settings, the
+  calibration) so the screens show the radio's own data, then the real
   `settings.c`/`misc.c`/`radio.c` behind the facade and the key/action layer
   (`functions.c`, `app/main.c`), which retires `port_gui.c`.  Each step first
   on `preview_k1.c`, then on the radio; the stubs in `port_state.c` come out as
