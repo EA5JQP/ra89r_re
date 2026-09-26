@@ -186,10 +186,11 @@ driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR fl
                                          ("EEPROM") reads and dumps; the write test has
                                          not run yet, see ra89r_eeprom.md
 driver/audiocontrol       audio       -- OPEN, unmerged: drives PC13 as the audio
-                                         path enable, the line the stock drives from
-                                         its T/R transition; polarity unverified and
-                                         there is no audio path to hear, see
-                                         ra89r_rffeatures.md
+                                         path enable.  That is the wrong pin: the
+                                         stock's squelch open/close handlers drive
+                                         PA14 (PA13 is its twin), both configured as
+                                         outputs at boot, while PC13 is held high on
+                                         this codeplug -- see ra89r_rffeatures.md
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all

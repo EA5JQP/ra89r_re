@@ -162,7 +162,8 @@ as well, so it carries several independent bit fields and is not yet mapped.
 
 ## Does anything enable a speaker PA when the squelch opens?
 
-**Not from the squelch, no.**  The whole verdict chain is:
+**Yes — `PA14`.**  It is the only MCU pin whose level follows the squelch, and the
+level it takes is selected by a codeplug bit.  The whole chain is:
 
 * `FUN_080052B8` reads `0x63`/`0x65`/`0x67`, ramps the AGC step `0x13`, prints
   `RSSI R67 %d` and returns 0/1/2 — no pin, and no register beyond `0x13`;
@@ -171,36 +172,110 @@ as well, so it carries several independent bit fields and is not yet mapped.
 * `FUN_0801D420` acts on the verdict: 1 → `FUN_0801D3F0(2, 1, state)`,
   0 → `FUN_0801D3F0(1, 2, state)`;
 * `FUN_0801D3F0` is a **counter**: it steps a byte at `state + 0x21` up or down,
-  clamped to 0..10.  That is the entire squelch action — an MCU-side ramp, most
-  likely the audio fade.  Its consumer has not been located; the reader does not
-  use a plain `[rX, #0x21]` offset, so a scan for that misses it.
+  clamped to 0..10.  Verdict 1 is the increment, and verdict 1 is the
+  *signal-present* answer (`FUN_080052B8` returns it when `0x67 & 0x1ff` is above
+  the codeplug mark), so **`state[0x21]` high = squelch open**;
+* the counter's consumer is **`FUN_08004C84`**, the per-tick RX handler (gated on
+  the mode byte `state[2] == 0`), and that is where the pin is:
 
-So if the stock unmutes a PA when the squelch opens, it happens downstream of that
-counter, not in the squelch path itself.
+| `state[0x21]` | path | `PA14` |
+|---|---|---|
+| `< 3` | `FUN_0801D458`, the RX teardown (also writes BK4829 `0x3f`/`0x42`/`0x5a`) | **LOW** |
+| `3..6` | dead band (hysteresis), nothing happens | unchanged |
+| `>= 7` | the servicing block, which calls `FUN_08018A10` on first entry | **HIGH** |
 
-**The line that does exist is `PC13`.**  Scanning every GPIO write in the image by
-pin and level, and keeping only pins driven *both* ways — a real enable line rather
-than a pulse or a bus — leaves exactly three, and two are the companion gauge
-(`PB2` data, `PD0` reset).  The third:
+  (a squelch setting of 0, `DAT_08004dfc[0x11] == 0`, takes the `>= 7` branch
+  unconditionally -- i.e. monitor/open);
+* the two paths latch through **`state[0x1e]`**: the open block drives the pin only
+  when the latch is 0, then sets it to 1; `FUN_0801D458` is guarded by the latch
+  being 1 and clears it.  So the pin is driven once per transition, not per tick.
+
+`FUN_08018A10` is not a constant -- it drives `PA14` to the level held in the
+decoded settings struct, `*(char *)(0x20009F28 + 0xc)`:
+
+```
+08018A12  ldr  r0, [pc, #0x24]   ; =0x20009F28
+08018A14  ldrb r0, [r0, #0xc]    ; 0x20009F34
+08018A16  cbnz r0, 0x08018A26
+08018A18  movs r2, #1            ; -> BSRR = 0x4000   (PA14 HIGH)
+08018A26  movs r2, #0            ; -> BRR  = 0x4000   (PA14 LOW)
+```
+
+That byte is **bit 2 of codeplug settings byte 2** (`FUN_0800FE18` computes
+`pw[0xc] = (local_22 >> 2) & 1`).  This radio's 32-byte settings block at `0x2020`
+is `96 53 00 02 ...`, so byte 2 = `0x00` and `PA14` is **active high**: **high while
+the squelch is open, low when it closes**.  It is also driven high in TX (below).
+
+`PA14` is not squelch-only: the mode/audio handlers `FUN_08015D88` and
+`FUN_08015E28` end with the same two-way choice -- `state[2] == 0` (RX) → low,
+otherwise `FUN_08018A10()` → high -- and those are the routines that write the
+BK4815's `0x0C` mode word and call the T/R path, so the pin is high in TX as well.
+
+**`PC13` is a real line -- but not this one.**  It is driven both ways, and scanning
+every GPIO write in the image by pin and level (keeping only pins driven *both*
+ways, i.e. a real enable rather than a pulse or a bus) finds it, together with the
+companion gauge's `PB2`/`PD0` and the `PA13`/`PA14` pair above:
 
 * driven by **`FUN_080177A8`**, which has exactly **one caller**: `FUN_08016200`,
   called from the **transmit/receive path** `FUN_08016228`;
-* its branches are `config+0x38 == 0` → HIGH, otherwise LOW or HIGH per
-  `config+0x39` — so it idles high and is pulled low when the path is active;
+* its branches are `config+0x38 == 0` → **HIGH** (raw: `movs r2,#1` → `BSRR`),
+  otherwise LOW or HIGH per `config+0x39` (`movs r2,#0` → `BRR`, or `#1` → `BSRR`);
 * both gates are **codeplug** bits: `config+0x38` ← settings byte 9 bit 0 and
   `config+0x39` ← bit 5, via `FUN_0800FE18`.
 
 On this radio that byte is **`0x00`**, so `config+0x38 = 0` and `FUN_080177A8` takes
 its unconditional `PC13` HIGH branch: the conditional low-drive is unreachable as
-this radio is configured.  The 11 unconditional `FUN_08009C9C`/`FUN_08009CB0` call
-sites elsewhere drive PC13 low, so the line is normally low and this routine is what
-raises it.
+this radio is configured, and `PC13` therefore **does not follow the squelch**.  The
+11 unconditional `FUN_08009C9C`/`FUN_08009CB0` call sites elsewhere drive PC13 low,
+and `FUN_08016200` is the only thing that raises it again, so the line's state is
+whatever ran last -- a static enable, not an unmute.
 
-**The chip-side alternative.**  The other place an enable can live is the
-transceiver's own GPIO register — `0x33` bits 0..6, the K1's `ToggleGpioOut`.  Its
-only writer is `FUN_080137D4(mask, value)`, and the 16 call sites set chip pins 0/1
-(bring-up), 2 (`FUN_08004E20`), 3, 4, 5 (`FUN_08013A70`/`FUN_08013B12`) and clear
-all seven (`FUN_08013C24`).  The T/R transition does the whole cluster at once:
+**How to check this on the radio.**  With the stock firmware running, `PA14` should
+be **low at idle, high while a carrier holds the squelch open, low again after it
+drops**, and **high while transmitting**; `PA13` should sit **high** in normal
+operation and drop low during a reset/disable or an RX/scan step.  That is a
+two-channel scope (or two meter runs) on the `PA13`/`PA14` pads.  On our side the
+callback the port stubbed is the thing to point at them: the `driver/audiocontrol`
+branch currently drives **`PC13`**, which this analysis says is the wrong pin --
+it should drive `PA14`, and mirror it on `PA13` if the pair turns out to be
+enable+unmute rather than one line.
+
+**`PA13` is `PA14`'s twin.**  It sits on the same settings bit, in the same boot
+init, and is driven as the second half of the same pair:
+
+* the boot GPIO init **`FUN_08013C74`** (called from the boot path `FUN_0801D718`)
+  configures GPIOA mask **`0x6000` = `PA13|PA14`** as push-pull outputs, speed 0,
+  pull-down -- in the same block as `PA0|PA1` (mask 3) and `PB13|PB15` (mask
+  `0xA000`).  Both pins are therefore driven outputs, not debug pads;
+* **`FUN_08020028`** is `FUN_08018A10`'s exact counterpart for `PA13` (mask
+  `0x2000`, same `0x20009F28 + 0xc` level);
+* the pair is driven together and in opposition:
+
+| path | `PA13` | `PA14` |
+|---|---|---|
+| `FUN_08018AB8` (enable / power-up) | config level (HIGH) | LOW |
+| `FUN_0801FFA0` (state reset: `FUN_0800419A` over `0x45c` bytes) | LOW | LOW |
+| `FUN_08017340` (RX/scan step setup, ~9 call sites) | LOW | -- |
+| `FUN_0801D458` (squelch closed) | -- | LOW |
+| `FUN_08004C84` open block, `FUN_08015D88`/`FUN_08015E28` (TX), `FUN_08019C58` | -- | config level (HIGH) |
+
+* both also have a *toggle* wrapper that reads the pin and flips it -- `FUN_08005F90`
+  for `PA13`, `FUN_0800656C`/`FUN_08006070`/`FUN_08019C58` for `PA14` -- so the two
+  look like a two-line path control (power/enable plus unmute or anti-pop), not like
+  two independent indicators.
+
+`PA13`/`PA14` are the Cortex-M `SWDIO`/`SWCLK` pads: the stock reconfigures both as
+GPIO, so it gives up SWD as soon as `FUN_08013C74` has run.  What is *not* settled is
+the physical destination -- amplifier enable and mute, an analogue path switch, or an
+indicator -- because that needs a scope on the pins.  What is settled is that the
+earlier "`PA13`/`PA14` are the debug pins, reused" reading (and the resulting "no pin
+follows the squelch" conclusion) was wrong.
+
+**The chip-side third place.**  A path can also be switched from the transceiver's
+own GPIO register — `0x33` bits 0..6, the K1's `ToggleGpioOut`.  Its only writer is
+`FUN_080137D4(mask, value)`, and the 16 call sites set chip pins 0/1 (bring-up), 2
+(`FUN_08004E20`), 3, 4, 5 (`FUN_08013A70`/`FUN_08013B12`) and clear all seven
+(`FUN_08013C24`).  The T/R transition does the whole cluster at once:
 
 ```
 FUN_08008F2C()  -> FUN_0801AFF4() -> chip pin 2 = 0, chip pin 5 = 0
@@ -208,20 +283,7 @@ FUN_080177A8()  -> MCU PC13, gated by the codeplug bits above
 FUN_08021888()  -> sets a RAM state flag only
 ```
 
-**And there is no other candidate.**  Every other MCU pin is accounted for: the RF
-bus (`PB8`/`PB12`/`PB13`/`PA12`), the flash (`PA15`/`PB3`–`PB5`), the panel
-(`PA8`–`PA11`/`PB15`), the gauge (`PC14`/`PB2`/`PD0`), `PA0`/`PA1` for the RF/LED
-field, and `PA13`/`PA14` for debug.  A speaker/audio enable is therefore either
-**`PC13`** or one of the **chip's GPIO pins set in that T/R cluster** — and either
-way it is driven by the **transmit/receive transition**, not by the squelch.
-
-**What would settle it.**  The K1 tree answers it for its own board: its audio path
-is `GPIO_PIN_AUDIO_PATH = PA8`, driven HIGH by `AUDIO_AudioPathOn()` and low by
-`AUDIO_AudioPathOff()` — the two macros the port replaced with a callback.  On the
-RA89R the call to make is a scope on PC13 (and on the chip's GPIO pins) while the
-squelch opens and closes with the stock firmware running; on our side the port now
-drives PC13 from that callback and the console's `A` toggles it, so the line can be
-measured with a meter before any audio path exists.
+Unlike `PA14`, none of these chip pins is driven by the squelch state.
 
 ## Open
 
@@ -236,3 +298,12 @@ measured with a meter before any audio path exists.
    scale constant (the double at `0x08005D7C`) are not extracted.
 6. `0x64` (VOX amplitude, read by `FUN_08017618` on this part) and the K1's
    `GetVoxAmp` were not compared.
+7. **`PA13`/`PA14`'s physical destination is not identified.**  Their behaviour is
+   established (above) but not what they switch, which is why the port cannot yet
+   wire the audio-path callback with confidence.  It is a scope job: `PA14` at idle
+   / squelch open / squelch closed / TX, `PA13` at reset and during an RX/scan step.
+   The 32-byte settings block's byte-2 bit 2 (`0x20009F28 + 0xc`) is worth finding in
+   the CPS menu for a name -- whatever option it is, it selects this pair's level.
+8. The **squelch-off path's register work** (`FUN_0801D458` writes BK4829
+   `0x3f`/`0x42`/`0x5a` and the `FUN_08022082`/`FUN_080220A0` pair) is not decoded;
+   it is the chip-side half of the same mute.
