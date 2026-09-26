@@ -19,6 +19,7 @@
 #include "radio.h"
 #include "settings.h"
 #include "ui/main.h"
+#include "ui/menu.h"
 
 static void render(const char *title)
 {
@@ -53,6 +54,17 @@ int main(void)
     gRxVfo->freq_config_TX.Frequency = 14575000u;
     UI_DisplayMain();
     render("K1 UI_DisplayMain(): 145.7500 MHz, channel, status line");
+
+    /* The menu's entry sequence (app/main.c): build the view, then draw it.
+     * ENABLE_FEAT_F4HWN_MENU_CAT is off (the K1's default preset), so this is
+     * the flat list. */
+    UI_MENU_BuildView();
+    UI_DisplayMenu();
+    render("K1 UI_DisplayMenu(): the menu list, first item");
+
+    gMenuCursor = 3;
+    UI_DisplayMenu();
+    render("K1 UI_DisplayMenu(): the menu list, fourth item");
 
     gRxVfo->freq_config_RX.Frequency = 43350000u;
     gRxVfo->freq_config_TX.Frequency = 43350000u;

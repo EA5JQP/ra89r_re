@@ -61,6 +61,13 @@ set(APP_SOURCES
     App/ui/helper.c
     App/ui/inputbox.c
     App/ui/main.c
+    App/ui/menu.c
+    App/app/menu.c
+    App/app/action.c
+    App/version.c
+    App/dcs.c
+    App/frequencies.c
+    App/helper/battery.c
     App/port_state.c
     # --- end of imported sources ---------------------------------------------
     App/settings.c

@@ -22,9 +22,15 @@ Imported from the UV-K1/K5V3 project
 | `firmware/App/bitmaps.c` `bitmaps.h` | verbatim | none -- icon bitmaps |
 | `firmware/App/driver/st7565.c` `.h` | adapted | same API and layout as the K1 (`gStatusLine[128]`, `gFrameBuffer[7][128]`, status line = page 0, frame lines = pages 1..7, `+4` column offset in `DrawLine`); the transport is this repo's bit-banged `driver/lcd_st7565.c` instead of the K1's hardware SPI, and the init is the bootloader-proven sequence |
 | `firmware/App/ui/main.c` `.h` | verbatim | the VFO screen (`UI_DisplayMain`) and its helpers |
+| `firmware/App/ui/menu.c` | verbatim | the menu screen (`UI_DisplayMenu`), the `MenuList[]` table, its sub-menu strings and its view/cursor state |
+| `firmware/App/app/menu.c` `.h`, `app/action.c` `.h`, `app/common.h`, `app/generic.h`, `app/scanner.h`, `ui/battery.h`, `ui/welcome.h`, `driver/eeprom.h` | verbatim | the tables and headers the screens compile against |
+| `firmware/App/version.c`, `App/dcs.c`, `App/frequencies.c`, `App/helper/battery.c` | verbatim | version strings, the CTCSS/DCS tables the menu indexes, the step/band tables, the battery arithmetic.  Their hardware calls (ADC, flash) are not reached by the screens yet |
 | `firmware/App/ui/menu.h`, `ui/ui.h`, `ui/helper.c` `.h`, `ui/inputbox.c` `.h` | verbatim | menu table declarations, the screen dispatcher's interface, drawing/text helpers |
 | `firmware/App/settings.h`, `radio.h`, `frequencies.h`, `dcs.h`, `functions.h`, `audio.h`, `misc.h`, `helper/battery.h`, `app/app.h`, `app/chFrScanner.h`, `app/dtmf.h`, `driver/system.h` | verbatim | the headers the screens compile against.  `settings.h` has one port addition: `PORT_SettingsDefaults()` |
 | `firmware/App/driver/backlight.h` `.c` | extended | this repo's backlight driver plus the K1's names (`gBacklightCountdown_500ms`, `gBacklightBrightness`, `value[]`, `BACKLIGHT_InitHardware/_Update/_UpdateTickless/_SetBrightness`); the brightness is kept as state, the panel stays on -- the DAC dimming is not implemented |
+
+| `firmware/App/py32f0xx.h`, `App/external/printf/printf.h` | shims | the vendor device header of the K1's PY32F071 and its embedded printf, mapped to this repo's `py32f4xx.h` and to newlib |
+| `firmware/tools/host/py32f4xx.h`, `tools/host/host_hw.c` | test double | a host-only device header (CMSIS's `__DSB()` is ARM assembly, so a PC build cannot use the real one) plus stand-ins for the backlight and the two `BK4819_*` calls the screens make |
 
 Not imported on purpose: the K1's `board.h`, `driver/{gpio,uart,systick}.h` and
 its `driver/st7565.c` body stay this repo's; its `settings.c`, `radio.c`,

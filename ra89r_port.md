@@ -166,11 +166,29 @@ here are the port's todo list:
   frequency, the status line, the channel and the power/RSSI readouts all
   draw), and console `G` draws it on the radio.
 
-* **Next -- stage 2b.**  `driver/keyboard.h` bound to our `keypad.c`, then
-  `ui/ui.c` (the screen dispatcher) and `ui/status.c`/`ui/welcome.c`, then
-  `ui/menu.c` with the real `settings.c`/`menu.c` behind it, and the key/action
-  layer (`functions.c`) -- each step first on `preview_k1.c`, then on the radio.
-  The stubs in `port_state.c` come out as their owner modules come in.
+* **Stage 2b -- the menu screen is in and renders too (unvalidated on the
+  radio).**  `App/ui/menu.c` (the K1's `UI_DisplayMenu`, 1844 lines, verbatim
+  with its `MenuList[]` table) compiles, links and draws: the list, the
+  selected item's name and its value column.  With it came the real
+  `app/menu.c` (sub-menu strings), `app/action.c`, `app/common.h`,
+  `app/generic.h`, `app/scanner.h`, `version.c`, `dcs.c`, `frequencies.c`,
+  `helper/battery.c` and `ui/{battery,welcome}.h`, plus `driver/eeprom.h`; the
+  feature set now follows the K1's `default` CMake preset for the entries that
+  only affect drawing (`ENABLE_BIG_FREQ`, `ENABLE_CUSTOM_MENU_LAYOUT`,
+  `ENABLE_KEEP_MEM_NAME`, `ENABLE_WIDE_RX` on top of `ENABLE_FEAT_F4HWN`,
+  `ENABLE_SMALL_BOLD`, `ENABLE_VOX`), and stays off for what the RA89R lacks or
+  the port cannot back yet.  The PC previews got a host-only device header
+  (`tools/host/py32f4xx.h`, because CMSIS's `__DSB()` is ARM assembly) and a
+  stand-in for the backlight and the two `BK4819_*` calls the screens make.
+  Console `M` draws the menu on the radio, `G` the VFO.
+
+* **Next -- stage 2c.**  `driver/keyboard.h` bound to our `keypad.c`, then
+  `driver/keyboard.h` bound to our `keypad.c` so the menu can be driven by the
+  radio's own keys, then `ui/ui.c` (the screen dispatcher) and
+  `ui/status.c`/`ui/welcome.c`, then the real `settings.c`/`misc.c`/`radio.c`
+  behind the facade and the key/action layer (`functions.c`) -- each step first
+  on `preview_k1.c`, then on the radio.  The stubs in `port_state.c` come out as
+  their owner modules come in.
 
 ## Suggested order
 

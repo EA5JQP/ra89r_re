@@ -32,6 +32,7 @@
 #include "port_state.h"
 #include "radio.h"
 #include "ui/main.h"
+#include "ui/menu.h"
 #include "ui.h"
 
 #define VERSION_STRING "ra89r_fw 0.2 (uart debug)"
@@ -198,7 +199,7 @@ static void print_help(void)
               "          R probe both RF chips (ids)   W configure both\n"
               "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
               "          S sample reg 0x67 for 4 s   C toggle PC13\n"
-              "          G ported K1 VFO screen (ui/main.c UI_DisplayMain)\n"
+              "          G ported K1 VFO screen   M ported K1 menu screen\n"
               "          T transmit (DTMF tone)   Y step the PA power\n"
               "          T transmit on/off (also: hold PTT on the radio)\n");
 }
@@ -906,6 +907,20 @@ int main(void)
             case 'S':
                 rf_watch();
                 break;
+            case 'M': {
+                /* The ported K1 menu: ui/menu.c's UI_DisplayMenu() over the same
+                 * state facade (its entry sequence builds the list first). */
+                static int gui_up;
+
+                if (!gui_up) {
+                    port_state_init();
+                    gui_up = 1;
+                }
+                UI_MENU_BuildView();
+                UI_DisplayMenu();
+                uart_puts("\nK1 UI_DisplayMenu() drawn\n");
+                break;
+            }
             case 'G': {
                 /* The ported K1 VFO screen: ui/main.c's UI_DisplayMain() itself,
                  * drawing through the imported display layer, with the app state

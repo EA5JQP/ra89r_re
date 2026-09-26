@@ -25,8 +25,19 @@
 #define ENABLE_SMALL_BOLD 1
 #define ENABLE_VOX 1
 
+/* The K1's own `default` CMake preset, for the entries that only change how the
+ * screens are drawn.  What that preset also turns on but the RA89R lacks (FM
+ * broadcast, air copy, NOAA, USB, voice prompts, spectrum, password) stays off,
+ * and so do the hardware features that need a module the port has not brought
+ * in yet (UART console, TX1750, flashlight, DTMF calling). */
+#define ENABLE_BIG_FREQ 1
+#define ENABLE_CUSTOM_MENU_LAYOUT 1
+#define ENABLE_KEEP_MEM_NAME 1
+#define ENABLE_WIDE_RX 1
+
 /* Version strings the K1's menus and boot screen print.  The RA89R port is its
  * own build, so these say so rather than impersonating the K1 release. */
+#define AUTHOR_STRING "RA89R port"
 #define AUTHOR_STRING_1 "RA89R port"
 #define AUTHOR_STRING_2 "EA5JQP"
 #define VERSION_STRING_1 "ra89r_fw"
@@ -34,5 +45,6 @@
 #define DISPLAY_VERSION_STRING_2 "0.3"
 #define EDITION_STRING "port"
 #define ALERT_TOT 10
+#define BUILD_COMMIT "port"
 
 #endif /* APP_PORT_FEATURES_H */
