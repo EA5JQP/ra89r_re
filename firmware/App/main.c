@@ -307,11 +307,14 @@ static void audio_path_drive(int on)
 static void rf_audio_path(void)
 {
     static int on;
+    uint32_t en, path;
 
     on = !on;
     audio_path_drive(on);
-    uart_printf("\nRF: audio path (PA14) -> %s (PA13 held high)\n",
-                on ? "high" : "low");
+    en = gpio_read(AUDIO_ENABLE_PORT, AUDIO_ENABLE_PIN);
+    path = gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN);
+    uart_printf("\nRF: audio path -> PA14=%s, PA13=%s (IDR read-back)\n",
+                path ? "high" : "low", en ? "high" : "low");
     uart_puts("  measure PA14: the stock drives this line from its squelch\n"
               "  handler -- high while the squelch is open, low when it closes --\n"
               "  and high in TX; PA13 is the twin on the same codeplug bit.\n"
