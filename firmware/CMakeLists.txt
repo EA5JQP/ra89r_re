@@ -73,6 +73,11 @@ set(APP_SOURCES
     App/dcs.c
     App/frequencies.c
     App/helper/battery.c
+    App/driver/system.c
+    App/radio.c
+    App/functions.c
+    App/audio.c
+    App/misc.c
     App/port_state.c
     App/port_storage.c
     App/driver/spi_flash.c

@@ -45,7 +45,6 @@ const uint8_t value[11] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
 
 uint16_t gBacklightCountdown_500ms;
 uint8_t  gBacklightBrightness = 10;
-uint8_t  gBacklightBrightnessOld = 10;
 
 void BACKLIGHT_InitHardware(void)
 {

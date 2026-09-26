@@ -13,8 +13,11 @@
 
 #include "app/menu.h"
 #include "driver/keyboard.h"
+#include "driver/rx.h"
+#include "driver/tx.h"
 #include "driver/st7565.h"
 #include "frequencies.h"
+#include "functions.h"
 #include "radio.h"
 #include "settings.h"
 #include "ui/main.h"
@@ -105,6 +108,12 @@ static void port_gui_main_key(KEY_Code_t key, bool pressed, bool held)
 
         gRxVfo->freq_config_RX.Frequency = freq;
         gRxVfo->freq_config_TX.Frequency = freq;
+
+        /* Move the radio, not just the number: the measured receive chain
+         * (driver/rx.c) retunes the chip. */
+        if (rx_ready() && !tx_active())
+            rx_set_frequency(freq);
+
         s_dirty = true;
         break;
     }
@@ -128,10 +137,40 @@ static void port_gui_main_key(KEY_Code_t key, bool pressed, bool held)
 void port_gui_tick(uint32_t now_ms)
 {
     static uint32_t last;
+    static bool     squelch_open;
+
+    /* The receiver's own poll: the squelch marks are the stock's, and the RSSI
+     * the screen reads comes from the chip (BK4819_GetRSSI). */
+    if (rx_ready())
+        rx_poll();
+
+    if (rx_ready() && rx_squelch_open() != squelch_open) {
+        squelch_open = rx_squelch_open();
+        FUNCTION_Select(squelch_open ? FUNCTION_INCOMING : FUNCTION_RECEIVE);
+        s_dirty = true;
+    }
 
     if ((uint32_t)(now_ms - last) < PORT_GUI_REFRESH_MS)
         return;
     last = now_ms;
+    s_dirty = true;
+}
+
+/* PTT: the radio's own measured transmit chain (driver/tx.c), not the K1's
+ * chip sequence -- see ra89r_rfpath.md.  The K1 state is set too, so the
+ * screens show TX and the status line follows. */
+static void port_gui_ptt(bool down)
+{
+    if (down == tx_active())
+        return;
+
+    if (down) {
+        FUNCTION_Select(FUNCTION_TRANSMIT);
+        tx_start(gTxVfo->freq_config_TX.Frequency, TX_SOURCE_MIC);
+    } else {
+        tx_stop();
+        FUNCTION_Select(FUNCTION_RECEIVE);
+    }
     s_dirty = true;
 }
 
@@ -140,6 +179,11 @@ void port_gui_poll(void)
     KEY_Code_t key = KEYBOARD_GetKey();
     bool       pressed = false;
     bool       held = false;
+    bool       ptt;
+
+    /* PTT works on any screen, like the K1's. */
+    ptt = (key == KEY_PTT) || (key == KEY_PTT2);
+    port_gui_ptt(ptt);
 
     if (key == KEY_INVALID) {
         s_last = KEY_INVALID;

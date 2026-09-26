@@ -21,7 +21,6 @@
 
 EEPROM_Config_t gEeprom;
 
-uint8_t gKeypadLocked;
 
 /* Values that make the VFO screen show something sane before the codeplug is
  * readable: a channel (rather than a bare frequency), 145.7500 MHz, FM, the

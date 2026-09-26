@@ -258,7 +258,30 @@ here are the port's todo list:
   channels and names the menus show are still the compiled-in defaults rather
   than the radio's own data (ra89r_eeprom.md has the layout).
 
-* **Next -- stage 2f.**  `driver/keyboard.h` bound to our `keypad.c`, then
+* **Stage 3a -- the app core is in and the radio works from the K1 UI
+  (unvalidated on the radio).**  `radio.c`, `functions.c`, `audio.c`, `misc.c`
+  and a port `driver/system.c` (delay over this repo's SysTick) now compile and
+  link, which retired ~65 of `port_state.c`'s stubs.  The imported K1 sources
+  reach the hardware through a small logical surface, so `driver/gpio.h` grew it
+  (`GPIO_SetOutputPin`/`Reset`/`Toggle`/`IsInputPinSet`, the audio path, the
+  backlight, `GPIO_IsPttPressed` reading the keypad) mapped to this board's pins,
+  and `SQL_TONE` (the K1 CMake's `-DSQL_TONE=550`) is in `port_features.h`.  The
+  core touches almost no LL GPIO: two calls in the whole set.
+
+  `port_gui.c` now drives the measured chains rather than only the views: UP/DOWN
+  retunes the receiver (`rx_set_frequency`), PTT keys the transmitter
+  (`tx_start`/`tx_stop`, the measured `0x36`/`0x50`/`0x33` chain -- *not* the
+  K1's unvalidated `RADIO_SetTxParameters`), the squelch tick polls `rx_poll()`
+  and sets `FUNCTION_INCOMING`/`FUNCTION_RECEIVE`, and `RADIO_*`/`FUNCTION_*`
+  supply the state the screens read.
+
+  Known split, deliberate: `radio.c`'s own chip sequences
+  (`RADIO_SetupRegisters`, `RADIO_SetTxParameters`) are the K1's and are *not*
+  used yet -- on this radio they need comparing against the stock first
+  (`ra89r_rfeatures.md` locates them).  The measured `rx.c`/`tx.c` chains are what
+  the port runs.
+
+* **Next -- stage 3b.**  `driver/keyboard.h` bound to our `keypad.c`, then
   mapping the stock codeplug into `gEeprom` (channels, names, settings, the
   calibration) so the screens show the radio's own data, then the real
   `settings.c`/`misc.c`/`radio.c` behind the facade and the key/action layer

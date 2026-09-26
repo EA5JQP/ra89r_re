@@ -45,6 +45,9 @@
 #define DISPLAY_VERSION_STRING_2 "0.3"
 #define EDITION_STRING "port"
 #define ALERT_TOT 10
+
+/* The CTSS/squelch tone the K1's CMake sets (App/CMakeLists.txt: SQL_TONE=550). */
+#define SQL_TONE 550
 #define BUILD_COMMIT "port"
 
 #endif /* APP_PORT_FEATURES_H */
