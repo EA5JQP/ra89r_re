@@ -151,38 +151,82 @@ if (r0 == 0x20000000) {   ; the app's initial stack pointer must look like SRAM
 }
 ```
 
-The only validity test is that the application's first vector word is a
-`0x2000xxxx` SRAM address.  Our image starts with `SP = 0x20010000`, so the
-stock bootloader will accept and jump into it -- no header, signature or
-checksum is required.
+The trampoline's own validity test is only that the application's first vector
+word is a `0x2000xxxx` SRAM address: no header, signature or checksum is
+required, and our image starts with `SP = 0x20010000`.  What the trampoline does
+*not* decide is whether to run the app at all -- for a cold start that is the
+marker byte plus the two key pins, and the `EXIT` handler resets the chip, so a
+flash is always followed by that gate: §4c.
 
 ## 4c. The application-valid marker at 0x0805FFF0 (critical)
 
-The bootloader does **not** start the application unconditionally.  At boot it
-(0x08003318-0x0800335A):
+The bootloader does **not** start the application unconditionally, and the reset
+vector leads straight into this decision: 0x08000144 runs `SystemInit` and jumps
+to the stub at 0x08000130, which loads SP (`0x20003190`) and jumps to
+**0x0800330C**.  So every reset -- power-on, pin, and the `EXIT` handler's
+`SYSRESETREQ` (§4b) -- executes 0x08003318-0x080033AE:
 
 ```
-copy 1 byte from flash 0x0805FFF0 -> RAM
-if (that byte == 0x11) flag = 2 else flag = 0
-read GPIOB pin 9 and GPIOA pin 2 ...
-if (key not held && flag != 0) { msp = vector[0]; blx vector[1]; }   /* run the app */
-else 0x08000564                  /* stay in update mode */
+0x0800331E  memcpy(0x20000004, 0x0805FFF0, 1)     /* flash byte -> RAM copy */
+0x08003322  flag (RAM 0x20000005) = 0
+0x0800332C  if (RAM byte == 0x11) flag = 2
+0x08003336  if ((GPIOB.IDR & 0x200) == 0          /* PB9 low */
+0x08003342   && (GPIOA.IDR & 0x004) == 0)         /* and PA2 low */
+0x08003354      bl 0x08000564                     /* update mode */
+0x0800334E  else if (flag == 0)
+0x08003354      bl 0x08000564                     /* marker invalid too */
+0x0800335A  else { msp = *(0x08004000);           /* vector[0] */
+                    if ((msp & 0x2FFE0000) == 0x20000000)
+                        ((void (*)(void))*(0x08004004))();   /* the app */ }
 ```
 
-and the update-mode entry (0x08000564) **writes 0xFF over that byte** before
-serving the host, i.e. entering update mode invalidates the application (a
-power cut in the middle of an update therefore leaves the radio in the
-bootloader -- recoverable, never half-flashed).
+Read off that listing, not inferred:
 
-So after flashing, something must set **0x0805FFF0 = 0x11** again or the radio
-reboots into the bootloader: black screen, silent UART.  The stock application
-does it itself (`0x08015724`: state byte `'0'` -> write `0x11` via its flash
-driver `0x080190C0`), which is why the stock radio always boots.  Since our
-firmware is a different program, the **flashing tool must write the marker**:
-`tools/ra89r_flash.py` appends a 241-byte record at 0x0805FF00 (records are
-256-byte aligned, so the marker sits at offset 0xF0) with 0x11 at 0x0805FFF0
+* The marker is consulted **only while PB9 or PA2 reads high**; with both low the
+  radio goes to update mode whatever the byte says.  A released pin reads high
+  (a normal power-on, nothing pressed, runs the application), so the update-mode
+  entry condition is "hold both pins low through power-on" -- the key
+  combination `firmware/FLASHING.md` §6 is still missing.  The earlier version of
+  this section said "key not held && flag != 0" and had the sense of that gate
+  wrong.
+* 0x0805FFF0 is referenced in exactly **two** places in the 16 KiB image: the
+  read above and the write below.  The jump into the application exists once, in
+  the trampoline at 0x0800335A; the copy at 0x08003382 is what runs when
+  0x08000564 returns.
+* Entering update mode (0x08000564) **writes 0xFF over that byte** when it was
+  valid (flag != 0) before serving the host, i.e. entering update mode
+  invalidates the application: a power cut in the middle of an update leaves the
+  radio in the bootloader -- recoverable, never half-flashed.
+
+So the byte must be 0x11 for the radio to come back after a restart.  The stock
+application writes it itself (`0x08015724`: state byte `'0'` -> write `0x11`
+through its flash driver `0x080190C0`), which is why the stock radio always
+boots; since our firmware is a different program, the **flashing tool must write
+the marker**: `tools/ra89r_flash.py` appends a 241-byte record at 0x0805FF00
+(256-byte aligned, so the marker sits at offset 0xF0) with 0x11 at 0x0805FFF0
 and 0xFF elsewhere, unless `--no-valid-marker` is given.  The same applies when
 restoring the stock `.icf`, which does not contain that byte either.
+
+**The write is not the whole story: one launch path skips the test.**  When the
+update-mode routine 0x08000564 returns -- a session that ended without `EXIT`, a
+host that never talked -- control falls into the trampoline copy at 0x08003382,
+which enters the application with **no marker test at all**, and by then the
+update-mode entry has already cleared the byte.  So "it answered on the console
+after flashing" is not evidence that the marker is valid: the application may
+have been started by that path with the byte at 0xFF.  Which one ran is visible
+from the application itself: a `SYSRESETREQ` (the `EXIT` reset) can only have
+reached the app through the check, while a launch out of the fall-through leaves
+the reset cause at power-on/pin.
+
+**Open point.**  Our firmware reports `app-valid marker at 0x0805FFF0 = 0xFF`
+while the flasher wrote that record and the bootloader acknowledged it.  Either
+the byte is fine and our *read* is at fault, or the byte really is 0xFF because
+the app came out of the fall-through above -- in which case the next ordinary
+power-on lands in the bootloader (black screen, silent 115200 console; `probe`
+still answers at 9600).  `firmware/App/main.c`'s `reset cause` line is what
+distinguishes them, and a byte-at-a-time dump of the last short sector
+(0x0805FF00-0x0805FFF0) is the next diagnostic if it says the app reset through
+the check.
 
 ## 4d. The bootloader drives the same panel
 
