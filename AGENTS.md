@@ -136,14 +136,16 @@ cd firmware && gcc -std=c11 -I App -I App/driver -DLCD_HOST_TEST \
     App/driver/font_8x16.c App/driver/font_5x7.c -o /tmp/preview && /tmp/preview
 
 # the ported K1 VFO screen (the K1's own ui/main.c) rendered on a PC
-SDK=../PY32F4xx_Firmware
-cd firmware && gcc -std=c11 -I App -I App/driver \
-    -I $SDK/Drivers/CMSIS/Device/PUYA/PY32F403/Include -I $SDK/Drivers/CMSIS/Include \
+cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver \
     -DPY32F403xD -include App/port_features.h -DST7565_HOST_TEST \
     -ffunction-sections -fdata-sections -Wl,--gc-sections \
-    tools/preview_k1.c App/ui/main.c App/ui/helper.c App/ui/inputbox.c \
+    tools/preview_k1.c tools/host/host_hw.c App/ui/main.c App/ui/menu.c \
+    App/app/menu.c App/app/action.c App/ui/helper.c App/ui/inputbox.c \
+    App/version.c App/dcs.c App/frequencies.c App/helper/battery.c \
     App/port_state.c App/settings.c App/font.c App/bitmaps.c App/driver/st7565.c \
     -o /tmp/preview_k1 && /tmp/preview_k1
+# (tools/host is a test double for the device header: CMSIS's __DSB() is ARM
+#  assembly, so a PC build cannot use the real one -- see NOTICE)
 ```
 
 Round-trip check (the fastest way to prove a change did not break the codec):
@@ -222,13 +224,15 @@ port                      integration -- OPEN: the K1/F4HWN application port, of
                                          the radio): the K1 display layer (driver/
                                          st7565.c, font.c, bitmaps.c, ui/helper.c,
                                          ui/inputbox.c) plus the K1's own ui/main.c
-                                         (UI_DisplayMain) compile, link and render
-                                         -- preview_k1.c draws the VFO screen on a
-                                         PC and console 'G' on the radio -- over the
-                                         port_state.c facade (gEeprom.VfoInfo[] and
-                                         one stub per K1 module still to come).  See
-                                         ra89r_port.md for the progress and what is
-                                         next (menu, status, keys).  Still on the
+                                         (UI_DisplayMain) plus ui/menu.c
+                                         (UI_DisplayMenu with its MenuList[]) compile,
+                                         link and render -- preview_k1.c draws both on
+                                         a PC, console 'G' draws the VFO and 'M' the
+                                         menu on the radio -- over the port_state.c
+                                         facade (gEeprom.VfoInfo[] and one stub per K1
+                                         module still to come).  See ra89r_port.md for
+                                         the progress and what is next (keys, status,
+                                         the real settings/radio modules).  Still on the
                                          list (the TX chain
                                          reaching the app's path, TX power from the
                                          codeplug, per-band path and BK4815 handling,
