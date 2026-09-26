@@ -553,9 +553,17 @@ static void radio_tx(int on)
         bk4815_write_reg(0x0C, 0x0203);     /* the stock's T/R path, other branch */
         BK4819_SetFrequency(BENCH_FREQ_HZ);
         BK4819_WriteRegister(BK4819_REG_7D, BENCH_PA_7D);
-        BK4819_PrepareTransmit();
-        BK4819_SetAF(BK4819_AF_FM);     /* 0x47 = 0x6142, as the stock's TX does */
-        tx_mic_gain(5);                 /* fixed for now: a mid codeplug gain */
+        BK4819_PrepareTransmit();       /* 0x37 = 0x9D1F, 0x30 = 0xC1FE */
+        BK4819_SetAF(BK4819_AF_MUTE);   /* 0x47 = 0x6042: keep the AF DAC out */
+        /* Deterministic modulation: the chip's own tone generator, sent as DTMF
+         * -- the K1's tested over-the-air path (BK4819_EnterDTMF_TX ->
+         * EnableTXLink -> 0x30 TX link with PA gain, then 0x71 carries the tone).
+         * A loud two-tone on the other radio means the carrier and the modulator
+         * are real, whatever the microphone does; nothing at all means we are
+         * not transmitting and the squelch was opening on keying noise. */
+        BK4819_EnterDTMF_TX(false);
+        BK4819_PlayDTMF('5');
+        tx_mic_gain(5);                 /* irrelevant to the tone, kept for later */
         pa_duty = 0;
         pa_last = systick_millis();
         pa_pwm_duty(0);
@@ -571,12 +579,14 @@ static void radio_tx(int on)
         bench_led();
     }
 
-    uart_printf("\nbench: TX %s (0x30 = 0x%04X, 0x7D = 0x%04X, PA duty %u of %u)\n",
+    uart_printf("\nbench: TX %s (0x30 = 0x%04X, 0x70 = 0x%04X, 0x71 = 0x%04X, "
+                "PA duty %u of %u)\n",
                 on ? "ON" : "off", (unsigned)BK4819_ReadRegister(BK4819_REG_30),
-                (unsigned)BK4819_ReadRegister(BK4819_REG_7D),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_70),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_71),
                 (unsigned)TIM1->CCR2, (unsigned)PA_PWM_ARR);
-    bench_screen(pa_duty, TIM1->CCR2, BK4819_ReadRegister(BK4819_REG_47),
-                 BK4819_ReadRegister(BK4819_REG_7D));
+    bench_screen(pa_duty, TIM1->CCR2, BK4819_ReadRegister(BK4819_REG_70),
+                 BK4819_ReadRegister(BK4819_REG_71));
 }
 
 static void audio_bench_step(uint32_t now)
