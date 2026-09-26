@@ -169,11 +169,16 @@ bool keypad_init(void)
     uint32_t sqr = 0;
     bool any = false;
 
-    /* ADCCLK = PCLK2/2.  Worth setting rather than inheriting: we never touch
+    /* ADCCLK = PCLK2/8.  Worth setting rather than inheriting: we never touch
      * RCC_CFGR's ADCPRE elsewhere, so its value is whatever the bootloader left,
      * and the sample time (hence how the levels compare with the stock windows)
-     * depends on it. */
-    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_ADCPRE) | RCC_CFGR_ADCPRE_DIV2;
+     * depends on it.  It is /8 and not /2 because PCLK2 is now the PLL clock:
+     * at 48 MHz that is a 6 MHz ADCCLK, inside the ADC's limit, and the
+     * 480-cycle sample time comes out at ~82 us -- the same order as the
+     * ~123 us these button windows were measured with at 8 MHz.  If
+     * BOARD_SYSCLK_HZ changes much, this is the constant to re-derive (and
+     * 'k' is the console command that says whether the windows still hold). */
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_ADCPRE) | RCC_CFGR_ADCPRE_DIV8;
 
     RCC->APB2ENR |= RCC_APB2ENR_ADC1EN | RCC_APB2ENR_SYSCFGEN;
     (void)RCC->APB2ENR;

@@ -15,11 +15,22 @@
  *   0x08000000 - 0x08003FFF   stock bootloader (16K, do not overwrite)
  *   0x08004000 - 0x0805FFFF   application (this firmware) */
 
-/* clock: the part boots on HSI = 8 MHz (datasheet) and this firmware stays
- * there -- enough for the bit-banged LCD and 115200 baud, no PLL bring-up risk */
-#define BOARD_SYSCLK_HZ     (8000000u)
-#define BOARD_APB1_HZ       (8000000u)   /* APB1 prescaler = 1 */
-#define BOARD_APB2_HZ       (8000000u)   /* APB2 prescaler = 1 */
+/* clock: HSI (8 MHz, no crystal needed) through the PLL -- see driver/clock.c.
+ * The part boots at 8 MHz with the PLL off, and this firmware used to stay
+ * there, which made every bit-banged bus, busy-wait and display write an order
+ * of magnitude slower than the MCU allows (the PY32F403 is rated to 155 MHz;
+ * the UV-K1 this was ported from runs its smaller PY32F071 at 48 MHz).
+ *
+ * BOARD_PLL_MUL and BOARD_FLASH_WS go together: the vendor's latency table is
+ * 0 WS <= 28 MHz, 1 WS 28..60, 3 WS 60..90, 4 WS 90..120, 5 WS 120..140.  To
+ * go faster, change all three (e.g. 12 / 4 for 96 MHz) -- but check the keypad
+ * first, because ADCCLK is PCLK2 divided (driver/keypad.c) and its sample time
+ * is what the button windows were measured with. */
+#define BOARD_PLL_MUL       6u            /* HSI x 6 */
+#define BOARD_FLASH_WS      1u            /* 28 < SYSCLK <= 60 MHz */
+#define BOARD_SYSCLK_HZ     (8000000u * BOARD_PLL_MUL)
+#define BOARD_APB1_HZ       BOARD_SYSCLK_HZ   /* APB1 prescaler = 1 */
+#define BOARD_APB2_HZ       BOARD_SYSCLK_HZ   /* APB2 prescaler = 1 */
 
 /* LCD: PB15 SDA, PA8 SCLK, PA10 A0/DC, PA11 CS, PA9 RESET
  * (stock firmware 0x08015032 / 0x0801501C / 0x08015086+0x080150AC /

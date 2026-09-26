@@ -89,11 +89,13 @@ void BK4819_SetRogerMode(uint8_t mode)
 
 /* The K1's SYSTEM_DelayMs.  This firmware has no system module; a busy loop is
  * enough for the tone and DTMF timings this driver uses, and it keeps the file
- * self-contained. */
+ * self-contained.  The count is per millisecond at the clock this firmware
+ * runs, rather than the fixed 2000 it was written with: that number assumed
+ * 8 MHz, and would have made every settle delay here six times too short. */
 static void bk4919_delay_ms(unsigned ms)
 {
     while (ms--)
-        for (volatile unsigned i = 0; i < 2000u; i++)
+        for (volatile unsigned i = 0; i < (BOARD_SYSCLK_HZ / 4000u); i++)
             ;
 }
 

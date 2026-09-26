@@ -131,7 +131,8 @@ static const char *reset_cause(void)
 
 static void print_diagnostics(void)
 {
-    uart_printf("  sysclk      %u Hz (HSI)\n", (unsigned)SystemCoreClock);
+    uart_printf("  sysclk      %u Hz (HSI x %u through the PLL)\n",
+                (unsigned)SystemCoreClock, (unsigned)BOARD_PLL_MUL);
     uart_printf("  vtor        %08X\n", (unsigned)SCB->VTOR);
     uart_printf("  msp         %08X\n", (unsigned)__get_MSP());
     uart_printf("  reset cause %s (CSR=%08X)\n", reset_cause(),
@@ -865,8 +866,13 @@ int main(void)
         left_cr = RCC->CR;
         uart_init(BOARD_UART_BAUD);
         uart_printf("\n\n=== " VERSION_STRING " ===\n");
-        uart_printf("clock: forced HSI; bootloader had left CFGR=%08X CR=%08X "
-                    "FLASH_ACR=%08X\n", (unsigned)left_cfgr, (unsigned)left_cr,
+        uart_printf("clock: HSI 8 MHz x %u through the PLL = %u Hz, %u flash "
+                    "wait state(s), PLL %s; the bootloader had left CFGR=%08X "
+                    "CR=%08X FLASH_ACR=%08X\n",
+                    (unsigned)BOARD_PLL_MUL, (unsigned)BOARD_SYSCLK_HZ,
+                    (unsigned)BOARD_FLASH_WS,
+                    gClockPllRunning ? "locked" : "DID NOT LOCK -- running on HSI",
+                    (unsigned)left_cfgr, (unsigned)left_cr,
                     (unsigned)left_flash_acr);
         uart_printf("usart1 as left by the bootloader: CR1=%04X CR2=%04X CR3=%04X "
                     "(now 8N1, no flow control, no DMA)\n",
