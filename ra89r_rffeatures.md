@@ -162,8 +162,19 @@ as well, so it carries several independent bit fields and is not yet mapped.
 
 ## Does anything enable a speaker PA when the squelch opens?
 
-**Yes — `PA14`.**  It is the only MCU pin whose level follows the squelch, and the
-level it takes is selected by a codeplug bit.  The whole chain is:
+**Measured on the radio: the pin the squelch reaches is the status LED, not a
+speaker enable.**  Driving the `PA13`/`PA14` pair from our firmware changes the
+LED (green+red -> red), so `PA14` is the stock's receive-light output -- the
+`Rx.Light` setting -- and not an amplifier line; `ra89r_led.md` has the pin map.
+The derivation below still stands as the evidence for *which* pin the squelch
+reaches and at what level; it is its "speaker PA" framing that was wrong.  What
+that leaves open is the audio path itself: nothing in the squelch chain mutes a
+speaker, the mute is chip-side (the AF registers, `FUN_08015F48`, plus the
+`0x3f`/`0x42`/`0x5a` writes in `FUN_0801D458`), and `PC13` -- the line the stock
+holds HIGH on this codeplug -- is the amplifier-enable candidate.
+
+**`PA14` is the only MCU pin whose level follows the squelch**, and the level it
+takes is selected by a codeplug bit.  The whole chain is:
 
 * `FUN_080052B8` reads `0x63`/`0x65`/`0x67`, ramps the AGC step `0x13`, prints
   `RSSI R67 %d` and returns 0/1/2 — no pin, and no register beyond `0x13`;
