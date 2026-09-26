@@ -240,8 +240,12 @@ port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
                                          module still to port, each named after its
                                          owner) and port_storage.c backs settings with
                                          the external SPI NOR flash.  The K1 GUI is
-                                         what the radio boots into (its boot screen,
-                                         then the VFO); console '1' returns to it,
+                                         what the radio boots into, straight into the
+                                         VFO, in its double-channel layout
+                                         (gEeprom.DUAL_WATCH = DUAL_WATCH_CHAN_A; the
+                                         two VFOs hold placeholder channels until the
+                                         codeplug is mapped); console '4' shows the K1
+                                         boot screen, '1' returns to the GUI,
                                          '2'/'3'/'G'/'M'/'4' select screens, '0' hands
                                          the panel back to the bring-up screens,
                                          '5' saves settings, '6' runs the flash write
