@@ -356,6 +356,20 @@ here are the port's todo list:
   whichever one is up.  On a PC the preview preloads a factory-shaped codeplug
   into its RAM flash and prints what the decoder made of it, tones included.
 
+  The first radio run of it showed two things that had nothing to do with the
+  codeplug and everything to do with `APP_TimeSlice10ms()`.  That slice calls
+  `BACKLIGHT_Update()` and `SETTINGS_SaveVfoIndicesFlush()`, and the port had
+  given both of them work the K1 does not do there: the backlight *fade* step
+  was decrementing the 500 ms timeout (so the light went out in half a second,
+  100 decrements a second instead of two) and the save *flush* was writing the
+  whole settings blob (a 4 KB sector erase plus a program on every slice, which
+  is what made the radio crawl).  Both now do what the K1's do, and both are
+  asserted by the preview -- which is also why the preview now links the real
+  `driver/backlight.c` and the host's flash double counts sector erases: with a
+  stubbed backlight and a silent flash it could not have seen either.  The rule
+  for the next ported module: nothing on the 10 ms slice may touch the external
+  flash, and a timeout does not belong in a fade.
+
 * **Still step 2, second half -- the settings block.**  `ra89r_codeplug.md` has
   the whole 32-byte block at `0x2020` mapped, with the CPS's labels and this
   radio's values, but nothing reads it yet: the port's own defaults and its blob
