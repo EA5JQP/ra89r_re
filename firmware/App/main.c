@@ -417,6 +417,66 @@ static void audio_bench_arm(void)
 #define BENCH_PA_7D   0xE958u
 
 static bool tx_on;
+static unsigned tx_cand;
+
+/* TX candidates.  The K1 sequence alone does not radiate, so the bench adds the
+ * steps the stock's own TX path has and the K1's does not -- the chip's
+ * PA_ENABLE (GPIO pin 1), the second transceiver's path state, and the PA0/PA1
+ * band-path pins -- one per TX activation, printing which one it used.  That
+ * way one flash finds the combination instead of one guess per flash.
+ *
+ * The path pins are restored to the RX combination the stock uses
+ * (`FUN_08013A70(3)`: PA1 high, PA0 low) so the working receive path survives. */
+static const char *tx_cand_name(unsigned c)
+{
+    switch (c) {
+    case 0:  return "K1 PrepareTransmit only";
+    case 1:  return "+ chip PA_ENABLE (pin 1)";
+    case 2:  return "+ BK4815 0x0C = 0x0203";
+    case 3:  return "+ PA_ENABLE and BK4815 0x0C";
+    case 4:  return "+ PA_ENABLE and path PA0=1 PA1=0 (FUN_08013B12(0))";
+    case 5:  return "+ PA_ENABLE and path PA1=1 PA0=0 (FUN_08013A70(3))";
+    default: return "+ PA_ENABLE, path PA0=1, BK4815 0x0C, VHF LNA";
+    }
+}
+
+static void tx_extra(unsigned c, int on)
+{
+    switch (c) {
+    case 0:
+        break;
+    case 1:
+        BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, on);
+        break;
+    case 2:
+        bk4815_write_reg(0x0C, on ? 0x0203u : 0x0A03u);
+        break;
+    case 3:
+        BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, on);
+        bk4815_write_reg(0x0C, on ? 0x0203u : 0x0A03u);
+        break;
+    case 4:
+    case 5:
+        BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, on);
+        gpio_config_output(GPIOA, 1u | 2u);
+        if (on) {
+            gpio_write(GPIOA, 1u, (c == 4) ? 1 : 0);
+            gpio_write(GPIOA, 2u, (c == 4) ? 0 : 1);
+        } else {
+            gpio_write(GPIOA, 2u, 1);       /* back to the stock's RX path */
+            gpio_write(GPIOA, 1u, 0);
+        }
+        break;
+    default:
+        BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, on);
+        BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, on);
+        gpio_config_output(GPIOA, 1u | 2u);
+        gpio_write(GPIOA, 1u, on ? 1 : 0);
+        gpio_write(GPIOA, 2u, on ? 0 : 1);
+        bk4815_write_reg(0x0C, on ? 0x0203u : 0x0A03u);
+        break;
+    }
+}
 
 static void radio_tx(int on)
 {
@@ -425,21 +485,31 @@ static void radio_tx(int on)
     tx_on = on;
 
     if (on) {
+        tx_extra(tx_cand, 1);
         BK4819_SetFrequency(BENCH_FREQ_HZ);
         BK4819_WriteRegister(BK4819_REG_7D, BENCH_PA_7D);
         BK4819_PrepareTransmit();
         BK4819_SetAF(BK4819_AF_FM);     /* 0x47 = 0x6142, as the stock's TX does */
         led_set(LED_RED);               /* red = transmit, as the stock shows it */
     } else {
+        tx_extra(tx_cand, 0);
         BK4819_RX_TurnOn();
         BK4819_SetAF(BK4819_AF_MUTE);
         squelch_open = false;
         bench_led();
     }
 
-    uart_printf("\nbench: TX %s (0x30 = 0x%04X, 0x7D = 0x%04X)\n",
+    uart_printf("\nbench: TX %s (0x30 = 0x%04X, 0x7D = 0x%04X, 0x33 = 0x%04X, "
+                "0x0C/4815 = 0x%04X)\n",
                 on ? "ON" : "off", (unsigned)BK4819_ReadRegister(BK4819_REG_30),
-                (unsigned)BK4819_ReadRegister(BK4819_REG_7D));
+                (unsigned)BK4819_ReadRegister(BK4819_REG_7D),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_33),
+                (unsigned)bk4815_read_reg(0x0C));
+    if (on) {
+        uart_printf("bench: candidate %u -- %s\n", tx_cand,
+                    tx_cand_name(tx_cand));
+        tx_cand = (tx_cand + 1u) % 7u;
+    }
 }
 
 static void audio_bench_step(uint32_t now)
