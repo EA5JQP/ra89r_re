@@ -329,8 +329,9 @@ identical to the K1's `EnableVox`) and the mode restore that pulses `0x37` from
 `0x9D00` to `0x9D1F` (`FUN_0800CE1C`).
 
 That is location and register content, not validation: none of it has run on the
-radio, `0x30`'s bit fields are unmapped, and DTMF has no stock counterpart located
-yet.  `SetupPowerAmplifier` still needs the TX-power register, unidentified (`0x7d`/
+radio, `0x30`'s bit fields are unmapped, and DTMF has no chip-side routine at all
+(the stock writes no second tone register, so it is most likely generated on the MCU
+side -- the inference is recorded, not the routine).  `SetupPowerAmplifier` still needs the TX-power register, unidentified (`0x7d`/
 `0x30` are the candidates).  For these the port keeps using the K1 implementation's
 sequences, now with a stock reference to compare against rather than a hypothesis
 with nothing behind it.  The BK4815 is a separate matter: it has *no*
@@ -363,12 +364,14 @@ unconfigured part read zero (ra89r_bk4829.md).
 That layer is validated on the radio as far as its own behaviour goes: the ids
 answer, every configuration register stores what is written, it tunes 145.7500 MHz
 exactly, and `0x67` responds to a carrier (236 keyed, 57 released, straddling the
-stock's own squelch marks).  What that does *not* finish: the entry points whose
-semantics the stock image never showed are still the K1's sequences running on our
-hardware, each a hypothesis until it is exercised -- the `X`/`R`/`S` commands and
-the host test can check registers and RSSI, not audio or signalling.  And one thing was deliberately *not* ported:
-F4HWN's transport, whose chip select is a file-static define with no way to
-address two parts.
+stock's own squelch marks).  What that does *not* finish: the entry points the stock
+image had not been asked about (AF, signalling, AGC, idle states) still run the K1's
+sequences here.  `ra89r_rffeatures.md` now locates the stock's own routines for
+them, which gives each one a reference to compare against, but none of that has
+been exercised on the radio either -- the `X`/`R`/`S` commands and the host test can
+check registers and RSSI, not audio or signalling.  And one thing was deliberately
+*not* ported: F4HWN's transport, whose chip select is a file-static define with no
+way to address two parts.
 
 ## Bring-up debugging
 

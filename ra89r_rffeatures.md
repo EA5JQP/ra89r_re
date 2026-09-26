@@ -167,7 +167,7 @@ as well, so it carries several independent bit fields and is not yet mapped.
    but not exercised.
 2. `0x30`'s bit fields are unmapped, and it has the most writers of any register.
 3. DTMF has no stock counterpart located (above).
-4. DTMF: no chip-side routine found (see above).  The MKU-side tone generation
+4. DTMF: no chip-side routine found (see above).  The MCU-side tone generation
    is the likely explanation and needs the DTMF menu path followed to confirm.
 5. The AF gain path (`FUN_08019DF4`, `FUN_080247E0`) and the tone player's float
    scale constant (the double at `0x08005D7C`) are not extracted.
