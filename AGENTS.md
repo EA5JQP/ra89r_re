@@ -239,10 +239,13 @@ port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
                                          facade (gEeprom and one inert stub per K1
                                          module still to port, each named after its
                                          owner) and port_storage.c backs settings with
-                                         the external SPI NOR flash.  Console: 'G' VFO,
-                                         'M' menu, '1' interactive GUI, '2'/'3'/'4'
-                                         VFO/menu/boot screens, '5' save settings,
-                                         '6' flash write test, 'e' flash dump.
+                                         the external SPI NOR flash.  The K1 GUI is
+                                         what the radio boots into (its boot screen,
+                                         then the VFO); console '1' returns to it,
+                                         '2'/'3'/'G'/'M'/'4' select screens, '0' hands
+                                         the panel back to the bring-up screens,
+                                         '5' saves settings, '6' runs the flash write
+                                         test, 'e' dumps the flash.
                                          preview_k1.c renders and key-drives the same
                                          screens on a PC (see "Offline checks").
                                          ra89r_port.md has the layer table, the
