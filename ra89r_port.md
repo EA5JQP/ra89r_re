@@ -1,9 +1,26 @@
 # Porting the F4HWN (UV-K1/K5V3) application onto the RA89R
 
-**Status: the branch is open, nothing is ported yet.**  This is the working
-document for the port: what the RA89R side already provides, and the concrete
-fixes and gaps that have to be closed before the K1 application can be brought
-up.  `ra89r_findings.md` stays the hardware write-up; this is the port's own.
+**Status: the VFO screen and the menu are ported and render, driven by the
+radio's keys.**  What is in (`port`, unvalidated on the radio -- see "Progress"
+at the bottom for the stage-by-stage log):
+
+| layer | state |
+|---|---|
+| the K1's own screens | `ui/main.c` (VFO), `ui/menu.c` (menu + `MenuList[]`), `ui/status.c` (status line), `ui/welcome.c` (boot screen), `ui/ui.c` (dispatcher), `ui/helper.c` + `ui/inputbox.c` (drawing/text) -- imported verbatim and compiled here |
+| the K1's own tables and support code | `font.c`, `bitmaps.c`, `dcs.c`, `frequencies.c`, `version.c`, `helper/battery.c`, `app/menu.c`, `app/action.c` -- imported verbatim |
+| the display | `driver/st7565.c` in the K1's layout (`gStatusLine`, `gFrameBuffer[7][128]`, page 0 = status) over this repo's bit-banged panel and the bootloader-proven init |
+| keys | `driver/keyboard.c` -- the K1's interface over this repo's ADC-ladder keypad; `port_gui.c` routes press/hold edges (`MENU_ProcessKeys` for the menu) and switches screens |
+| storage | `port_storage.c` implements the K1's `PY25Q16_*` over this repo's SPI NOR driver (`driver/spi_flash.c`, write path new); the port's settings blob lives in the part's empty tail |
+| the state facade | `port_state.c` -- `gEeprom` (VFO objects, settings), the runtime globals and one inert stub per K1 module not yet ported, each named after its owner |
+| not ported, stubbed | the RF/audio/scanner/DTMF engines, the CPS codeplug mapping, USB/voice/FM features the hardware lacks |
+
+On the radio: console **`1`** toggles the interactive GUI, **`2`** the VFO, **`3`**
+the menu, **`4`** the boot screen, **`5`** saves the settings blob, **`6`** runs
+the flash write test, **`e`** dumps the flash.  On a PC, `preview_k1.c` renders
+the same screens (and drives the same key loop) as ASCII -- see AGENTS.md,
+"Offline checks".
+
+`ra89r_findings.md` stays the hardware write-up; this is the port's own.
 
 The two firmwares:
 
