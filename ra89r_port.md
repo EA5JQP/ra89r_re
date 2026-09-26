@@ -305,6 +305,27 @@ here are the port's todo list:
   delay, the transmit chain, `gRxIdleMode`), and still renders its 8 frames and
   the storage round-trip.
 
+* **Stage 3c -- the app owns the panel and the keys (unvalidated on the radio).**
+  Three fixes after the first radio test of stage 3b, all of them the port
+  fighting the application rather than the application being wrong:
+
+  * the menu showed an empty list because nothing built its view: the K1 does
+    that once in its own `main()` (`App/main.c:190`), so the port now calls
+    `UI_MENU_BuildView()` at boot, after the state is up;
+  * the keys were handled **twice** -- `APP_TimeSlice10ms()` ends with
+    `CheckKeys()` and the port's loop was calling it as well -- which is what
+    made them feel intermittent; the loop is now the K1's own:
+    `APP_Update()` + the 10 ms/500 ms slices;
+  * the panel was drawn twice (the port's own repaint plus the application's
+    `gUpdateDisplay -> GUI_DisplayScreen()`), so `port_gui` no longer draws at
+    all: it keeps PTT (measured chain), the receiver poll and the welcome
+    screen, and asks for a repaint with `gUpdateDisplay`.
+
+  Also, as asked: **EXIT switches VFO A/B**.  This radio has no dedicated A/B
+  key, so the port adapted `MAIN_Key_EXIT` -- a short EXIT press with nothing to
+  cancel (no digits typed, not scanning) calls `COMMON_SwitchVFOs()`, the K1's
+  F + 2 action.  Recorded in NOTICE.
+
 * **Next -- step 2 (the codeplug).**  `driver/keyboard.h` bound to our `keypad.c`, then
   mapping the stock codeplug into `gEeprom` (channels, names, settings, the
   calibration) so the screens show the radio's own data, then the real

@@ -810,6 +810,10 @@ int main(void)
     radio_boot();
     port_state_init();
     port_gui_init();
+    /* The K1's main() builds the menu view once, before its loop: the menu key
+     * only asks for DISPLAY_MENU, so without this the menu screen would have an
+     * empty list. */
+    UI_MENU_BuildView();
     port_gui_screen(DISPLAY_MAIN);   /* straight into the VFO (console '4' has the
                                       * K1 boot screen if it is wanted) */
     uart_puts("boot complete. 'h' for commands, 'd' dumps the screen over this\n"
@@ -1095,7 +1099,10 @@ int main(void)
              * channel throughout. */
             static uint32_t slice10, slice500;
 
-            CheckKeys();
+            /* The K1's own loop: APP_Update() runs the state machine and
+             * repaints when it sets gUpdateDisplay; APP_TimeSlice10ms() ends
+             * with CheckKeys(), so the keys are handled there and must not be
+             * polled again here. */
             APP_Update();
 
             if ((uint32_t)(now - slice10) >= 10u) {

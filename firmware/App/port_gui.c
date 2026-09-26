@@ -18,6 +18,7 @@
 #include "driver/st7565.h"
 #include "frequencies.h"
 #include "functions.h"
+#include "misc.h"
 #include "radio.h"
 #include "settings.h"
 #include "ui/main.h"
@@ -30,42 +31,16 @@
 
 static KEY_Code_t s_last = KEY_INVALID;
 static uint8_t    s_hold;
-static bool       s_dirty = true;
 
 /* Where the menu was opened from, so EXIT can go back to it. */
 static GUI_DisplayType_t s_menu_return = DISPLAY_MAIN;
 
-/* The port draws the two screens it has directly.  ui/ui.c's
- * UI_DisplayFunctions[] table (GUI_DisplayScreen) is the K1's way and takes
- * over as the remaining screens come in -- it is not used yet because it would
- * link every screen it lists, including the ones with no port behind them. */
-static void port_gui_draw(void)
-{
-    /* The K1 keeps the status line separate from the screens and redraws it from
-     * its app loop (app/app.c calls UI_DisplayStatus); doing it here keeps the
-     * top line current on every repaint. */
-    UI_DisplayStatus();
-
-    switch (gScreenToDisplay) {
-    case DISPLAY_MENU:
-        UI_DisplayMenu();
-        break;
-    case DISPLAY_MAIN:
-    default:
-        UI_DisplayMain();
-        break;
-    }
-}
-
-static void port_gui_request(GUI_DisplayType_t screen)
-{
-    gRequestDisplayScreen = screen;
-}
-
 void port_gui_screen(GUI_DisplayType_t screen)
 {
+    /* The application repaints when gUpdateDisplay is set (app/app.c calls
+     * GUI_DisplayScreen), so the port only has to ask for the screen. */
     gScreenToDisplay = screen;
-    s_dirty = true;
+    gUpdateDisplay = true;
 }
 
 void port_gui_init(void)
@@ -105,47 +80,20 @@ static void port_gui_ptt(bool down)
         tx_stop();
         FUNCTION_Select(FUNCTION_RECEIVE);
     }
-    s_dirty = true;
+    gUpdateDisplay = true;
 }
 
 void port_gui_poll(void)
 {
     KEY_Code_t key = KEYBOARD_GetKey();
-    bool       pressed = false;
-    bool       held = false;
     bool       ptt;
 
-    /* PTT works on any screen, like the K1's. */
+    /* Every key but PTT is the K1's own business: app/app.c's CheckKeys(),
+     * called from APP_TimeSlice10ms(), routes them to MAIN_/MENU_/
+     * SCANNER_ProcessKeys with the K1's press/hold/repeat semantics.  Only PTT
+     * is handled here, because it drives the measured transmit chain. */
     ptt = (key == KEY_PTT) || (key == KEY_PTT2);
     port_gui_ptt(ptt);
-
-    if (key == KEY_INVALID) {
-        s_last = KEY_INVALID;
-        s_hold = 0;
-    }
-
-    /* Consume a pending screen request: the K1's screens set
-     * gRequestDisplayScreen to ask to be replaced, and never clear it. */
-    if (gRequestDisplayScreen != DISPLAY_INVALID) {
-        if (gRequestDisplayScreen != gScreenToDisplay) {
-            gScreenToDisplay = gRequestDisplayScreen;
-            s_dirty = true;
-        }
-        gRequestDisplayScreen = DISPLAY_INVALID;
-    }
-
-    /* Every key but PTT is the K1's own business: app/app.c's CheckKeys()
-     * (called from the main loop) routes them to MAIN_/MENU_/SCANNER_ProcessKeys
-     * with the K1's press/hold/repeat semantics.  Only PTT is handled here,
-     * because it drives the measured transmit chain. */
-    (void)key;
-    (void)pressed;
-    (void)held;
-
-    if (s_dirty) {
-        s_dirty = false;
-        port_gui_draw();
-    }
 }
 
 /* The K1 refreshes its screens from its app loop: the status line, the signal
@@ -166,11 +114,12 @@ void port_gui_tick(uint32_t now_ms)
     if (rx_ready() && rx_squelch_open() != squelch_open) {
         squelch_open = rx_squelch_open();
         FUNCTION_Select(squelch_open ? FUNCTION_INCOMING : FUNCTION_RECEIVE);
-        s_dirty = true;
+        gUpdateDisplay = true;
     }
 
-    if ((uint32_t)(now_ms - last) < PORT_GUI_REFRESH_MS)
-        return;
-    last = now_ms;
-    s_dirty = true;
+    /* The application repaints on its own (gUpdateDisplay); this tick only
+     * needs to keep the receiver polled, so it stays cheap. */
+    (void)last;
+    (void)now_ms;
+    (void)PORT_GUI_REFRESH_MS;
 }

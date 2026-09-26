@@ -733,8 +733,14 @@ static void MAIN_Key_EXIT(bool bKeyPressed, bool bKeyHeld)
 #endif
     {
         if (gScanStateDir == SCAN_OFF) {
-            if (gInputBoxIndex == 0)
+            if (gInputBoxIndex == 0) {
+                /* Port adaptation (see NOTICE): the RA89R has no dedicated
+                 * A/B key, so a short EXIT press with nothing to cancel --
+                 * no digits typed, not scanning -- switches the transmit VFO,
+                 * which is the K1's F + 2 binding (app/main.c, case KEY_2). */
+                COMMON_SwitchVFOs();
                 return;
+            }
             gInputBox[--gInputBoxIndex] = 10;
 
             // Restore full VFO state when back to 0
