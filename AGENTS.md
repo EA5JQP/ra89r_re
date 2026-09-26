@@ -188,17 +188,24 @@ driver/battery            gauge       -- OPEN, unmerged: the bus is silent for u
 driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR flash
                                          ("EEPROM") reads and dumps; the write test has
                                          not run yet, see ra89r_eeprom.md
-driver/audiocontrol       audio       -- OPEN, unmerged, and it RECEIVES: with the
-                                         K1 bring-up, PC13 asserted and the cable
-                                         out, the other radio is audible on the
-                                         bench.  It boots into that test (K + PC13
-                                         + an RSSI squelch muting the chip's AF on
-                                         the stock's 0xB4/0xCF marks), with the
-                                         status LED as the read-out and PTT to flip
-                                         PC13 -- the one thing about PC13 that is
-                                         still unmeasured.  `C`/`L` on the console
-                                         do the same with the cable in.  See
-                                         ra89r_led.md.
+driver/audiocontrol       audio       -- OPEN, unmerged, and it both RECEIVES and
+                                         TRANSMITS: RX audio is audible on a second
+                                         radio, and PTT now sends *voice* that the
+                                         second radio hears, with SIDE1 sending the
+                                         chip's own DTMF tone as a known-good
+                                         reference.  What made transmit work, none
+                                         of it in the stock's own path: `0x36` =
+                                         0x8822 (PA-CTL bit 7 + bias -- the K1's
+                                         SetupPowerAmplifier register, which our
+                                         import zeroed), `0x50` = 0x3B20 (the TX
+                                         unmute our import was not sending), the
+                                         `0x33` GPIO state, the band pins, the
+                                         PB14/TIM1 PA-power PWM and a mic gain of
+                                         0x70 in `0x40`.  All measured; see
+                                         ra89r_rfpath.md for the table.  The branch
+                                         also carries the squelch (chip AF mute on
+                                         the stock's 0xB4/0xCF marks), the status
+                                         LED bench and `C` for PC13.
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all
