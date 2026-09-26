@@ -331,12 +331,22 @@ with its own calls, or every `BK4819_*` call dispatches to the active part.  The
 first is far less code and matches the evidence; the second is only needed if the
 BK4815 turns out to be what radiates above 134 MHz.
 
-Whatever is chosen, the interface still needs a named-register table (our
-register argument is a raw `uint8_t`), a name decision (`BK4819_*` versus
-`bk4829_*`/`bk4815_*`, or a shim), and `gRxIdleMode`.  One thing that should
-*not* be ported: F4HWN's transport, whose chip select is a file-static define
-with no way to address two parts -- `rf_bus.c` already takes the select as a
-parameter and is the better base.
+**Done on `driver/bk4829`** (bound to the BK4829, one transceiver): the K1
+interface now exists here as `firmware/App/driver/bk4819.c` / `.h` /
+`bk4819-regs.h`, imported from the K1's own implementation with its copyright
+headers and an adaptation note, because its register sequences are a working
+driver for this part family.  Four things changed and nothing else: the
+transport is `rf_bus.c` (select `PB8`) instead of the K1's file-static pins; the
+delay is local; the two audio-path calls go through a registered callback; and
+the four `gEeprom` reads became driver-local setters.  The console's `K` runs its
+init, tunes 145.7500 MHz and turns RX on.
+
+What that does *not* finish: the entry points whose semantics the stock image has
+not yielded yet are now the K1's sequences running on our hardware, which is a
+hypothesis until the radio says otherwise -- the `X`/`R` commands and the host
+test can check registers, not RF.  And one thing was deliberately *not* ported:
+F4HWN's transport, whose chip select is a file-static define with no way to
+address two parts.
 
 ## Bring-up debugging
 
