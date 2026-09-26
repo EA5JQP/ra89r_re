@@ -106,17 +106,15 @@ here are the port's todo list:
 * **The EEPROM is external SPI NOR**, not internal flash: the settings, the
   calibration, the journal and the "blob" area are all on that chip
   (`ra89r_eeprom.md`).
-* **`0x0805FFF0`, the app-valid marker: not a port blocker, but settle the
-  diagnostic.**  The bootloader tests that byte on every reset
-  (`ra89r_bootloader.md` §4c), yet the radio reports `0xff` where the flasher
-  writes `0x11`.  Either our *read* is wrong or the app came out of the
-  update-mode fall-through at `0x08003382`, which launches it with no marker
-  test at all -- the app's own `reset cause` line says which, and a flashed
-  image that the bootloader refuses to start would look like a broken port.  So
-  settle it, but it is a measurement, not a fix.  What the port does owe is one
-  boot-time line copying the stock (`0x08015724` -> its flash driver
-  `0x080190C0`): write `0x11` there once the app is up, so a flash session that
-  ends without `EXIT` cannot leave the radio in the bootloader.
+* **`0x0805FFF0` is the update-mode request, and the port must not touch it at
+  boot.**  `0xFF` is normal (the bootloader starts the app); `0x11` asks for
+  update mode, and the bootloader consumes the request by writing `0xFF` back
+  (`ra89r_bootloader.md` §4c).  The port's equivalent of the stock's 0x08015710
+  handler -- five bytes compared against `"Reset"`, command `'0'` writes `0x11`
+  and resets -- is what lets the CPS switch a *running* port into update mode;
+  without it the key combination is the only way in.  Writing `0x11` anywhere
+  else, and in particular at startup, would send the radio straight back into the
+  bootloader.
 
 ### D. Repository hygiene before app code lands
 
@@ -135,9 +133,9 @@ here are the port's todo list:
 
 ## Suggested order
 
-1. **Fix A1, A2 (C/D)**, add the license, wire the console behind a flag, and
-   settle the marker diagnostic -- all small, and all before any app code.  (The
-   app-side marker write rides along with the first app boot, not before it.)
+1. **Fix A1, A2 (C/D)**, add the license, and wire the console behind a flag --
+   all small, and all before any app code.  (The `Reset`+`'0'` handler rides
+   along with the app's serial layer, not before it.)
 2. **Storage**: finish the EEPROM write test, then implement `gEeprom` and the
    settings model over the external NOR flash.  The app cannot boot without it.
 3. **Bring up the app's shell**: `main()`, the scheduler and the panel drawing
