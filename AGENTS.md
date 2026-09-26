@@ -221,45 +221,35 @@ driver/audiocontrol       audio       -- MERGED.  It receives and transmits: the
                                          `0x7D`, PrepareTransmit, the `0x50 = 0x3B20`
                                          unmute the import was not sending, the mic
                                          gain in `0x40`).  See ra89r_rfpath.md
-port                      integration -- OPEN (a complete VFO+menu port, awaiting
-                                         radio validation): the K1's own ui/main.c
-                                         (VFO), ui/menu.c (menu), ui/status.c,
-                                         ui/welcome.c and ui/ui.c, its fonts, bitmaps,
-                                         tables and support modules, the display layer
-                                         in the K1's layout (driver/
-                                         st7565.c, font.c, bitmaps.c, ui/helper.c,
-                                         ui/inputbox.c) plus the K1's own ui/main.c
-                                         (UI_DisplayMain) plus ui/menu.c
-                                         (UI_DisplayMenu with its MenuList[]) compile,
-                                         link and render -- preview_k1.c draws both on
-                                         a PC, console 'G' draws the VFO and 'M' the
-                                         menu on the radio -- over the port_state.c
-                                         facade (gEeprom.VfoInfo[] and one stub per K1
-                                         module still to come), and the GUI is driven by
-                                         the radio's own keys: driver/keyboard.c is the
-                                         K1 interface over our keypad reader, port_gui.c
-                                         the key routing, console '1' the interactive mode
-                                         ('2' VFO, '3' menu, '4' boot screen), and
-                                         ui/status.c + ui/welcome.c draw the status line
-                                         and the boot screen.  The codeplug reads as an
-                                         empty part (PY25Q16_ReadBuffer is a stub until
-                                         the SPI NOR driver lands), so the menus show
-                                         their defaults.  Storage is in too: the
-                                         external SPI NOR driver (its write path new)
-                                         behind the K1's PY25Q16 interface, with the
-                                         port's settings blob in the part's empty tail
-                                         -- console '5' saves it, '6' runs the write
-                                         test, 'e' dumps the flash.  See ra89r_port.md
-                                         for the progress and what is next (the stock
-                                         codeplug mapping, then the real settings/radio
-                                         modules).  Still on the
-                                         list (the TX chain
-                                         reaching the app's path, TX power from the
-                                         codeplug, per-band path and BK4815 handling,
-                                         the squelch ramp, the whole gEeprom/storage
-                                         group, the license, and answering the CPS's
-                                         `Reset`+`'0'` command so it can ask for update
-                                         mode -- a small serial handler, not a blocker)
+port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
+                                         develop, awaiting radio validation.  The
+                                         K1's own ui/main.c (VFO), ui/menu.c (menu +
+                                         MenuList[]), ui/status.c, ui/welcome.c,
+                                         ui/ui.c, ui/helper.c, ui/inputbox.c and its
+                                         font/bitmap/table modules (font.c, bitmaps.c,
+                                         dcs.c, frequencies.c, version.c,
+                                         helper/battery.c, app/menu.c, app/action.c)
+                                         compile, link and render;
+                                         driver/st7565.c gives the K1's buffer layout
+                                         over this repo's bit-banged panel;
+                                         driver/keyboard.c is the K1 keyboard
+                                         interface over our keypad reader and
+                                         port_gui.c routes the keys; ui/status.c draws
+                                         the status line.  port_state.c is the state
+                                         facade (gEeprom and one inert stub per K1
+                                         module still to port, each named after its
+                                         owner) and port_storage.c backs settings with
+                                         the external SPI NOR flash.  Console: 'G' VFO,
+                                         'M' menu, '1' interactive GUI, '2'/'3'/'4'
+                                         VFO/menu/boot screens, '5' save settings,
+                                         '6' flash write test, 'e' flash dump.
+                                         preview_k1.c renders and key-drives the same
+                                         screens on a PC (see "Offline checks").
+                                         ra89r_port.md has the layer table, the
+                                         stage-by-stage progress and what is next: the
+                                         stock codeplug mapping, then the real
+                                         settings/radio/functions modules that retire
+                                         port_state.c and port_gui.c
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all
