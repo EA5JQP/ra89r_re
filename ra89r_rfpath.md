@@ -197,8 +197,8 @@ it:
 | `FUN_08006360` | raw `+0x94 <= 0x00CC77C0` | sets state `+0x75` **and** the flag to `1` |
 
 The units matter and are settled: the codeplug stores frequencies in **10 Hz**
-steps — a 145.7500 MHz channel is the u32 `0x00DE6378` (14,575,000) in its
-21-byte record, the band table at EEPROM `0x1F40` reads 10,800,000 / 17,400,000
+steps — a 145.7500 MHz channel is the u32 `0x00DE6598` (14,575,000; the record
+bytes are `98 65 DE 00`) in its 21-byte record, the band table at EEPROM `0x1F40` reads 10,800,000 / 17,400,000
 / 43,000,000 / 52,000,000 for 108 / 174 / 430 / 520 MHz, and the firmware itself
 contains `0x00A4CB80` (10,800,000) with no Hz-unit 108 MHz constant anywhere.
 So the two thresholds are **560 MHz** and **134 MHz**.

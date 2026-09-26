@@ -118,9 +118,9 @@ Offline checks that need no radio (the flash and layout regressions):
 python3 tools/ra89r_bootloader_sim.py --pty /tmp/ra89r-pty &
 python3 tools/ra89r_flash.py --port "$(cat /tmp/ra89r-pty)" flash firmware/build/Debug/ra89r_fw.icf
 
-# the two RF register layers on a PC, against a recording bus stub (40 checks)
+# the RF register layers and the K1-compatible one on a PC (53 checks)
 cd firmware && gcc -std=c11 -I App -I App/driver tools/test_rf.c \
-    App/driver/bk4829.c App/driver/bk4815.c -o /tmp/test_rf && /tmp/test_rf
+    App/driver/bk4829.c App/driver/bk4815.c App/driver/bk4819.c -o /tmp/test_rf && /tmp/test_rf
 
 # screen layout on a PC, then eyeball the ASCII art (see firmware/README.md)
 cd firmware && gcc -std=c11 -I App -I App/driver -DLCD_HOST_TEST \
@@ -311,32 +311,46 @@ outputs in `0x40 >> pin` order and the paired bit `14 - n` is cleared per driven
 pin, which is what made it look like a filter selector; the GPIOs do control
 front-end paths, just not through a bitfield.
 
-**2. Blocked on semantics we have not extracted.**  The second part has *no*
-`0x38`/`0x39` path -- the stock never writes frequency registers to the BK4815;
-its tuning word goes to `0x22` as `(x << 16) / 0x4822` in `FUN_08005C34`, an
-encoding still to work out.  Beyond that: the AF/audio group (`SetAF`,
+**2. Not visible in the stock image.**  The AF/audio group (`SetAF`,
 `SetRxAudioGain`, `GetAfTxRx`, `PlayTone*`, `TransmitTone`) sits behind the
-still-unidentified `FUN_08009D80`/`FUN_0801533C`/`FUN_0801638C`; the whole
-signalling group (CTCSS/CDCSS, DTMF, FSK, MDC, Roger) is untouched; so are AGC,
-metering beyond RSSI, scrambler/compander/VOX, the idle/sleep/bypass states and
-the scan result registers.  `SetupPowerAmplifier` needs the TX-power register,
-which is still unidentified (`0x7d`/`0x30` are the candidates).
+still-unidentified `FUN_08009D80`/`FUN_0801533C`/`FUN_0801638C`; the signalling
+group (CTCSS/CDCSS, DTMF, FSK, MDC, Roger), AGC, metering beyond RSSI,
+scrambler/compander/VOX, the idle/sleep/bypass states and the scan result
+registers are all outside what the decompiler has yielded so far.
+`SetupPowerAmplifier` needs the TX-power register, still unidentified (`0x7d`/
+`0x30` are the candidates).  For these the port uses the K1 implementation's
+sequences rather than extracted evidence, which is why they are hypotheses until
+the radio confirms them.  The BK4815 is a separate matter: it has *no*
+`0x38`/`0x39` path at all -- the stock never writes frequency registers to it,
+and its tuning word goes to `0x22` as `(x << 16) / 0x4822` in `FUN_08005C34`, an
+encoding still to work out.  With the port bound to the BK4829 that is out of
+scope for now.
 
-**3. The architectural gap needs a decision before code.**  F4HWN assumes one
-transceiver; the RA89R has two on a shared bus and the stock picks between them
-per channel (`0x20000303`).  Either the `BK4819_*` layer binds to the BK4829 --
-which carries frequency, RSSI, the GPIO/filter lines, squelch and the T/R set,
-and is therefore the F4HWN-equivalent part -- and the BK4815 stays an extension
-with its own calls, or every `BK4819_*` call dispatches to the active part.  The
-first is far less code and matches the evidence; the second is only needed if the
-BK4815 turns out to be what radiates above 134 MHz.
+**3. The architectural gap -- decided.**  F4HWN assumes one transceiver; the
+RA89R has two on a shared bus and the stock picks between them per channel
+(`0x20000303`).  The `BK4819_*` layer binds to the **BK4829**, which carries
+frequency, RSSI, the GPIO lines, squelch and the T/R set and is therefore the
+F4HWN-equivalent part; the BK4815 keeps its own calls and stays out of this port.
+That is the lower-code option and the one the evidence supports; a per-call
+dispatcher remains the fallback if the BK4815 turns out to be what radiates above
+134 MHz.
 
-Whatever is chosen, the interface still needs a named-register table (our
-register argument is a raw `uint8_t`), a name decision (`BK4819_*` versus
-`bk4829_*`/`bk4815_*`, or a shim), and `gRxIdleMode`.  One thing that should
-*not* be ported: F4HWN's transport, whose chip select is a file-static define
-with no way to address two parts -- `rf_bus.c` already takes the select as a
-parameter and is the better base.
+**Done on `driver/bk4829`** (bound to the BK4829, one transceiver): the K1
+interface now exists here as `firmware/App/driver/bk4819.c` / `.h` /
+`bk4819-regs.h`, imported from the K1's own implementation with its copyright
+headers and an adaptation note, because its register sequences are a working
+driver for this part family.  Four things changed and nothing else: the
+transport is `rf_bus.c` (select `PB8`) instead of the K1's file-static pins; the
+delay is local; the two audio-path calls go through a registered callback; and
+the four `gEeprom` reads became driver-local setters.  The console's `K` runs its
+init, tunes 145.7500 MHz and turns RX on.
+
+What that does *not* finish: the entry points whose semantics the stock image has
+not yielded yet are now the K1's sequences running on our hardware, which is a
+hypothesis until the radio says otherwise -- the `X`/`R` commands and the host
+test can check registers, not RF.  And one thing was deliberately *not* ported:
+F4HWN's transport, whose chip select is a file-static define with no way to
+address two parts.
 
 ## Bring-up debugging
 

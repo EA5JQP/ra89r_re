@@ -257,6 +257,28 @@ The beep is a DAC tone on `PA4`: **see `ra89r_beeper.md`**.
 | LCD panel | `PA8`-`PA11` + `PB15` | see `ra89r_lcd.md` |
 | lamp | `PA1` + `PA5` | see "Backlight / lamp" above |
 
+**What the MCU is *not* talking to**, which is as useful for the inventory as what
+it is: of the PY32F403's serial peripherals, the stock references **USART1,
+USART2 and USART3 only** — no `I2C1`/`I2C2` (0x40005400/0x40005800), no `SPI2`
+(0x40003800) and no `SPI3` (0x40003C00) appear anywhere in the image, and SPI1 is
+the SPI NOR flash.  So any further chip on this board is on one of three UARTs,
+on a bit-banged line, or analog — there is no free bus to hide one on.
+
+The three UARTs the stock brings up:
+
+| UART | pins | rate | evidence |
+|---|---|---|---|
+| USART1 | `PB6`/`PB7` | **57600** | `FUN_0801D718` calls `FUN_08020B48(0xE100)` |
+| USART2 | `PA2`/`PA3` (AF2) | **115200** | `FUN_080072A4`: enables `APB1ENR` bit 17, baud `0x1C200`, configures `PA2`/`PA3` as AF and enables its interrupt |
+| USART3 | not established | **115200** | `FUN_0801D718` calls `FUN_08020BE4(0x1C200)`; the init sets the rate but configures no pins, so the pin mux is set elsewhere |
+
+`USART1` at 57600 is the Kenwood/programming port the bootloader also uses.  That
+leaves **two** external devices on UARTs and only one identified candidate — the
+Bluetooth module — so either `USART2` or `USART3` is the Bluetooth link and the
+other is still unnamed.  The AT strings are reached by index rather than by
+pointer (nothing in the image points into `0x08022300..0x08022900`), so naming
+the link needs the AT-command layer read, not a pointer search.
+
 ### Loading the current decode into Ghidra
 
 The Ghidra project in `~/Repos/h8_re` holds programs laid out by the *old*
