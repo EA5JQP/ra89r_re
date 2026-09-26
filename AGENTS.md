@@ -140,9 +140,10 @@ cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver \
     -DPY32F403xD -include App/port_features.h -DST7565_HOST_TEST \
     -ffunction-sections -fdata-sections -Wl,--gc-sections \
     tools/preview_k1.c tools/host/host_hw.c App/ui/main.c App/ui/menu.c \
-    App/app/menu.c App/app/action.c App/ui/helper.c App/ui/inputbox.c \
-    App/version.c App/dcs.c App/frequencies.c App/helper/battery.c \
-    App/port_state.c App/settings.c App/font.c App/bitmaps.c App/driver/st7565.c \
+    App/ui/ui.c App/app/menu.c App/app/action.c App/ui/helper.c \
+    App/ui/inputbox.c App/version.c App/dcs.c App/frequencies.c \
+    App/helper/battery.c App/port_state.c App/port_gui.c App/settings.c \
+    App/font.c App/bitmaps.c App/driver/st7565.c App/driver/keyboard.c \
     -o /tmp/preview_k1 && /tmp/preview_k1
 # (tools/host is a test double for the device header: CMSIS's __DSB() is ARM
 #  assembly, so a PC build cannot use the real one -- see NOTICE)
@@ -230,8 +231,12 @@ port                      integration -- OPEN: the K1/F4HWN application port, of
                                          a PC, console 'G' draws the VFO and 'M' the
                                          menu on the radio -- over the port_state.c
                                          facade (gEeprom.VfoInfo[] and one stub per K1
-                                         module still to come).  See ra89r_port.md for
-                                         the progress and what is next (keys, status,
+                                         module still to come), and the GUI is driven by
+                                         the radio's own keys: driver/keyboard.c is the
+                                         K1 interface over our keypad reader, port_gui.c
+                                         the key routing, console '1' the interactive mode
+                                         ('2' VFO, '3' menu).  See ra89r_port.md for the
+                                         progress and what is next (status line, welcome,
                                          the real settings/radio modules).  Still on the
                                          list (the TX chain
                                          reaching the app's path, TX power from the
