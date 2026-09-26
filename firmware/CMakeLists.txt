@@ -64,6 +64,8 @@ set(APP_SOURCES
     App/ui/menu.c
     App/ui/ui.c
     App/ui/status.c
+    App/ui/battery.c
+    App/ui/scanner.c
     App/ui/welcome.c
     App/driver/keyboard.c
     App/port_gui.c

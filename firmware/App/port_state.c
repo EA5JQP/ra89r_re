@@ -124,7 +124,6 @@ uint32_t SETTINGS_FetchChannelFrequency(const uint16_t channel)
 
 
 /* ui/scanner.c owns this; the scanner screen is not ported yet. */
-void UI_DisplayScanner(void) { }
 
 /* ---------------------------------------------------------------------------
  * The menu's settings, scanner and key-action surface.  Same rule as above:
@@ -178,12 +177,6 @@ void SETTINGS_UpdateChannel(uint16_t channel, const VFO_Info_t *pVFO, bool keep)
  * functions.c/app.c, gAirCopyBootMode is misc.c (air copy is not ported), and
  * UI_DrawBattery is ui/status.c's own -- it is only listed here because the
  * welcome screen references it through a feature guard. */
-void UI_DrawBattery(uint8_t *bitmap, uint8_t level, uint8_t blink)
-{
-    (void)bitmap;
-    (void)level;
-    (void)blink;
-}
 
 /* ---------------------------------------------------------------------------
  * Step-3 modules: the scanner, DTMF and the common key actions.  Ported later
@@ -206,8 +199,3 @@ void SETTINGS_SaveVfoIndices(void)
 /* settings.c (step 2) and ui/status.c's battery drawing: still owed. */
 void SETTINGS_SaveSettings(void) { }
 void SETTINGS_SaveVfoIndicesFlush(void) { }
-void UI_DisplayBattery(uint8_t Level, uint8_t blink)
-{
-    (void)Level;
-    (void)blink;
-}

@@ -44,6 +44,8 @@
 
 #include "board_pins.h"
 #include "driver/bk4819.h"
+
+#include "driver/led.h"
 #include "driver/rf_bus.h"
 
 /* The K1 keeps these in misc.h; unsigned so the loops below stay warning-free. */
@@ -372,6 +374,15 @@ void BK4819_ToggleGpioOut(BK4819_GPIO_PIN_t Pin, bool bSet)
         gBK4819_GpioOutState &= ~(0x40u >> Pin);
 
     BK4819_WriteRegister(BK4819_REG_33, gBK4819_GpioOutState);
+
+    /* Port addition (see NOTICE): the K1 firmware lights its status LED through
+     * these two chip outputs.  On the RA89R the LED is on the MCU (PA13 red /
+     * PA14 green, measured -- ra89r_led.md), so the two are mirrored here and
+     * the chip write above stays as it was. */
+    if (Pin == BK4819_GPIO5_PIN1_RED)
+        led_set(bSet ? LED_RED : LED_OFF);
+    else if (Pin == BK4819_GPIO6_PIN2_GREEN)
+        led_set(bSet ? LED_GREEN : LED_OFF);
 }
 
 bool BK4819_IsGpioOutSet(BK4819_GPIO_PIN_t Pin)
