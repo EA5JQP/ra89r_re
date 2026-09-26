@@ -85,12 +85,8 @@ void port_state_init(void)
  * this one.  Defaults are chosen to look sane on screen, not to mimic a radio.
  * ------------------------------------------------------------------------- */
 
-int8_t          gScanStateDir;                    /* app/chFrScanner.c */
 
 
-char   gDTMF_InputBox[15];                        /* app/dtmf.c  */
-bool   gDTMF_InputMode;                           /* app/dtmf.c  */
-char   gDTMF_RX_live[20];                         /* app/dtmf.c  */
 
 /* ---------------------------------------------------------------------------
  * Functions the ported screens call.
@@ -126,9 +122,6 @@ uint32_t SETTINGS_FetchChannelFrequency(const uint16_t channel)
  * radio.c and ui/ui.c.
  * ------------------------------------------------------------------------- */
 
-void APP_StartListening(FUNCTION_Type_t function) { (void)function; }
-uint8_t          gDTMF_RX_live_timeout;           /* app/dtmf.c */
-bool             gScanPauseMode;                  /* app/scanner.c */
 
 /* ui/scanner.c owns this; the scanner screen is not ported yet. */
 void UI_DisplayScanner(void) { }
@@ -146,21 +139,8 @@ void UI_DisplayScanner(void) { }
  * ------------------------------------------------------------------------- */
 
 
-void GENERIC_Key_F(bool bKeyPressed, bool bKeyHeld)
-{
-    (void)bKeyPressed;
-    (void)bKeyHeld;
-}
 
-void GENERIC_Key_PTT(bool bKeyPressed)
-{
-    (void)bKeyPressed;
-}
 
-void SCANNER_Start(bool singleFreq)
-{
-    (void)singleFreq;
-}
 
 
 void SETTINGS_FactoryReset(bool bIsAll)
@@ -198,7 +178,6 @@ void SETTINGS_UpdateChannel(uint16_t channel, const VFO_Info_t *pVFO, bool keep)
  * functions.c/app.c, gAirCopyBootMode is misc.c (air copy is not ported), and
  * UI_DrawBattery is ui/status.c's own -- it is only listed here because the
  * welcome screen references it through a feature guard. */
-bool APP_IsScreenSaverDisplayed(void) { return false; }
 void UI_DrawBattery(uint8_t *bitmap, uint8_t level, uint8_t blink)
 {
     (void)bitmap;
@@ -211,18 +190,24 @@ void UI_DrawBattery(uint8_t *bitmap, uint8_t level, uint8_t blink)
  * (ra89r_port.md), stubbed here so the app core links -- owners in order:
  * app/scanner.c, app/chFrScanner.c, app/dtmf.c, app/common.c.
  * ------------------------------------------------------------------------- */
-bool SCANNER_IsScanning(void) { return false; }
-void CHFRSCANNER_ManualResume(const int8_t scan_direction) { (void)scan_direction; }
-void CHFRSCANNER_Start(const bool storeBackupSettings, const int8_t scan_direction)
+
+/* settings.c (step 2) owns these; stubbed until the codeplug is organised. */
+void SETTINGS_SaveChannel(uint16_t Channel, uint8_t VFO, const VFO_Info_t *pVFO, uint8_t Mode)
 {
-    (void)storeBackupSettings;
-    (void)scan_direction;
+    (void)Channel;
+    (void)VFO;
+    (void)pVFO;
+    (void)Mode;
 }
-void DTMF_clear_input_box(void) { }
-void DTMF_clear_input_box_memory(void) { }
-void DTMF_Reply(void) { }
-void COMMON_KeypadLockToggle(void) { }
-void COMMON_SwitchVFOMode(void) { }
-void COMMON_SwitchVFOs(void) { }
-void SCANNER_Stop(void) { }
-void CHFRSCANNER_Stop(void) { }
+void SETTINGS_SaveVfoIndices(void)
+{
+}
+
+/* settings.c (step 2) and ui/status.c's battery drawing: still owed. */
+void SETTINGS_SaveSettings(void) { }
+void SETTINGS_SaveVfoIndicesFlush(void) { }
+void UI_DisplayBattery(uint8_t Level, uint8_t blink)
+{
+    (void)Level;
+    (void)blink;
+}

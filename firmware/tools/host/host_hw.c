@@ -5,6 +5,9 @@
 
 #include "driver/backlight.h"
 #include "driver/bk4819.h"
+#include "driver/gpio.h"
+#include "driver/systick.h"
+#include "driver/tx.h"
 #include <string.h>
 
 #include "audio.h"
@@ -67,25 +70,14 @@ void BK4819_DisableDTMF(void) { }
  * table, which the storage layer will provide). */
 uint16_t BK4819_GetRSSI(void) { return 0; }
 int16_t  BK4819_GetRSSI_dBm(void) { return -120; }
-const uint8_t gEEPROM_RSSI_CALIB[7][8] = {{0}};
 
 /* More of the same: the menu's action path calls these, and the host compiles
  * no audio engine and no GPIO driver. */
-void AUDIO_PlayBeep(BEEP_Type_t beep) { (void)beep; }
-void FUNCTION_Select(FUNCTION_Type_t function) { (void)function; }
 void BK4819_ToggleGpioOut(BK4819_GPIO_PIN_t pin, bool enable) { (void)pin; (void)enable; }
 
-uint8_t gBacklightBrightnessOld;
 
 /* Leftovers of the menu/battery path in the host build (their owners are the
  * codeplug, app/dtmf.c, app/scanner.c and ui/status.c). */
-uint8_t        gBacklightTimeOriginal;
-uint8_t        gDTMF_InputBox_Index;
-uint8_t        gReducedService;
-uint8_t        gScanCssResultCode;
-DCS_CodeType_t gScanCssResultType;
-bool           gScanUseCssResult;
-void UI_DisplayBattery(uint8_t Level, uint8_t blink) { (void)Level; (void)blink; }
 
 
 /* ---------------------------------------------------------------------------
@@ -157,3 +149,70 @@ void spi_flash_program(uint32_t addr, const uint8_t *buf, uint32_t len)
 
 void spi_flash_write_enable(void) { }
 void spi_flash_wait_ready(void) { }
+
+/* ---------------------------------------------------------------------------
+ * Stand-ins for the drivers the host does not build: the RF driver (our
+ * driver/bk4819.c), the GPIO path helpers (driver/gpio.c), the SysTick delay and
+ * the measured transmit chain (driver/tx.c).  Signatures match driver/bk4819.h.
+ * ------------------------------------------------------------------------- */
+void     BK4819_SetFrequency(uint32_t Frequency) { (void)Frequency; }
+void     BK4819_SetAF(BK4819_AF_Type_t AF) { (void)AF; }
+void     BK4819_SetAGC(bool enable) { (void)enable; }
+void     BK4819_InitAGC(bool amModulation) { (void)amModulation; }
+void     BK4819_SetupSquelch(uint8_t SquelchOpenRSSIThresh, uint8_t SquelchCloseRSSIThresh,
+                             uint8_t SquelchOpenNoiseThresh, uint8_t SquelchCloseNoiseThresh,
+                             uint8_t SquelchCloseGlitchThresh, uint8_t SquelchOpenGlitchThresh)
+{
+    (void)SquelchOpenRSSIThresh; (void)SquelchCloseRSSIThresh; (void)SquelchOpenNoiseThresh;
+    (void)SquelchCloseNoiseThresh; (void)SquelchCloseGlitchThresh; (void)SquelchOpenGlitchThresh;
+}
+void     BK4819_SetupPowerAmplifier(const uint8_t bias, const uint32_t frequency)
+{ (void)bias; (void)frequency; }
+void     BK4819_SetCTCSSFrequency(uint32_t BaudRate) { (void)BaudRate; }
+void     BK4819_SetTailDetection(const uint32_t freq_10Hz) { (void)freq_10Hz; }
+void     BK4819_SetCDCSSCodeWord(uint32_t CodeWord) { (void)CodeWord; }
+void     BK4819_SetCompander(const unsigned int mode) { (void)mode; }
+void     BK4819_EnableVox(uint16_t Vox1Threshold, uint16_t Vox0Threshold)
+{ (void)Vox1Threshold; (void)Vox0Threshold; }
+void     BK4819_DisableVox(void) { }
+void     BK4819_DisableScramble(void) { }
+void     BK4819_EnableDTMF(void) { }
+void     BK4819_SetRegValue(RegisterSpec s, uint16_t v) { (void)s; (void)v; }
+void     BK4819_WriteRegister(BK4819_REGISTER_t Register, uint16_t Data)
+{ (void)Register; (void)Data; }
+uint16_t BK4819_ReadRegister(BK4819_REGISTER_t Register) { (void)Register; return 0; }
+void     BK4819_PickRXFilterPathBasedOnFrequency(uint32_t Frequency) { (void)Frequency; }
+
+void GPIO_EnableAudioPath(void) { }
+void GPIO_DisableAudioPath(void) { }
+
+void systick_delay_ms(uint32_t ms) { (void)ms; }
+
+bool tx_active(void) { return false; }
+void tx_start(uint32_t freq_10hz, tx_source_t source) { (void)freq_10hz; (void)source; }
+void tx_stop(void) { }
+
+/* More of the RF driver's entry points the app core calls. */
+void BK4819_Conditional_RX_TurnOn_and_GPIO6_Enable(void) { }
+void BK4819_EnterDTMF_TX(bool bLocalLoopback) { (void)bLocalLoopback; }
+void BK4819_ExitDTMF_TX(bool bKeepOpen) { (void)bKeepOpen; }
+void BK4819_ExitSubAu(void) { }
+void BK4819_EnterTxMute(void) { }
+void BK4819_ExitTxMute(void) { }
+void BK4819_TurnsOffTones_TurnsOnRX(void) { }
+void BK4819_PlayRoger(BK4819_FilterBandwidth_t Bandwidth) { (void)Bandwidth; }
+void BK4819_EnableTXLink(void) { }
+void BK4819_EnableRXLink(void) { }
+
+void BK4819_PlayDTMFString(const char * pString, bool bDelayFirst, uint16_t FirstCodePersistTime, uint16_t HashCodePersistTime, uint16_t CodePersistTime, uint16_t CodeInternalTime) { (void)pString; (void)bDelayFirst; (void)FirstCodePersistTime; (void)HashCodePersistTime; (void)CodePersistTime; (void)CodeInternalTime; }
+void BK4819_PlaySingleTone(const unsigned int tone_Hz, const unsigned int delay, const unsigned int level, const bool play_speaker) { (void)tone_Hz; (void)delay; (void)level; (void)play_speaker; }
+void BK4819_PrepareTransmit(void) { }
+void BK4819_Sleep(void) { }
+void BK4819_PlayDTMF(char Code) { (void)Code; }
+void BK4819_PlayTone(uint16_t Frequency, bool bTuningGainSwitch)
+{ (void)Frequency; (void)bTuningGainSwitch; }
+void BK4819_PlayToneRaw(const unsigned int tone_Hz, const unsigned int delay)
+{ (void)tone_Hz; (void)delay; }
+
+/* driver/bk4819.c owns this; the host needs it for radio.c/app.c. */
+bool gRxIdleMode;

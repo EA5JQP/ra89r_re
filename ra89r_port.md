@@ -281,7 +281,31 @@ here are the port's todo list:
   (`ra89r_rfeatures.md` locates them).  The measured `rx.c`/`tx.c` chains are what
   the port runs.
 
-* **Next -- stage 3b.**  `driver/keyboard.h` bound to our `keypad.c`, then
+* **Stage 3b -- the K1's own key handling and app loop run the radio
+  (unvalidated on the radio).**  `app/app.c` (the loop, `CheckKeys`,
+  `APP_Update`, the 10 ms/500 ms slices), `app/main.c` (`MAIN_ProcessKeys`),
+  `app/generic.c`, `app/common.c`, `app/chFrScanner.c`, `app/dtmf.c` and
+  `app/scanner.c` come in verbatim, plus `port_board.c` (the `BOARD_*` surface:
+  only the battery read is the application's, and it is a placeholder pack
+  because the gauge chip never answers) and `driver/system.c`
+  (`SYSTEM_DelayMs` over SysTick).  That retired the rest of `port_state.c`'s
+  stubs -- what is left there is settings (step 2) and `ui/status.c`'s
+  `UI_DisplayBattery`.
+
+  The main loop now calls `CheckKeys()` (the K1's press/hold/repeat and
+  `MAIN_`/`MENU_`/`SCANNER_ProcessKeys` per screen) and `APP_Update()`.  **PTT is
+  deliberately excluded from `CheckKeys`**: `GPIO_IsPttPressed()` returns false so
+  the K1's `GENERIC_Key_PTT -> FUNCTION_Transmit -> RADIO_SetTxParameters` path
+  does not run, and `port_gui.c` keeps driving the *measured* `tx_start`/`tx_stop`
+  chain instead.  Flipping that one function back is the switch, once the K1's
+  transmit sequence has been compared with the stock.
+
+  The host preview now links the whole application core with doubles for the
+  drivers it does not build (`BK4819_*`, the GPIO path helpers, the SysTick
+  delay, the transmit chain, `gRxIdleMode`), and still renders its 8 frames and
+  the storage round-trip.
+
+* **Next -- step 2 (the codeplug).**  `driver/keyboard.h` bound to our `keypad.c`, then
   mapping the stock codeplug into `gEeprom` (channels, names, settings, the
   calibration) so the screens show the radio's own data, then the real
   `settings.c`/`misc.c`/`radio.c` behind the facade and the key/action layer

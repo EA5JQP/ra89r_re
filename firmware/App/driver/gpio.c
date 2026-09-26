@@ -120,9 +120,16 @@ void GPIO_TurnOffBacklight(void)
     BACKLIGHT_TurnOff();
 }
 
+/* The port owns PTT: port_gui.c reads the keypad and drives the *measured*
+ * transmit chain (driver/tx.c).  The K1's own PTT path -- CheckKeys() ->
+ * GENERIC_Key_PTT -> FUNCTION_Transmit -> RADIO_SetTxParameters -- is the K1's
+ * chip sequence, which on this radio still needs comparing against the stock
+ * (ra89r_rfpath.md), so this stays false and CheckKeys() does not see PTT.
+ * When that comparison lands, this returns the keypad read below. */
 bool GPIO_IsPttPressed(void)
 {
-    KEY_Code_t key = keypad_poll();
+    return false;
 
-    return key == KEY_PTT || key == KEY_PTT2;
+    /* KEY_Code_t key = keypad_poll();
+     * return key == KEY_PTT || key == KEY_PTT2; */
 }

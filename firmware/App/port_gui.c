@@ -90,72 +90,6 @@ static uint32_t port_gui_step(void)
     return step * 10u;
 }
 
-static void port_gui_main_key(KEY_Code_t key, bool pressed, bool held)
-{
-    if (!pressed && !held)
-        return;
-
-    switch (key) {
-    case KEY_UP:
-    case KEY_DOWN: {
-        uint32_t step = port_gui_step();
-        uint32_t freq = gRxVfo->freq_config_RX.Frequency;
-
-        if (key == KEY_UP)
-            freq += step;
-        else
-            freq = (freq > step) ? freq - step : freq;
-
-        gRxVfo->freq_config_RX.Frequency = freq;
-        gRxVfo->freq_config_TX.Frequency = freq;
-
-        /* Move the radio, not just the number: the measured receive chain
-         * (driver/rx.c) retunes the chip. */
-        if (rx_ready() && !tx_active())
-            rx_set_frequency(freq);
-
-        s_dirty = true;
-        break;
-    }
-    case KEY_MENU:
-        if (pressed) {
-            s_menu_return = gScreenToDisplay;
-            UI_MENU_BuildView();
-            port_gui_request(DISPLAY_MENU);
-        }
-        break;
-    default:
-        break;
-    }
-}
-
-/* The K1 refreshes its screens from its app loop: the status line, the RSSI
- * read-out and the clock change on their own, so repaint on a timer as well as
- * on keys.  The panel is bit-banged, so this is deliberately slow. */
-#define PORT_GUI_REFRESH_MS 500u
-
-void port_gui_tick(uint32_t now_ms)
-{
-    static uint32_t last;
-    static bool     squelch_open;
-
-    /* The receiver's own poll: the squelch marks are the stock's, and the RSSI
-     * the screen reads comes from the chip (BK4819_GetRSSI). */
-    if (rx_ready())
-        rx_poll();
-
-    if (rx_ready() && rx_squelch_open() != squelch_open) {
-        squelch_open = rx_squelch_open();
-        FUNCTION_Select(squelch_open ? FUNCTION_INCOMING : FUNCTION_RECEIVE);
-        s_dirty = true;
-    }
-
-    if ((uint32_t)(now_ms - last) < PORT_GUI_REFRESH_MS)
-        return;
-    last = now_ms;
-    s_dirty = true;
-}
-
 /* PTT: the radio's own measured transmit chain (driver/tx.c), not the K1's
  * chip sequence -- see ra89r_rfpath.md.  The K1 state is set too, so the
  * screens show TX and the status line follows. */
@@ -188,13 +122,6 @@ void port_gui_poll(void)
     if (key == KEY_INVALID) {
         s_last = KEY_INVALID;
         s_hold = 0;
-    } else if (key != s_last) {
-        s_last = key;
-        s_hold = 1;
-        pressed = true;
-    } else if (s_hold < 0xFFu) {
-        s_hold++;
-        held = (s_hold >= PORT_GUI_HOLD_POLLS);
     }
 
     /* Consume a pending screen request: the K1's screens set
@@ -207,17 +134,43 @@ void port_gui_poll(void)
         gRequestDisplayScreen = DISPLAY_INVALID;
     }
 
-    if (gScreenToDisplay == DISPLAY_MENU) {
-        if (key != KEY_INVALID) {
-            MENU_ProcessKeys(key, pressed, held);
-            s_dirty = true;
-        }
-    } else {
-        port_gui_main_key(key, pressed, held);
-    }
+    /* Every key but PTT is the K1's own business: app/app.c's CheckKeys()
+     * (called from the main loop) routes them to MAIN_/MENU_/SCANNER_ProcessKeys
+     * with the K1's press/hold/repeat semantics.  Only PTT is handled here,
+     * because it drives the measured transmit chain. */
+    (void)key;
+    (void)pressed;
+    (void)held;
 
     if (s_dirty) {
         s_dirty = false;
         port_gui_draw();
     }
+}
+
+/* The K1 refreshes its screens from its app loop: the status line, the signal
+ * read-out and the clock change on their own.  This repaints on a timer as well
+ * as on a screen change.  The panel is bit-banged, so it is deliberately slow. */
+#define PORT_GUI_REFRESH_MS 500u
+
+void port_gui_tick(uint32_t now_ms)
+{
+    static uint32_t last;
+    static bool     squelch_open;
+
+    /* The receiver's own poll: the squelch marks are the stock's, and the RSSI
+     * the screen reads comes from the chip (BK4819_GetRSSI). */
+    if (rx_ready())
+        rx_poll();
+
+    if (rx_ready() && rx_squelch_open() != squelch_open) {
+        squelch_open = rx_squelch_open();
+        FUNCTION_Select(squelch_open ? FUNCTION_INCOMING : FUNCTION_RECEIVE);
+        s_dirty = true;
+    }
+
+    if ((uint32_t)(now_ms - last) < PORT_GUI_REFRESH_MS)
+        return;
+    last = now_ms;
+    s_dirty = true;
 }

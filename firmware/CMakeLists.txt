@@ -74,6 +74,14 @@ set(APP_SOURCES
     App/frequencies.c
     App/helper/battery.c
     App/driver/system.c
+    App/app/app.c
+    App/app/main.c
+    App/app/generic.c
+    App/app/common.c
+    App/app/chFrScanner.c
+    App/app/dtmf.c
+    App/app/scanner.c
+    App/port_board.c
     App/radio.c
     App/functions.c
     App/audio.c

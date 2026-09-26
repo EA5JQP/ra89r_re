@@ -30,6 +30,7 @@
 #include "driver/systick.h"
 #include "driver/uart.h"
 #include "driver/py25q16.h"
+#include "app/app.h"
 #include "port_gui.h"
 #include "port_storage.h"
 #include "port_state.h"
@@ -1086,11 +1087,26 @@ int main(void)
             audio_bench_step(now);
             animate_step(now);
         } else {
-            /* The ported K1 application owns the panel and the keys:
-             * port_gui_poll() reads the keypad reader and routes the keys to
-             * whichever of the K1's screens is up, and port_gui_tick() refreshes
-             * it (the status line and the signal read-out change on their own).
-             * The console stays a debugging channel throughout. */
+            /* The ported K1 application owns the panel and the keys.  Keys go
+             * through the K1's own app/app.c CheckKeys() (press/hold/repeat, and
+             * MAIN_/MENU_/SCANNER_ProcessKeys per screen), the app's periodic
+             * duties run on their slices, and port_gui handles PTT (measured
+             * transmit chain) plus the repaint.  The console stays a debugging
+             * channel throughout. */
+            static uint32_t slice10, slice500;
+
+            CheckKeys();
+            APP_Update();
+
+            if ((uint32_t)(now - slice10) >= 10u) {
+                slice10 = now;
+                APP_TimeSlice10ms();
+            }
+            if ((uint32_t)(now - slice500) >= 500u) {
+                slice500 = now;
+                APP_TimeSlice500ms();
+            }
+
             port_gui_poll();
             port_gui_tick(now);
         }
