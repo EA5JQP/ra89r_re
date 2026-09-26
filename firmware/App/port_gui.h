@@ -6,6 +6,9 @@
 
 void port_gui_init(void);
 void port_gui_poll(void);
+
+/* Periodic repaint (status line, signal read-out). */
+void port_gui_tick(uint32_t now_ms);
 void port_gui_screen(GUI_DisplayType_t screen);
 void port_gui_welcome(void);
 

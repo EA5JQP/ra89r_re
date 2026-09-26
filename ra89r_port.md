@@ -14,9 +14,13 @@ at the bottom for the stage-by-stage log):
 | the state facade | `port_state.c` -- `gEeprom` (VFO objects, settings), the runtime globals and one inert stub per K1 module not yet ported, each named after its owner |
 | not ported, stubbed | the RF/audio/scanner/DTMF engines, the CPS codeplug mapping, USB/voice/FM features the hardware lacks |
 
-On the radio: console **`1`** toggles the interactive GUI, **`2`** the VFO, **`3`**
-the menu, **`4`** the boot screen, **`5`** saves the settings blob, **`6`** runs
-the flash write test, **`e`** dumps the flash.  On a PC, `preview_k1.c` renders
+**The K1 GUI is what the radio boots into**: the panel and the keys belong to it
+from power-on (the K1 boot screen for a second, then the VFO), and the bring-up
+screens are now console diagnostics behind `0`.  The console: **`1`** back to the
+GUI, **`2`** VFO, **`3`** menu, **`M`**/`G` draw those once, **`4`** the boot
+screen, **`5`** saves the settings blob, **`6`** runs the flash write test,
+**`e`** dumps the flash, **`0`** hands the panel to the bring-up screens (test
+card, border, fill, animation, panel re-init).  On a PC, `preview_k1.c` renders
 the same screens (and drives the same key loop) as ASCII -- see AGENTS.md,
 "Offline checks".
 

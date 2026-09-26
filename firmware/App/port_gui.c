@@ -120,6 +120,21 @@ static void port_gui_main_key(KEY_Code_t key, bool pressed, bool held)
     }
 }
 
+/* The K1 refreshes its screens from its app loop: the status line, the RSSI
+ * read-out and the clock change on their own, so repaint on a timer as well as
+ * on keys.  The panel is bit-banged, so this is deliberately slow. */
+#define PORT_GUI_REFRESH_MS 500u
+
+void port_gui_tick(uint32_t now_ms)
+{
+    static uint32_t last;
+
+    if ((uint32_t)(now_ms - last) < PORT_GUI_REFRESH_MS)
+        return;
+    last = now_ms;
+    s_dirty = true;
+}
+
 void port_gui_poll(void)
 {
     KEY_Code_t key = KEYBOARD_GetKey();

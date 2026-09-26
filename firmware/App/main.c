@@ -29,6 +29,7 @@
 #include "driver/lcd_st7565.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
+#include "driver/py25q16.h"
 #include "port_gui.h"
 #include "port_storage.h"
 #include "port_state.h"
@@ -48,7 +49,7 @@
 #define UPDATE_REQUEST  ((volatile uint8_t *)0x0805FFF0)
 
 static uint8_t contrast = 0x19u;
-static int     gui_mode;      /* '1': the radio's keys drive the ported GUI */
+static int     bench_panel;   /* '0': hand the panel back to the bring-up screens */
 static int show_border;
 static int animate;
 static int heartbeat = 1;
@@ -192,21 +193,19 @@ static void print_info(void)
 
 static void print_help(void)
 {
-    uart_puts("\ncommands: h help   i diagnostics   d dump screen as ASCII\n"
-              "          c clear  t test card   b border   f fill   p animation\n"
-              "          v/V contrast up/down  l backlight on/off  q heartbeat\n"
-              "          L status led cycle (PA13 red / PA14 green)\n"
-              "          r re-init panel (standard, bootloader-proven)\n"
-              "          s re-init panel (stock app variant, 8 extra bytes)\n"
-              "          k keypad monitor (raw ADC per line + decoded key)\n"
-              "          R probe both RF chips (ids)   W configure both\n"
-              "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
-              "          S sample reg 0x67 for 4 s   C toggle PC13\n"
-              "          G K1 VFO screen   M K1 menu screen   1 GUI mode (keys drive it)\n"
-              "          2 VFO screen    3 menu screen    4 boot/welcome screen\n"
+    uart_puts("\nthe K1 GUI owns the panel; these are console diagnostics\n"
+              "          h help   i diagnostics   d dump screen as ASCII\n"
+              "          q heartbeat   k keypad monitor   l backlight\n"
+              "          v/V contrast   L status led cycle (PA13/PA14)\n"
+              "          R probe RF ids   W configure both   X verify config\n"
+              "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
+              "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
+              "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
+              "          1 back to the K1 GUI\n"
               "          5 save settings   6 flash write test   e flash dump\n"
-              "          T transmit (DTMF tone)   Y step the PA power\n"
-              "          T transmit on/off (also: hold PTT on the radio)\n");
+              "          0 hand the panel to the bring-up screens (again: back)\n"
+              "          t test card   b border   f fill   p animation   c clear\n"
+              "          r/s panel re-init (standard / stock-app variant)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -392,11 +391,12 @@ static void bench_led(void)
         led_set(LED_OFF);
 }
 
-static void audio_bench_arm(void)
+/* The radio up, once, at boot: the K1 screens read this state (the VFO's
+ * frequency, the squelch for the status line), so it stays even though the
+ * bench UI does not. */
+static void radio_boot(void)
 {
-    uart_puts("\naudio bench: running 'K' at boot and asserting PC13, so the test\n"
-              "  needs no console -- unplug the cable and listen.  LED: GREEN =\n"
-              "  squelch open, OFF = quiet, RED = PC13 low.  PTT flips PC13.\n");
+    uart_puts("\nradio: bring-up (the GUI's radio init lands with the RF layer)\n");
     rx_init(BENCH_FREQ_HZ);
     uart_printf("RF: up -- BK4829 id 0x%04X, BK4815 configured (%u writes, "
                 "0x0C = 0x%04X), PA PWM ARR %u, audio path %s\n",
@@ -404,6 +404,15 @@ static void audio_bench_arm(void)
                 (unsigned)bk4815_read_reg(0x0C), (unsigned)PA_PWM_ARR,
                 audio_path_is_on() ? "asserted" : "low");
     bench_led();
+}
+
+/* The bring-up bench loop, only while it owns the panel ('0'). */
+static void audio_bench_arm(void)
+{
+    uart_puts("\naudio bench: the bring-up screens have the panel.  'K' brings the\n"
+              "  radio up, PC13 is asserted, PTT flips it.  LED: GREEN = squelch\n"
+              "  open, OFF = quiet, RED = PC13 low.  '0' gives the panel back to\n"
+              "  the K1 GUI.\n");
     audio_bench_on = true;
 }
 
@@ -794,9 +803,15 @@ int main(void)
     led_init();
     uart_puts("led: PA13 red / PA14 green, both active high (measured); "
               "'L' cycles off/red/green/both\n");
-    draw_test_card();
-    uart_puts("lcd: test card drawn\n");
-    audio_bench_arm();
+    /* The radio's interface is the ported K1 application from here on.  The
+     * bring-up test card and its bench loop are console diagnostics ('0' hands
+     * the panel back to them); at boot the K1 shows its own screen instead. */
+    radio_boot();
+    port_state_init();
+    port_gui_init();
+    port_gui_welcome();
+    systick_delay_ms(1200);
+    port_gui_screen(DISPLAY_MAIN);
     uart_puts("boot complete. 'h' for commands, 'd' dumps the screen over this\n"
               "console, 'i' shows diagnostics.\n");
     print_help();
@@ -823,12 +838,27 @@ int main(void)
                 print_info();
                 print_diagnostics();
                 break;
+            case '0':
+                /* Hand the panel back to the bring-up screens (and to the
+                 * GUI again on the next press). */
+                bench_panel = !bench_panel;
+                if (bench_panel) {
+                    audio_bench_arm();
+                    draw_test_card();
+                    uart_puts("\npanel: bring-up screens\n");
+                } else {
+                    port_gui_screen(gScreenToDisplay);
+                    uart_puts("\npanel: K1 GUI\n");
+                }
+                break;
             case 'c':
+                bench_panel = 1;
                 ui_clear();
                 lcd_refresh();
                 uart_puts("\nscreen cleared\n");
                 break;
             case 't':
+                bench_panel = 1;
                 draw_test_card();
                 uart_puts("\ntest card\n");
                 break;
@@ -836,16 +866,19 @@ int main(void)
                 dump_screen_ascii();
                 break;
             case 'b':
+                bench_panel = 1;
                 show_border = !show_border;
                 ui_border(show_border);
                 lcd_refresh();
                 break;
             case 'f':
+                bench_panel = 1;
                 ui_pattern(0x55);
                 lcd_refresh();
                 uart_puts("\ncheckerboard\n");
                 break;
             case 'p':
+                bench_panel = 1;
                 animate = !animate;
                 uart_printf("\nanimation %s\n", animate ? "on" : "off");
                 break;
@@ -858,12 +891,14 @@ int main(void)
                 uart_printf("\ncontrast 0x%02X\n", contrast);
                 break;
             case 'r':
+                bench_panel = 1;
                 uart_printf("\npanel re-init (standard, bootloader-proven): %d\n",
                             lcd_reinit(LCD_INIT_STANDARD));
                 lcd_set_contrast(contrast);
                 draw_test_card();
                 break;
             case 's':
+                bench_panel = 1;
                 uart_printf("\npanel re-init (stock app variant): %d\n",
                             lcd_reinit(LCD_INIT_STOCK_APP));
                 lcd_set_contrast(contrast);
@@ -943,11 +978,6 @@ int main(void)
             case '5':
                 /* Save the port's settings to the external flash (blob in the
                  * empty tail of the part -- see port_storage.c). */
-                if (!gui_mode) {
-                    port_state_init();
-                    port_gui_init();
-                    gui_mode = 1;
-                }
                 uart_printf("\nstorage: settings save %s\n",
                             port_storage_save_settings() ? "PASS (read back)"
                                                          : "FAILED");
@@ -967,81 +997,42 @@ int main(void)
                 break;
             }
             case '1':
-                /* Interactive GUI: the radio's own keys drive the ported K1
-                 * screens.  See port_gui.c and, for the preview equivalent,
-                 * tools/preview_k1.c. */
-                if (!gui_mode) {
-                    port_state_init();
-                    port_gui_init();
-                    gui_mode = 1;
-                    uart_puts("\nGUI mode on: UP/DOWN tune or move, MENU opens the "
-                              "menu, EXIT goes back ('1' ends it)\n");
-                } else {
-                    gui_mode = 0;
-                    uart_puts("\nGUI mode off\n");
-                }
+                /* The K1 GUI has the panel and the keys; this re-selects it
+                 * after the bench screens were used ('0'). */
+                bench_panel = 0;
+                port_gui_screen(DISPLAY_MAIN);
+                uart_puts("\nK1 GUI: the radio's keys drive the ported screens\n");
                 break;
             case '4':
-                /* The K1's boot screen (App/main.c calls UI_DisplayWelcome once
-                 * at start-up, before the status line settles). */
-                if (!gui_mode) {
-                    port_state_init();
-                    port_gui_init();
-                    gui_mode = 1;
-                }
+                /* The K1's boot screen (shown once at boot). */
+                bench_panel = 0;
                 port_gui_welcome();
-                uart_puts("\nWelcome screen (the K1 shows it at boot)\n");
+                uart_puts("\nK1 boot screen\n");
                 break;
             case '2':
-                if (!gui_mode) {
-                    port_state_init();
-                    port_gui_init();
-                    gui_mode = 1;
-                }
+                bench_panel = 0;
                 port_gui_screen(DISPLAY_MAIN);
-                uart_puts("\nVFO screen\n");
+                uart_puts("\nK1 VFO screen\n");
                 break;
             case '3':
-                if (!gui_mode) {
-                    port_state_init();
-                    port_gui_init();
-                    gui_mode = 1;
-                }
+                bench_panel = 0;
                 UI_MENU_BuildView();
                 port_gui_screen(DISPLAY_MENU);
-                uart_puts("\nMenu screen\n");
+                uart_puts("\nK1 menu screen\n");
                 break;
-            case 'M': {
-                /* The ported K1 menu: ui/menu.c's UI_DisplayMenu() over the same
-                 * state facade (its entry sequence builds the list first). */
-                static int gui_up;
-
-                if (!gui_up) {
-                    port_state_init();
-                    gui_up = 1;
-                }
+            case 'M':
+                bench_panel = 0;
                 UI_MENU_BuildView();
-                UI_DisplayMenu();
+                port_gui_screen(DISPLAY_MENU);
                 uart_puts("\nK1 UI_DisplayMenu() drawn\n");
                 break;
-            }
-            case 'G': {
-                /* The ported K1 VFO screen: ui/main.c's UI_DisplayMain() itself,
-                 * drawing through the imported display layer, with the app state
-                 * from port_state.c. */
-                static int gui_up;
-
-                if (!gui_up) {
-                    port_state_init();
-                    gui_up = 1;
-                }
+            case 'G':
+                bench_panel = 0;
                 gRxVfo->freq_config_RX.Frequency = BENCH_FREQ_HZ;
                 gRxVfo->freq_config_TX.Frequency = BENCH_FREQ_HZ;
-                UI_DisplayMain();
-                uart_puts("\nK1 UI_DisplayMain() drawn (preview_k1.c renders the "
-                          "same screen on a PC)\n");
+                port_gui_screen(DISPLAY_MAIN);
+                uart_puts("\nK1 UI_DisplayMain() drawn\n");
                 break;
-            }
             case 'C':
                 audio_path_toggle();
                 break;
@@ -1075,33 +1066,36 @@ int main(void)
                 }
                 echo[echo_len++] = ch;
                 echo[echo_len] = '\0';
-                ui_echo(echo);
-                lcd_refresh();
+                if (bench_panel) {
+                    ui_echo(echo);
+                    lcd_refresh();
+                }
             }
         } else {
             systick_delay_ms(1);
         }
 
-        if ((uint32_t)(now - last_tick) >= 1000u) {
-            last_tick = now;
-            ui_status(now / 1000u);
-            lcd_refresh();
-            if (heartbeat && (now / 1000u) % 5u == 0u)
-                uart_printf("[hb] uptime %us, panel variant %d, contrast 0x%02X\n",
-                            (unsigned)(now / 1000u), lcd_variant(), contrast);
+        if (bench_panel) {
+            if ((uint32_t)(now - last_tick) >= 1000u) {
+                last_tick = now;
+                ui_status(now / 1000u);
+                lcd_refresh();
+                if (heartbeat && (now / 1000u) % 5u == 0u)
+                    uart_printf("[hb] uptime %us, panel variant %d, contrast 0x%02X\n",
+                                (unsigned)(now / 1000u), lcd_variant(), contrast);
+            }
+            audio_bench_step(now);
+            animate_step(now);
+        } else {
+            /* The ported K1 application owns the panel and the keys:
+             * port_gui_poll() reads the keypad reader and routes the keys to
+             * whichever of the K1's screens is up, and port_gui_tick() refreshes
+             * it (the status line and the signal read-out change on their own).
+             * The console stays a debugging channel throughout. */
+            port_gui_poll();
+            port_gui_tick(now);
         }
 
         keypad_monitor_step();
-
-        if (gui_mode) {
-            /* The ported GUI owns the screen and the keys: port_gui_poll()
-             * reads the keypad reader and routes the keys to whichever of the
-             * K1's screens is up.  The bench read-outs above still run, so the
-             * console stays a debugging channel. */
-            port_gui_poll();
-        } else {
-            audio_bench_step(now);
-            animate_step(now);
-        }
     }
 }
