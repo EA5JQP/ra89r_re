@@ -42,6 +42,10 @@ the CPS sources) lives outside the workspace (see "Reference inputs").
 - `ra89r_rffeatures.md` — the stock's feature routines above the part: where AF,
   AGC, the CTCSS/CDCSS/DTMF/scramble/VOX group and the sleep/idle/mode-restore
   states live, by register.
+- `ra89r_port.md` — the port itself: what the RA89R side already provides, the
+  fixes and the missing modules the K1 application needs before it can run, the
+  board facts to re-point, and the order to do it in.  The `port` branch's
+  working document.
 
 **Every feature gets its own `ra89r_<feature>.md`**, next to the code, holding more
 than a summary: the protocol or register semantics, the evidence for each hardware
@@ -203,6 +207,13 @@ driver/audiocontrol       audio       -- MERGED.  It receives and transmits: the
                                          `0x7D`, PrepareTransmit, the `0x50 = 0x3B20`
                                          unmute the import was not sending, the mic
                                          gain in `0x40`).  See ra89r_rfpath.md
+port                      integration -- OPEN: the K1/F4HWN application port, off
+                                         develop.  Nothing ported yet; ra89r_port.md
+                                         is the plan and the fix list (the TX chain
+                                         reaching the app's path, TX power from the
+                                         codeplug, per-band path and BK4815 handling,
+                                         the squelch ramp, the whole gEeprom/storage
+                                         group, the license, the 0x0805FFF0 marker)
 driver/bk4829             RF          -- MERGED: the shared 3-wire bus, both
                                          transceivers, the stock register tables and
                                          the K1-compatible BK4819 interface.  Ids, all
