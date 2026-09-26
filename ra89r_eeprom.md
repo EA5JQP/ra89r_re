@@ -110,21 +110,29 @@ Nothing may touch the codeplug (`0x0`-`0x3FFF`), the journal
 `0x110000`-`0x1FFFFF` is 960 KB of untouched `0xFF`, and the firmware only ever
 writes the ranges above, so a sector there is the natural scratch area.
 
-**The write test, one sector, entirely inside the erased tail** — this is the
-"store some information to validate the write" step:
+**The write path is implemented; the on-radio test is what is left.**
 
-1. **Precondition** — read the target sector (proposed **`0x1FF000`**, the last
-   4 KB) and require it to be all `0xFF`.
-2. **Program** — write-enable (`0x06`), then page program (`0x02`) a marker at
-   `0x1FF000`: `"RA89R-EE"` + a 32-bit write counter + a checksum.  A counter
-   proves persistence across a power cycle, where a plain read-back would only
-   prove the buffer round-tripped.
-3. **Verify** — read it back and compare, and check that the byte *after* the
-   marker is still `0xFF` (a page program that overruns its payload shows up
-   there).
-4. **Erase** — sector erase (`0x20`), poll `0x05` until not busy, read back and
-   require all `0xFF` again.
-5. Report each step on the console, naming the first one that failed.
+`firmware/App/driver/spi_flash.c` (from branch `driver/eeprom`, now also on
+`port`) has the write commands: write-enable (`0x06`) before every erase or
+program, page program (`0x02`) that splits at 256-byte page boundaries, sector
+erase (`0x20`) and a status-register poll (`0x05`, WIP) after each.  Nothing
+erases on its own -- the caller erases first -- and that driver's read path is
+the one already validated on the radio.
+
+On `port` the two empty tail sectors are now in use, so the write test moved
+down one:
+
+| address | use |
+|---|---|
+| `0x1FE000` | scratch for the write test |
+| `0x1FF000` | the port's settings blob (magic, version, size, checksum, `gEeprom`) |
+
+The test (console **`6`**) erases `0x1FE000`, programs 256 bytes of
+`0xA5 ^ i`, reads them back and reports the first address that differs; console
+**`5`** saves the settings blob to `0x1FF000` and reads it back, and **`e`**
+prints the identity (`0x90` / `0x9F`) plus a hexdump of the codeplug's first 64
+bytes.  What neither can prove on its own is persistence across a power cycle:
+that is the remaining step, and `5` twice around a power-off does it.
 
 That exercises write-enable, program, read-back and erase without touching a byte
 the radio uses.
@@ -134,6 +142,7 @@ the radio uses.
 | claim | status |
 |---|---|
 | "Winbond-class `0xEF`, device id `0x16`, 4 MB" | **wrong** — that is the stock's expectation; the fitted part is a Puya PY25Q16HB, 2 MB |
+| "the write test is pending" | **path implemented** — driver + console test + settings save are in; the power-cycle persistence check is what remains |
 | the flash accessors are `FUN_08017FE4`/`FUN_08018060` | **wrong** — those are the BK4815/BK4829 bit-bang primitives; the flash is `0x0B`/`0x02`/`0x20` on SPI1 |
 | the image is one flat codeplug | **no** — the codeplug is flat at `0x0`, but the firmware also keeps the journal at `0x20000` |
 | the glyph table is at `0x000D0000 + idx*32` | **not seen** — `0xD0000` is not a 16x16 glyph table in this dump (see open point 3) |
