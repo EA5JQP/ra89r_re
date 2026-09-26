@@ -187,7 +187,8 @@ driver/bk4829             RF          -- OPEN, unmerged: both RF transceivers (a
                                          BK4815) and their stock register
                                          configurations; both parts answer their id
                                          on the radio and accept the configuration,
-                                         but no RF effect has been observed yet, see
+                                         the K1-compatible path tunes and reports a quiet
+                                         channel, but no signal response yet, see
                                          ra89r_bk4829.md and ra89r_bk4815.md
 ```
 
@@ -201,7 +202,7 @@ The open features have their own write-ups, and they are the places to start:
 | battery gauge | `ra89r_battery.md` | protocol decoded and implemented; the chip never answers |
 | beeper | `ra89r_beeper.md` | traced (TIM4 + a tone generator, its pin is PA4); not written |
 | EEPROM (SPI NOR) | `ra89r_eeprom.md` | read + full dump validated on the radio; write test pending |
-| RF transceivers | `ra89r_bk4829.md`, `ra89r_bk4815.md`, `ra89r_rfpath.md` | both parts driven; both answer their id on the radio and accept the configuration, but no RF effect observed yet |
+| RF transceivers | `ra89r_bk4829.md`, `ra89r_bk4815.md`, `ra89r_rfpath.md` | both parts driven and configured; the K1-compatible path tunes and its RSSI reports a quiet channel -- a signal response is the remaining step |
 
 Rules: branch off `develop` (`git switch -c driver/<peripheral> develop`), keep
 each driver self-contained under `firmware/App/driver/`, keep it host-testable
@@ -223,8 +224,9 @@ Three features are unfinished and parked on their own branches, each with a doc:
 the **battery gauge** (protocol decoded, chip silent -- `ra89r_battery.md`), the
 **EEPROM** (read and dumped, write test pending -- `ra89r_eeprom.md`) and the
 **RF transceivers** (the bus and both stock configurations extracted, driver
-written; on the radio both parts answer an id probe and accept the configuration,
-but no RF effect has been observed yet -- `ra89r_bk4829.md`, `ra89r_bk4815.md`).
+written and its K1-compatible path tunes; on the radio it reports a quiet
+channel where an unconfigured part read zero, but no signal response yet --
+`ra89r_bk4829.md`, `ra89r_bk4815.md`).
 The **status LED** is not a feature of its
 own: it is an RF-chip indicator, so it arrives with the RF bring-up
 (`ra89r_led.md`).  The **beeper** is traced but not written (TIM4 plus a tone
@@ -343,7 +345,9 @@ driver for this part family.  Four things changed and nothing else: the
 transport is `rf_bus.c` (select `PB8`) instead of the K1's file-static pins; the
 delay is local; the two audio-path calls go through a registered callback; and
 the four `gEeprom` reads became driver-local setters.  The console's `K` runs its
-init, tunes 145.7500 MHz and turns RX on.
+init, tunes 145.7500 MHz and turns RX on -- and did, on the radio: the frequency
+registers hold the split word and `0x67` reports a plausible noise floor where an
+unconfigured part read zero (ra89r_bk4829.md).
 
 What that does *not* finish: the entry points whose semantics the stock image has
 not yielded yet are now the K1's sequences running on our hardware, which is a
