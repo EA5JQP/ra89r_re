@@ -358,6 +358,30 @@ FUN_08016A2C   the TX start (FUN_08018AB8, 5 ms, then this)
   `CCR2 = 0` and the receive path (`FUN_08017340`) sets it back to 0, so **the PA
   is biased only while transmitting**.
 
+### The transmit configuration, validated on the radio
+
+Voice was heard on a second receiver with exactly these values, so this is the
+list the port keeps:
+
+| what | value | why |
+|---|---|---|
+| `0x7D` | `0xE958` | the stock's own power/bias for this codeplug (`FUN_0801BAF4`, level 3) |
+| `0x36` | `0x8822` | **the amplifier enabler**: PA-CTL (bit 7) + bias `0x88` + gain.  The stock's own TX path never writes `0x36`; the K1 sets it in `BK4819_SetupPowerAmplifier`, and our imported `BK4819_TxOn_Beep` wrote it to **0** -- which is why the carrier existed and was never amplified |
+| `0x33` | `0x0020` | chip GPIO pin 1 (PA enable) *only*.  The stock's transmit path clears all seven and sets that one (`FUN_08013A70(2)` -> `FUN_080137D4(0x20, 0x20)`), and `FUN_080137D4` clears each driven pin's paired bit, so inheriting the K1 init's `0x9000` is not neutral |
+| `PA1`/`PA0` | `1` / `0` | the stock's transmit band path |
+| `PB14`/TIM1_CH2 | ARR 1439, compare 128 | the PA bias PWM (100 kHz) |
+| `0x30` | `0xC1FE` | mic ADC (bit 2) + TX DSP (bit 1) + PA gain (bit 3) |
+| `0x37` | `0x9D1F` | the stock's TX value |
+| `0x47` | `0x6042` | AF muted -- the AF DAC is not the modulation source |
+| `0x50` | `0x3B20` | **the TX unmute.**  The stock writes this; our imported `ExitTxMute` sends `0x3B18` (the value from the K1's `bk4829.c`), and `BK4819_EnterDTMF_TX` leaves `0xBB18` -- a muted TX audio path is a carrier that carries nothing |
+| `0x40` | `0x3700` | microphone gain `0x70`; the field is a **byte** in bits 11:4 (`FUN_0801C3A8`: `(old & 0xE000) | 0x1000 | gain << 4`), not the nibble it first looked like |
+| BK4815 `0x0C` | `0x0203` | the T/R path's other-branch state |
+| `0x38`/`0x39` | the channel in 10 Hz | |
+
+The chip's own DTMF tone (`BK4819_EnterDTMF_TX` -> `EnableTXLink` ->
+`BK4819_PlayDTMF`) is audible on a second receiver through the same path, and is
+what settled the tone-versus-carrier question when the microphone was silent.
+
 With that in place the CPU-side TX picture is complete: chip registers
 (`0x30`/`0x37`/`0x47`/`0x50`/`0x7D`), the band/path pins (`PA1 = 1, PA0 = 0`, chip
 PA_ENABLE on -- `FUN_0800948C(1)` -> `FUN_0801B018` -> `FUN_08013A70(2)`), the
