@@ -140,7 +140,8 @@ cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver \
     -DPY32F403xD -include App/port_features.h -DST7565_HOST_TEST \
     -ffunction-sections -fdata-sections -Wl,--gc-sections \
     tools/preview_k1.c tools/host/host_hw.c App/ui/main.c App/ui/menu.c \
-    App/ui/ui.c App/app/menu.c App/app/action.c App/ui/helper.c \
+    App/ui/ui.c App/ui/status.c App/ui/welcome.c App/app/menu.c \
+    App/app/action.c App/ui/helper.c \
     App/ui/inputbox.c App/version.c App/dcs.c App/frequencies.c \
     App/helper/battery.c App/port_state.c App/port_gui.c App/settings.c \
     App/font.c App/bitmaps.c App/driver/st7565.c App/driver/keyboard.c \
@@ -235,9 +236,14 @@ port                      integration -- OPEN: the K1/F4HWN application port, of
                                          the radio's own keys: driver/keyboard.c is the
                                          K1 interface over our keypad reader, port_gui.c
                                          the key routing, console '1' the interactive mode
-                                         ('2' VFO, '3' menu).  See ra89r_port.md for the
-                                         progress and what is next (status line, welcome,
-                                         the real settings/radio modules).  Still on the
+                                         ('2' VFO, '3' menu, '4' boot screen), and
+                                         ui/status.c + ui/welcome.c draw the status line
+                                         and the boot screen.  The codeplug reads as an
+                                         empty part (PY25Q16_ReadBuffer is a stub until
+                                         the SPI NOR driver lands), so the menus show
+                                         their defaults.  See ra89r_port.md for the
+                                         progress and what is next (storage, then the
+                                         real settings/radio modules).  Still on the
                                          list (the TX chain
                                          reaching the app's path, TX power from the
                                          codeplug, per-band path and BK4815 handling,
