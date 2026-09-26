@@ -426,8 +426,9 @@ static void radio_tx(int on)
 
     if (on) {
         BK4819_SetFrequency(BENCH_FREQ_HZ);
-        BK4819_WriteRegister((BK4819_REGISTER_t)0x7D, BENCH_PA_7D);
+        BK4819_WriteRegister(BK4819_REG_7D, BENCH_PA_7D);
         BK4819_PrepareTransmit();
+        BK4819_SetAF(BK4819_AF_FM);     /* 0x47 = 0x6142, as the stock's TX does */
         led_set(LED_RED);               /* red = transmit, as the stock shows it */
     } else {
         BK4819_RX_TurnOn();
