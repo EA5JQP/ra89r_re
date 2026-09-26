@@ -107,11 +107,26 @@ plus `0x0C`/`0x16`/`0x2B`/`0x6D`/`0x73`/`0x12`) — the per-band routine
   `0x7A = 0x589A`, then `0x31 |= 4` and `0x30 = 0xBDF1`.  The K1's `EnableVox`
   register set is `0x31`/`0x46`/`0x79`/`0x7A` — an exact match, so this routine is
   the stock's VOX enable, and `0x46`/`0x79`/`0x7A` are VOX parameters.
-* **DTMF — no counterpart found.**  The K1 uses a dedicated second tone register
-  (`0x72`, `PlayDTMF`) and its 5-tone/DCS status registers `0x0B`/`0x0C`; the stock
-  writes no `0x72` at all, and its `0x0B`/`0x0C` writers (`FUN_0801BF54`,
-  `FUN_0801D268`) are unexamined.  Either the stock plays DTMF through the same
-  `0x71` tone player, or its DTMF lives in those unexamined routines.  Open.
+* **DTMF — not on the part, most likely.**  The K1 gives DTMF its own second tone
+  register (`0x72`, `PlayDTMF`) and reads `0x0B` for the 5-tone code; the stock
+  writes **no `0x72` anywhere**.  The two obvious remaining candidates turned out to
+  be something else:
+  * `FUN_0801BF54` writes the **BK4815's `0x0B`** as a three-step sequence
+    (`0x0800`, `0x8800`, `0x9800` — bits 11 then 12 walking up), which is a mode or
+    calibration pulse, not tone data;
+  * `FUN_0801D268` writes the **BK4815's `0x0C`** as `0x0203` (with a call to
+    `FUN_080247A0`) or `0x0A03`, gated on the channel-state bytes `+2`/`+0x1c`.
+
+  That second one is a useful confirmation on its own: `0x0C` = `0x0203`/`0x0A03`
+  is the pair `FUN_08016228` and `FUN_08009CC4` already use for the T/R state, so
+  **`0x0C` is the BK4815's receive/transmit state register**, now from three
+  independent sites.
+
+  With no second chip tone register, the likely reading is that the stock generates
+  DTMF on the **MCU** side — it already has its own tone generator (the beeper is
+  TIM4 plus the DAC, `ra89r_beeper.md`) — rather than in the transceiver.  That
+  stays an inference until the DTMF menu path is followed; it is not a located
+  routine.
 
 ## Idle, sleep and mode restore
 
@@ -152,8 +167,8 @@ as well, so it carries several independent bit fields and is not yet mapped.
    but not exercised.
 2. `0x30`'s bit fields are unmapped, and it has the most writers of any register.
 3. DTMF has no stock counterpart located (above).
-4. `FUN_0801BF54` and `FUN_0801D268` (the `0x0B`/`0x0C` writers) are unexamined;
-   they are the likely 5-tone/DCS status path.
+4. DTMF: no chip-side routine found (see above).  The MKU-side tone generation
+   is the likely explanation and needs the DTMF menu path followed to confirm.
 5. The AF gain path (`FUN_08019DF4`, `FUN_080247E0`) and the tone player's float
    scale constant (the double at `0x08005D7C`) are not extracted.
 6. `0x64` (VOX amplitude, read by `FUN_08017618` on this part) and the K1's
