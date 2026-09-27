@@ -25,6 +25,7 @@
 #include "driver/gpio.h"
 #include "driver/keypad.h"
 #include "driver/pa.h"
+#include "driver/rf_bus.h"
 #include "driver/tx.h"
 #include "driver/lcd_st7565.h"
 #include "driver/systick.h"
@@ -204,6 +205,7 @@ static void print_help(void)
               "          h help   i diagnostics   d dump screen as ASCII\n"
               "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
               "          F cycle the VHF/UHF front-end selection (find what receives)\n"
+              "          D step the RF bus delay down (find what still gives audio)\n"
               "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
               "          v/V contrast   L status led cycle (PA13/PA14)\n"
@@ -997,6 +999,27 @@ int main(void)
                 uart_puts("mode: after COMMON_SwitchVFOMode()\n");
                 print_mode();
                 break;
+            case 'D': {
+                /* Step the RF bus delay down towards the fastest value that still
+                 * works: the clock went up 6x and the delay was cut 5x, and a
+                 * marginal write shows up as 'the squelch opens, no audio'. */
+                static const uint8_t steps[] = { 40, 24, 16, 12, 8, 4, 1 };
+                uint8_t cur = rf_bus_delay_setting();
+                unsigned i, next = 0;
+
+                for (i = 0; i < sizeof steps; i++) {
+                    if (steps[i] == cur) {
+                        next = (i + 1u) % (unsigned)sizeof steps;
+                        break;
+                    }
+                }
+                rf_bus_set_delay(steps[next]);
+                uart_printf("\nRF bus delay: %u iterations (was %u).\n",
+                            (unsigned)steps[next], (unsigned)cur);
+                uart_puts("  'K' re-tunes and opens the squelch; listen, and note"
+                          " the value that still gives audio.\n");
+                break;
+            }
             case 'P':
                 print_profile();
                 break;

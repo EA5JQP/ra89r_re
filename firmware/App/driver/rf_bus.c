@@ -17,9 +17,24 @@
  * the same board and the same bus, and the reason one RSSI read cost a
  * millisecond (console 'P' shows it).  Eight iterations is ~1 us here, still
  * several times what the stock does, so the edges stay clean. */
+uint8_t gRfBusDelay = RF_BUS_DELAY_VALIDATED;
+
+void rf_bus_set_delay(uint8_t iterations)
+{
+    if (iterations > 0u)
+        gRfBusDelay = iterations;
+}
+
+uint8_t rf_bus_delay_setting(void)
+{
+    return gRfBusDelay;
+}
+
 static void rf_delay(void)
 {
-    for (volatile unsigned i = 0; i < 8u; i++)
+    volatile unsigned i;
+
+    for (i = 0; i < gRfBusDelay; i++)
         ;
 }
 

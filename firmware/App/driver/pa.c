@@ -17,13 +17,12 @@ static bool s_uhf;
 
 /* Which chip-side front-end selection to apply.
  *
- * 0 is the state this board was validated in: PA0 per band, and the chip's GPIO
- * register left exactly as BK4819_Init() wrote it (0x9000 -- neither of the two
- * path bits set).  It is the default again because reception in *both* bands
- * stopped as soon as this port began setting those bits: RX used to work with
- * them clear, so on this board they are not the benign LNA selects the K1's pin
- * names suggest.  The console 'f' command cycles the possibilities so the
- * working one is found on the radio rather than guessed at. */
+ * Mode 4 (by frequency) is the default.  An earlier reading of a "cannot
+ * receive" report blamed these bits and defaulted to 0; the radio then settled
+ * it -- with a carrier present, register 0x67 goes from ~59 to ~216 (past the
+ * stock's 180/207 squelch marks) in modes 1, 2 AND 3 alike, so all of these bits
+ * are benign LNA selects and the reception problem is elsewhere.  The console
+ * 'F' command still walks every mode, which is how that was established. */
 enum {
     PA_CHIP_PATH_LEAVE = 0,   /* as BK4819_Init() left it -- validated */
     PA_CHIP_PATH_VHF,         /* 0x33 bit 0x04 set, bit 0x08 clear */
@@ -33,7 +32,7 @@ enum {
     PA_CHIP_PATH_MODES
 };
 
-static uint8_t s_chip_path = PA_CHIP_PATH_LEAVE;
+static uint8_t s_chip_path = PA_CHIP_PATH_AUTO;
 
 bool pa_is_uhf(uint32_t freq_10hz)
 {
