@@ -298,6 +298,14 @@ def wait_ack(io, timeout, what, strict=False):
 BAUD_CANDIDATES = [6, 5, 4, 2, 1, 0]           # fastest first, 9600 last
 BAUD_RISKY = {7: 512000, 8: 1024000}
 
+# Where 'auto' starts.  Not the fastest rate in the table: a rate is probed with
+# three short pings, and a link that answers those can still corrupt the several
+# kilobytes of a record plus its reply -- 256000 did exactly that on a USB-serial
+# adapter, while the same cable has carried this radio's 115200 console all
+# along.  So start where the hardware is already proven and let the ladder step
+# down from there; --baud 6 asks for the fast one explicitly.
+AUTO_START_INDEX = 5                           # 115200
+
 
 def link_quality(io, pings=3, timeout=0.35):
     """How many clean E0 answers come back at the current rate.
@@ -316,13 +324,32 @@ def link_quality(io, pings=3, timeout=0.35):
     return clean
 
 
+def baud_ladder(index):
+    """The order to sweep after asking for rate `index`.
+
+    The rate asked for first, then the *slower* ones, and only then the faster
+    ones -- a faster rate is only worth trying if nothing at or below the request
+    answered at all, which means the request plainly did not take.
+
+    This ordering is the whole point.  `BAUD_CANDIDATES` is fastest-first, and
+    the sweep used to be `[index] + candidates`, so a caller stepping *down*
+    because the fast link was damaging replies would find the fast rate still
+    answering a ping and be handed it straight back: the log would say
+    "switching baud (index 4 = 57600)" and then "talking at 256000 baud".
+    """
+    return ([i for i in BAUD_CANDIDATES if i <= index] +
+            [i for i in BAUD_CANDIDATES if i > index])
+
+
 def set_baud(io, index, args, verbose=True):
     """Ask the bootloader to switch baud, then find the rate it is really at.
 
     The command itself is not acknowledged, so after sending it we sweep the
-    candidate rates and keep the fastest one that answers an E0 ping.  A wrong
-    guess therefore costs nothing: the ping is harmless and the sweep covers
-    every rate in the bootloader's table (including 9600, if it ignored us).
+    candidate rates and take the first that answers *cleanly*.  A wrong guess
+    costs nothing: the ping is harmless and the sweep covers every rate in the
+    bootloader's table (including 9600, if it ignored us).  The sweep never
+    offers a faster rate than the one asked for unless nothing slower answers
+    (see baud_ladder).
     """
     if index in BAUD_RISKY:
         print("warning: index %d (%s baud) needs more than the bootloader's 8 MHz "
@@ -335,17 +362,19 @@ def set_baud(io, index, args, verbose=True):
     io.write(frame(CMD_BAUD, b"BAUDRATE" + b"%02d" % index))
     time.sleep(args.baud_settle)
 
-    order = [index] + [i for i in BAUD_CANDIDATES if i != index]
-    best = None
-    for i in order:
+    requested_ok = False
+    fallback = None                             # slowest rate that at least answers
+    for i in baud_ladder(index):
         baud = BAUD_TABLE[i] if i < len(BAUD_TABLE) else None
         if not baud:
             continue
         io.set_baud(baud)
         if not ping(io):
             continue
-        if best is None:
-            best = i
+        if i == index:
+            requested_ok = True
+        if fallback is None or baud < BAUD_TABLE[fallback]:
+            fallback = i
         clean = link_quality(io, args.quality_pings)
         if verbose:
             print("  %d baud: %d/%d clean probes%s"
@@ -356,11 +385,15 @@ def set_baud(io, index, args, verbose=True):
             if verbose:
                 print("  talking at %d baud (index %d)" % (baud, i))
             return i
-    if best is not None:
-        print("  every rate was noisy; continuing at %d baud anyway (damaged "
-              "replies are retried)" % BAUD_TABLE[best])
-        io.set_baud(BAUD_TABLE[best])
-        return best
+    if fallback is not None:
+        # Nothing answered cleanly.  Stay where the caller asked to be if that
+        # rate at least answers, otherwise take the slowest that does -- a noisy
+        # link is retried either way, and the slow one is the better bet.
+        choice = index if requested_ok else fallback
+        print("  every rate was noisy; continuing at %d baud (index %d) anyway "
+              "(damaged replies are retried)" % (BAUD_TABLE[choice], choice))
+        io.set_baud(BAUD_TABLE[choice])
+        return choice
     print("  no rate answered -- power-cycle the radio and retry with --baud 0")
     return None
 
@@ -415,8 +448,9 @@ def cmd_flash(args):
                   "bootloader consumes it on the next reset and starts the image"
                   % (UPDATE_REQUEST_VALUE, UPDATE_REQUEST_ADDRESS))
     check_addresses(records, args.allow_bootloader_region)
-    # 'auto' starts from the fastest rate and the sweep drops down as needed
-    baud_index = (BAUD_CANDIDATES[0] if args.baud == "auto"
+    # 'auto' starts where the hardware is proven and the ladder steps down from
+    # there (see AUTO_START_INDEX); 'keep' stays at 9600
+    baud_index = (AUTO_START_INDEX if args.baud == "auto"
                   else int(args.baud)) if args.baud != "keep" else 0
 
     if args.dry_run:
@@ -550,10 +584,10 @@ def main(argv=None):
     ap.add_argument("--timeout", type=float, default=1.5,
                     help="per-reply timeout in seconds (default 1.5)")
     ap.add_argument("--baud", default="auto",
-                    help="'auto' (default: fastest rate the bootloader answers "
-                         "at), 'keep' (stay at 9600), or a bootloader table "
-                         "index 0..8 (0=9600, 4=57600, 5=115200, 6=256000, "
-                         "7=512000, 8=1024000)")
+                    help="'auto' (default: start at 115200 and step down if the "
+                         "link damages replies), 'keep' (stay at 9600), or a "
+                         "bootloader table index 0..8 (0=9600, 4=57600, "
+                         "5=115200, 6=256000, 7=512000, 8=1024000)")
     ap.add_argument("--baud-index", type=int,
                     help="deprecated alias for --baud <index>")
     ap.add_argument("--quality-pings", type=int, default=3,
