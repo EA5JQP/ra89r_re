@@ -33,7 +33,7 @@
  *     the driver does not reach into an application settings struct.
  *
  * Register `0x00` is the identity, so `BK4819_Init` doubles as the presence
- * check the stock makes: it must read back 0x4829 (see ra89r_bk4829.md).
+ * check the stock makes: it must read back 0x4829 (see docs/ra89r_bk4829.md).
  *
  * Copyright for the register sequences below remains with the K1 authors; this
  * tree carries no license file of its own, which is worth fixing before the port

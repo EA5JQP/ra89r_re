@@ -14,7 +14,7 @@
  * What is *not* established is what it switches -- an amplifier enable, an
  * analogue path switch or something else entirely -- so this driver asserts it
  * the way the working bench did and nothing more is read into it.  See
- * `ra89r_rffeatures.md` and `ra89r_led.md`.
+ * `docs/ra89r_rffeatures.md` and `docs/ra89r_led.md`.
  */
 #ifndef DRIVER_AUDIO_PATH_H
 #define DRIVER_AUDIO_PATH_H

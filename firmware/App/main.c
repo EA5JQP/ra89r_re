@@ -36,7 +36,7 @@
 /* 0x0805FFF0 is the bootloader's **update-mode request**, not an application
  * validity flag: 0xFF (the normal state) makes the bootloader start this
  * application, and 0x11 makes it enter update mode -- after which it consumes
- * the request by writing 0xFF back (ra89r_bootloader.md section 4c).  The stock
+ * the request by writing 0xFF back (docs/ra89r_bootloader.md section 4c).  The stock
  * application sets 0x11 from its serial command handler when the PC sends
  * "Reset" + '0'.  Reported at boot and by 'i'. */
 #define UPDATE_REQUEST  ((volatile uint8_t *)0x0805FFF0)
@@ -235,7 +235,7 @@ static void animate_step(uint32_t ms)
  * mode, so both parts are reset by the time this code runs.  That was tried and
  * settled on the radio -- the BK4815's register 0x0C reads 0xFFFF here while the
  * stock's boot init always writes 0x0A03 to it -- so do not read these numbers
- * as "what the stock had".  ra89r_bk4829.md has the default map and the
+ * as "what the stock had".  docs/ra89r_bk4829.md has the default map and the
  * argument.
  *
  * 'W' replays both parts' stock boot configuration and re-probes, so a silent
@@ -302,7 +302,7 @@ static void rf_report(void)
  *
  * PA13/PA14 are *not* this line: they are the status LED (PA13 red, PA14 green,
  * both active high -- measured), which lives in `driver/led.c` behind the
- * console's `L`.  See ra89r_led.md. */
+ * console's `L`.  See docs/ra89r_led.md. */
 
 static void audio_path_toggle(void)
 {
@@ -312,7 +312,7 @@ static void audio_path_toggle(void)
                 gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN) ? "high" : "low");
     uart_puts("  the stock raises this line from its T/R path and holds it high on\n"
               "  this codeplug; receive audio was validated with it high.  What it\n"
-              "  switches is not measured -- see ra89r_rffeatures.md.\n");
+              "  switches is not measured -- see docs/ra89r_rffeatures.md.\n");
 }
 
 /* The console's 'K': bring the RF up and retune, reporting what landed.  The
@@ -355,7 +355,7 @@ static void rf_k1_bringup(void)
  * **PTT transmits**: the stock's TX sequence is the K1's `PrepareTransmit`
  * (`0x37 = 0x9D1F`, `0x30 = 0xC1FE` -- PA gain + mic ADC + TX DSP) plus the
  * power/bias register `0x7D`, which the stock computes from the codeplug level
- * (ra89r_rfpath.md, "TX, and how the power is handled"); this radio's value is
+ * (docs/ra89r_rfpath.md, "TX, and how the power is handled"); this radio's value is
  * `0xE958` (level 3 -> bias 0x18).  Releasing PTT goes back to RX.
  *
  * SIDE1/SIDE2/PTT2 still flip PC13, and the console has 'C' (PC13), 'T' (TX)
@@ -870,7 +870,7 @@ int main(void)
                 break;
             case 'L': {
                 /* The status LED: PA13 = red, PA14 = green, both active high
-                 * (measured, ra89r_led.md).  Cycle off -> red -> green -> both. */
+                 * (measured, docs/ra89r_led.md).  Cycle off -> red -> green -> both. */
                 led_set((led_colour_t)((led_get() + 1) % LED_STATE_COUNT));
                 uart_printf("\nled: %s (PA13=%u PA14=%u)\n", led_name(led_get()),
                             gpio_read(LED_PORT, LED_RED_PIN) ? 1u : 0u,

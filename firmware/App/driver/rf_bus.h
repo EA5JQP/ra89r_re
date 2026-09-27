@@ -11,7 +11,7 @@
  * framing, so the register layers above it (`bk4829.c`, `bk4815.c`) compile and
  * run on a PC against a recording stub -- see `tools/test_rf.c`.
  *
- * Timing follows the stock rather than a datasheet guess (ra89r_rfpath.md):
+ * Timing follows the stock rather than a datasheet guess (docs/ra89r_rfpath.md):
  * a byte goes out with the data set while the clock is low and the rising edge
  * latching it (stock `FUN_08017D6C`), and 16 bits come in sampled while the
  * clock is low, followed by the rise (stock `FUN_08017FE4`) -- note the

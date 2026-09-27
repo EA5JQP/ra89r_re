@@ -46,7 +46,7 @@ bool bk4829_detect(void)
  * 0xe940 | v.
  *
  * Both inputs trace back into the codeplug rather than to constants, and the
- * value this radio ends up sending is derived in ra89r_bk4829.md ("The boot
+ * value this radio ends up sending is derived in docs/ra89r_bk4829.md ("The boot
  * configuration"): the field is `buffer[10] & 7` of the 32-byte settings block
  * at EEPROM 0x2020, which reads 0x03 here, and the only instruction in the stock
  * that writes the flag writes 0.  Hence v = 4 * 3 + 12 = 0x18, and the value

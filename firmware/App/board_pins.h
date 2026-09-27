@@ -5,7 +5,7 @@
  * The peripheral instances (GPIOA, USART1) live in board.h.
  *
  * All values come from reverse engineering the stock firmware -- see
- * ../ra89r_findings.md and ../ra89r_lcd.md.
+ * ../../docs/ra89r_findings.md and ../../docs/ra89r_lcd.md.
  */
 #ifndef APP_BOARD_PINS_H
 #define APP_BOARD_PINS_H
@@ -63,7 +63,7 @@
  * entry path (`FUN_08018AB8`) and cleared on the RX one (`FUN_08017340`).
  *
  * That is why `PA13`/`PA14` are the `SWDIO`/`SWCLK` pads: the stock gives the
- * debug port up for the indicator.  See ra89r_led.md.
+ * debug port up for the indicator.  See docs/ra89r_led.md.
  *
  * GPIOA pins 0 and 1, by contrast, are configured as outputs by the stock
  * (FUN_080138FC) and the bootloader blinks PA1 three times after the backlight
@@ -96,14 +96,14 @@
  * Windows and key codes (the vendor's own calibration, reusable verbatim):
  *   (0, 0x07C] (0x384, 0x47C] (0x8B2, 0x9AA] (0xABB, 0xBB3]   -- every line
  *   PA2 additionally (0x4AA, 0x5A2] and (0x74E, 0x846], plus a digital read
- * A pin x window pairing is one key: see ra89r_keypad.md for the
+ * A pin x window pairing is one key: see docs/ra89r_keypad.md for the
  * full table, the scanner (0x08024324) and the per-key handlers. */
 #define KEYPAD_ANALOG_A_MASK  ((1u << 2) | (1u << 3) | (1u << 6) | (1u << 7))
 #define KEYPAD_ANALOG_B_MASK  ((1u << 0) | (1u << 1))
 #define KEYPAD_PTT2_PIN       (1u << 9)
 
 /* RF transceivers: two BK481x parts are fitted, sharing one bit-banged bus with
- * a chip select each (ra89r_rf.md).  Clock `PA12`, bidirectional data `PB12`
+ * a chip select each (docs/ra89r_rf.md).  Clock `PA12`, bidirectional data `PB12`
  * (driven to send, released to read), and `PB8` = BK4829, `PB13` = BK4815 --
  * both selects are active low and the stock drives them by hand.
  *
@@ -136,7 +136,7 @@
  * *Measured on the radio*: toggling `PA14` from the console changes the LED -- it
  * goes from green+red to red -- so this pair is the indicator, not a speaker
  * enable.  The green/red assignment and the active level of each die are being
- * mapped (see ra89r_led.md).  The three "toggle the pin" helpers the stock has
+ * mapped (see docs/ra89r_led.md).  The three "toggle the pin" helpers the stock has
  * (`FUN_08005F90` for PA13, `FUN_0800656C`/`FUN_08006070`/`FUN_08019C58` for PA14)
  * are blinks, which is what an indicator driver looks like.
  *
@@ -166,7 +166,7 @@
 #define PA_BAND_PA0_PIN     (1u << 0)   /* PA0 */
 
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) talks to the
- * external SPI NOR flash (see ra89r_eeprom.md); the USB-C port goes to the
+ * external SPI NOR flash (see docs/ra89r_eeprom.md); the USB-C port goes to the
  * MCU's USB device peripheral, which nothing in the stock firmware enables. */
 
 #endif /* APP_BOARD_PINS_H */

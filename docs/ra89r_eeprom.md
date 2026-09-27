@@ -57,11 +57,11 @@ A full read (`work/ra89r_eeprom.bin`, 2 MB) shows:
 
 | range | contents |
 |---|---|
-| `0x00000`-`0x03FFF` | the codeplug: the CPS's flat settings image |
+| `0x00000`-`0x03FFF` | the codeplug: the CPS's flat settings image (decoded in **`ra89r_codeplug.md`**) |
 | `0x04000`-`0x1FFFF` | erased |
 | `0x20000`-`0x28FFF` | the firmware's **journal** (table + up to 8 slots, below) |
-| `0x40000`-`0x10FFFF` | index of 8-byte `{length, running offset}` entries at `0x40000`, then ~500 KB of blobs |
-| `0x110000`-`0x1FFFFF` | **erased** — 960 KB (60 % of the chip is `0xFF`) |
+| `0x40000`-`0x10FE40` | the voice-prompt blob (index of 8-byte `{length, offset}` entries at `0x40000`) and, from `0xD0000`, the 16x16 GBK glyph font |
+| `0x10FE41`-`0x1FFFFF` | **erased** — ~950 KB (60 % of the chip is `0xFF`) |
 
 ### The journal at `0x20000`
 
@@ -83,25 +83,38 @@ ignore them.  Staged write, power loss, or a different meaning for byte 7: open.
 
 ### The CPS map, verified
 
-The old CPS decompilation gave a list of offsets; the dump confirms the second
-half of it (details in `ra89r_findings.md`): band ranges at `8000` =
-`108-174 / 144-146` and `400-520 / 430-440` (10 Hz units, `0xFFFFFFFF` =
-disabled; note the `108` receiver floor, wider than the preset list), radio name
-`RETEVIS` at `8048`, model `RA89_Plus` at `8096`, and the DTMF, 2-tone (`T-01`),
-5-tone (`5T-01`) and contact (`BI6KSS`) tables.
+The old CPS decompilation gave a list of offsets; the dump confirms them, and
+the decompiled CPS itself (its named constants and its table readers/writers)
+has since settled the whole thing.  **The layout is now written up in
+`ra89r_codeplug.md`** — that file is the authority; this one only records what is
+on the chip as a storage medium.
 
-The **channel** half does not match: `7936` holds `0f 00 00 00` repeated and the
-name table at `4416` is all spaces.  What the image does contain is a compact
-channel table of **21-byte records** (name 6 bytes, Rx u32, Tx u32 in 10 Hz
-units, Rx tone u16, Tx tone u16, 3 flag bytes), whose first four entries are:
+The short version: channels are **21-byte records starting at offset 0**,
+`Rx u32, Tx u32 (10 Hz units), Rx tone u16, Tx tone u16, flags A, flags B,
+flags C, name[6]`; a 32-byte **channel-used bitmap** sits at `7936` and a
+32-byte scan-**allow** bitmap at `7968` — this radio has `0f 00 00 00` in both,
+i.e. four channels, which is exactly what the records hold:
 
 ```
-CH-01  145.7500 MHz   simplex      CH-03  438.6500 MHz   simplex
-CH-02  430.3750 MHz   simplex      CH-04  144.9750 MHz   simplex
+CH-01  144.9750 MHz   simplex      CH-03  430.3750 MHz   simplex
+CH-02  145.7500 MHz   simplex      CH-04  438.6500 MHz   simplex
 ```
 
-The table appears five times, `0x405` (= 49 x 21) apart, and again around
-`0x2100e`.  Which copy the firmware treats as live is open.
+(An earlier reading of this file had the name first and the frequencies after it,
+which shifted every record by one and made the first record look like a 15-byte
+header.  `ra89r_codeplug.md` records how that was settled.)
+
+Also confirmed by the same source: band ranges at `8000` are three entries of
+`Rx lower, Rx upper, Tx lower, Tx upper` — `108-174 / 144-146` and
+`400-520 / 430-440` (10 Hz units, `0xFFFFFFFF` = disabled, and the `108` receiver
+floor is deliberate), the intro screen's two lines (`RETEVIS`, `RA89R`) at
+`8048`, the model `RA89_Plus` at `8096`, the general-settings block at `8224`,
+the scan-range corners at `8208`, the calibration window at `12288`, and the
+DTMF, 2-tone (`T-01`), 5-tone (`5T-01`) and contact (`BI6KSS`) tables.
+
+The `0x2100`-ish "second copy of the channel table" noted in an earlier pass is
+not a copy: it is the settings/DTMF region, and the `CH-0` strings in it are
+record fragments left behind by whatever wrote the image.
 
 ## Writing: what is safe, and how to validate it
 
@@ -135,7 +148,9 @@ bytes.  What neither can prove on its own is persistence across a power cycle:
 that is the remaining step, and `5` twice around a power-off does it.
 
 That exercises write-enable, program, read-back and erase without touching a byte
-the radio uses.
+the radio uses.  The blob grew a private payload when the port learned to keep
+its frequency channels (`port_storage.c`), so `5` now exercises two pages rather
+than one.
 
 ## Already settled / dead ends
 
@@ -145,19 +160,21 @@ the radio uses.
 | "the write test is pending" | **path implemented** — driver + console test + settings save are in; the power-cycle persistence check is what remains |
 | the flash accessors are `FUN_08017FE4`/`FUN_08018060` | **wrong** — those are the BK4815/BK4829 bit-bang primitives; the flash is `0x0B`/`0x02`/`0x20` on SPI1 |
 | the image is one flat codeplug | **no** — the codeplug is flat at `0x0`, but the firmware also keeps the journal at `0x20000` |
-| the glyph table is at `0x000D0000 + idx*32` | **not seen** — `0xD0000` is not a 16x16 glyph table in this dump (see open point 3) |
+| the glyph table is at `0x000D0000 + idx*32` | **right after all** — the stock reads it exactly that way (`0x0800EA40`), the CPS writes `Font_GB2312_16_16.DZK` at `0xD0000` (`Class1.cs:181-183`, `TongXun.cs:1880`), and the dump has data there.  The earlier "not seen" came from reading the index as GB2312 cell order; `0xD0000` starts with a run of zero bytes, not `0xFF` |
+| the channel records are name-first | **wrong** — name-last; see `ra89r_codeplug.md` |
+| `0x40000` is an index into 500 KB of blobs | **half right** — it is the voice-prompt index and its assets, which run to about `0x80800`; the **font** blob starts at `0xD0000`.  The data ends at `0x10FE40` |
 
 ## Open points
 
-1. Which channel table is live: the `7936` region, or the compact 21-byte
-   records.
-2. The journal's `valid` byte: five entries with `0x00` where the code wants
+1. The journal's `valid` byte: five entries with `0x00` where the code wants
    `0x11`.
-3. The blob area: the index at `0x40000` and the ~500 KB it points at (voice
-   prompts? fonts?).
-4. Whether the CPS writes the whole 2 MB or only the first 128 KB — this decides
+2. The blob area: what the stock's asset index covers exactly, and whether the
+   port ever needs any of it.
+3. Whether the CPS writes the whole 2 MB or only the ranges above — this decides
    how much of the chip a restore has to put back.
-5. The write test above has not been run on the radio yet.
+4. The write test above has not been run on the radio yet.
+5. **Resolved since:** which channel table is live (the 21-byte records from
+   offset 0, selected by the bitmap at 7936 — `ra89r_codeplug.md`).
 
 ## Using it
 

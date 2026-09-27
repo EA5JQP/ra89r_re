@@ -23,7 +23,7 @@
  * sends the register shifted left with the read flag in bit 0.
  *
  * The configuration is the stock's boot sequence (FUN_08006B78, 39 registers in
- * 40 writes) lifted from the image; ra89r_bk4829.md has it, the one derived
+ * 40 writes) lifted from the image; docs/ra89r_bk4829.md has it, the one derived
  * value in it (register 0x7d) and the differences against the K1's own
  * BK4819/BK4829 sequences.  Nothing here has run on the radio yet.
  */

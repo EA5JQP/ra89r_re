@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ra89r.py -- exact .icf codec for Retevis RA89R / TYT UV8800 / TH9000D firmware.
+tools/ra89r.py -- exact .icf codec for Retevis RA89R / TYT UV8800 / TH9000D firmware.
 
     icf_to_bin(icf_path, bin_path)      .icf  ->  flat firmware image
     bin_to_icf(bin_path, icf_path)      image ->  .icf the radio accepts
@@ -65,17 +65,17 @@ whole story.
 USAGE
 -----------------------------------------------------------------------------
 
-    python ra89r.py decode firmware.icf firmware.bin
+    python tools/ra89r.py decode firmware.icf firmware.bin
     # edit firmware.bin in place -- the size must not change
-    python ra89r.py encode firmware.bin patched.icf
+    python tools/ra89r.py encode firmware.bin patched.icf
 
-    python ra89r.py verify  firmware.icf      # check every record
-    python ra89r.py info    firmware.icf      # record table
+    python tools/ra89r.py verify  firmware.icf      # check every record
+    python tools/ra89r.py info    firmware.icf      # record table
 
 To flash a custom image with the stock bootloader, wrap it in records first
 (the bootloader programs .icf records verbatim):
 
-    python ra89r.py mkicf my_firmware.bin my_firmware.icf --base 0x08004000
+    python tools/ra89r.py mkicf my_firmware.bin my_firmware.icf --base 0x08004000
 
 decode writes a sidecar <bin>.meta holding each record's header, so encode can
 rebuild the file byte-for-byte. Without the sidecar, encode still works if you

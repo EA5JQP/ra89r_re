@@ -22,7 +22,7 @@
  *
  * `PA13`/`PA14` are the Cortex-M `SWDIO`/`SWCLK` pads: the stock gives the debug
  * port up for the indicator, so this driver has to configure them as GPIO before
- * it can drive them.  `ra89r_led.md` has the whole search, including the PA0/PA1
+ * it can drive them.  `docs/ra89r_led.md` has the whole search, including the PA0/PA1
  * attempt that produced nothing visible.
  */
 #ifndef DRIVER_LED_H

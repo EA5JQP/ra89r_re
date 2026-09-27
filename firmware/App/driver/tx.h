@@ -16,7 +16,7 @@
  *   0x40 = 0x3700 (microphone)      the gain field is a byte in bits 11:4
  *   pa_power(128)                   the PB14 bias PWM
  *
- * See `ra89r_rfpath.md` for the evidence and the register-by-register table.
+ * See `docs/ra89r_rfpath.md` for the evidence and the register-by-register table.
  */
 #ifndef DRIVER_TX_H
 #define DRIVER_TX_H
