@@ -474,7 +474,7 @@ void MR_LoadChannelAttributesFromFlash(uint16_t channel_id, ChannelAttributes_t*
 // Save channel attributes to Flash
 //
 // Port adaptation: this would write the stock's scan-allow bitmap, which is a
-// write into a stock region the port does not do yet (ra89r_codeplug.md), and
+// write into a stock region the port does not do yet (docs/ra89r_codeplug.md), and
 // the K1's 0x8000 is not ours to touch.  Refused, deliberately.
 void MR_SaveChannelAttributesToFlash(uint16_t channel_id, const ChannelAttributes_t* attributes)
 {

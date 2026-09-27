@@ -1,4 +1,4 @@
-/* The port's application state facade (see ra89r_port.md, stage 2).
+/* The port's application state facade (see docs/ra89r_port.md, stage 2).
  *
  * Everything the imported K1 screens read: the VFO objects their pointers point
  * at, the runtime flags, and the boot order the K1's own main() performs.

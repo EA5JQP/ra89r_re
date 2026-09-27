@@ -15,7 +15,7 @@
  * -- where the BK4829 sends the register unshifted with the read flag in bit 7.
  * Both then transfer one 16-bit word MSB first.
  *
- * Evidence (stock image, see ra89r_bk4815.md):
+ * Evidence (stock image, see docs/ra89r_bk4815.md):
  *   0x08021F78  write core: `(reg & 0x7f) << 1`, then len bytes, select PB13
  *   0x08018060  read:       `((reg & 0x7f) << 1) | 1`, then 16 bits in
  *   0x08009758  detect:     register 0 must read 0x4816

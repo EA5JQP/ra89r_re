@@ -143,18 +143,18 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMENT "generating ${PROJECT_NAME}.bin / .hex")
 
 # Wrap the image in .icf records so it can be flashed with the stock bootloader
-# (tools/ra89r_flash.py).  Same idea as `ra89r.py mkicf`, run automatically so
+# (tools/ra89r_flash.py).  Same idea as `tools/ra89r.py mkicf`, run automatically so
 # the two never drift apart.
 find_program(PYTHON3 python3)
 if(PYTHON3)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${PYTHON3} ${RA89R_REPO}/ra89r.py mkicf
+        COMMAND ${PYTHON3} ${RA89R_REPO}/tools/ra89r.py mkicf
                 ${PROJECT_NAME}.bin ${PROJECT_NAME}.icf --base 0x08004000
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "wrapping ${PROJECT_NAME}.bin into ${PROJECT_NAME}.icf (bootloader records)")
 else()
     message(WARNING "python3 not found: build ${PROJECT_NAME}.icf manually with "
-                    "`python3 ra89r.py mkicf ${PROJECT_NAME}.bin ${PROJECT_NAME}.icf`")
+                    "`python3 tools/ra89r.py mkicf ${PROJECT_NAME}.bin ${PROJECT_NAME}.icf`")
 endif()
 
 # firmware/tools/extract_fonts.py regenerates the stock font tables from a

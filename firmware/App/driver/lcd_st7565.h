@@ -1,6 +1,6 @@
 /* Bit-banged ST7565-family 128x64 LCD driver for the RA89R.
  *
- * Everything here mirrors the stock firmware (addresses in ra89r_lcd.md):
+ * Everything here mirrors the stock firmware (addresses in docs/ra89r_lcd.md):
  *   init sequence   0x08014F42      (replayed verbatim)
  *   byte writer     0x08015004      (CS low, 8 bits MSB first, SCLK pulse)
  *   command/data    0x08015080 / 0x080150A6 (A0/DC pin)

@@ -1,10 +1,10 @@
 /* Storage: the K1's PY25Q16 interface over this repo's SPI NOR driver, plus the
- * port's settings blob on the same chip (see ra89r_eeprom.md for the part and
+ * port's settings blob on the same chip (see docs/ra89r_eeprom.md for the part and
  * its layout).
  *
  * The K1 keeps its whole configuration in a flat blob that its eeprom/flash
  * layer reads and writes; the RA89R's stock codeplug is a *different* format
- * (decoded in ra89r_eeprom.md), and mapping it into the K1 structure is a
+ * (decoded in docs/ra89r_eeprom.md), and mapping it into the K1 structure is a
  * separate job.  Until that mapping exists, the port stores its own blob -- a
  * header and gEeprom -- in the last sector of the 2 MB part, which the dump of
  * this radio shows empty:
@@ -202,7 +202,7 @@ bool port_storage_save_settings(void)
     }
 }
 
-/* The write test ra89r_eeprom.md has been carrying as "pending": erase the
+/* The write test docs/ra89r_eeprom.md has been carrying as "pending": erase the
  * scratch sector, program a pattern, read it back.  Returns true when every byte
  * came back, which is the first thing to run on a radio whose write path has
  * never been exercised. */

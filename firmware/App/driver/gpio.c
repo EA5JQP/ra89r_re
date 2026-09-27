@@ -124,7 +124,7 @@ void GPIO_TurnOffBacklight(void)
  * transmit chain (driver/tx.c).  The K1's own PTT path -- CheckKeys() ->
  * GENERIC_Key_PTT -> FUNCTION_Transmit -> RADIO_SetTxParameters -- is the K1's
  * chip sequence, which on this radio still needs comparing against the stock
- * (ra89r_rfpath.md), so this stays false and CheckKeys() does not see PTT.
+ * (docs/ra89r_rfpath.md), so this stays false and CheckKeys() does not see PTT.
  * When that comparison lands, this returns the keypad read below. */
 bool GPIO_IsPttPressed(void)
 {

@@ -2,7 +2,7 @@
  *
  * The K1's settings.c reads and writes a flat blob in the K1's own EEPROM
  * format.  This radio's codeplug is a different format on a different chip
- * (ra89r_codeplug.md), so the *interface* is the K1's and the *layout* is the
+ * (docs/ra89r_codeplug.md), so the *interface* is the K1's and the *layout* is the
  * stock's: every function below is the K1's contract, implemented against
  * port_codeplug.c for the stock's regions and against the port's own blob
  * (port_storage.c) for the values the stock has no place for.
@@ -166,8 +166,8 @@ void SETTINGS_InitEEPROM(void)
 void SETTINGS_LoadCalibration(void)
 {
     /* The stock's calibration lives in the codeplug's calibration block
-     * (ra89r_codeplug.md) and is not mapped yet.  The RF driver runs on the
-     * values measured on this radio (ra89r_bk4829.md), so there is nothing to
+     * (docs/ra89r_codeplug.md) and is not mapped yet.  The RF driver runs on the
+     * values measured on this radio (docs/ra89r_bk4829.md), so there is nothing to
      * load here -- and nothing that may overwrite the stock's calibration. */
 }
 
@@ -247,7 +247,7 @@ void SETTINGS_FetchChannelName(char *s, const uint16_t channel)
 /* ---------------------------------------------------------------------------
  * Writing.  The stock's regions stay untouched; the port's own state goes to
  * its blob.  A channel the user edits is a write into the stock's codeplug and
- * is not implemented yet (ra89r_codeplug.md, "Writing").
+ * is not implemented yet (docs/ra89r_codeplug.md, "Writing").
  * ------------------------------------------------------------------------- */
 
 /* A deferred save has been asked for (see SETTINGS_SaveVfoIndices). */
@@ -347,7 +347,7 @@ void SETTINGS_FactoryReset(bool bIsAll)
 void SETTINGS_SaveBatteryCalibration(const uint16_t *batteryCalibration)
 {
     (void)batteryCalibration;
-    /* The gauge chip has not answered yet (ra89r_battery.md); there is nothing
+    /* The gauge chip has not answered yet (docs/ra89r_battery.md); there is nothing
      * to calibrate against. */
 }
 

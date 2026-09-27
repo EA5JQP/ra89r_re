@@ -1,7 +1,7 @@
 /* Host stand-in for the status LED driver.
  *
  * `driver/bk4819.c` mirrors the chip's two GPIO outputs onto the MCU LED
- * (ra89r_led.md), so linking it on a PC drags in `driver/led.c` -- which needs
+ * (docs/ra89r_led.md), so linking it on a PC drags in `driver/led.c` -- which needs
  * the target's GPIO registers.  The tools that only test the RF register layers
  * (tools/test_rf.c) link these two no-ops instead; the preview tools that draw
  * screens link the real driver.

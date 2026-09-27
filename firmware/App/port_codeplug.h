@@ -1,12 +1,12 @@
 /* The RA89R codeplug: the stock's own flat layout in the external SPI NOR,
- * decoded for the K1 application (see ra89r_codeplug.md).
+ * decoded for the K1 application (see docs/ra89r_codeplug.md).
  *
  * The port keeps the K1's RAM structures (gEeprom, VFO_Info_t) and its
  * SETTINGS_* interface, but the *bytes on the chip* are the stock's, not the
  * K1's.  Everything that knows an RA89R offset lives here, so the imported K1
  * code never learns about them.
  *
- * Compatibility rule (ra89r_port.md): the stock's regions are read, never
+ * Compatibility rule (docs/ra89r_port.md): the stock's regions are read, never
  * written, except the channel record a user explicitly edits -- and that is not
  * implemented yet, so today this module is read-only.
  */
@@ -20,7 +20,7 @@
 #include "settings.h"
 
 /* Where each table sits in the first 16 KB of the chip.  These are the CPS's
- * own constants (Class1.cs) verified against the dump; ra89r_codeplug.md has
+ * own constants (Class1.cs) verified against the dump; docs/ra89r_codeplug.md has
  * the evidence for every one. */
 #define RA89R_CP_CODEPLUG_SIZE   0x4000u
 
@@ -67,7 +67,7 @@ typedef struct {
 
 /* Flags A/B/C, named so the callers do not carry the bit numbers around.
  * The label each bit carries in the CPS's channel dialog is in
- * ra89r_codeplug.md; the two the port maps are TX inhibit and frequency
+ * docs/ra89r_codeplug.md; the two the port maps are TX inhibit and frequency
  * reverse, which are exactly the K1's TX_LOCK and FrequencyReverse. */
 #define RA89R_CP_FLAGA_TX_INHIBIT 0x01u
 #define RA89R_CP_FLAGA_FREQ_REV   0x02u

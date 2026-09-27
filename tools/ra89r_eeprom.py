@@ -8,7 +8,7 @@ The firmware's console carries two commands for this:
             EEPROM DUMP <size>\\n ...<size bytes>... \\nEEPROM END <checksum>\\n
 
 This tool drives that over the console and saves the bytes, so the chip's content
-can be inspected offline (the CPS offset map is in ra89r_findings.md).
+can be inspected offline (the CPS offset map is in docs/ra89r_findings.md).
 
     python3 tools/ra89r_eeprom.py --port /dev/ttyUSB0 id
     python3 tools/ra89r_eeprom.py --port /dev/ttyUSB0 dump eeprom.bin

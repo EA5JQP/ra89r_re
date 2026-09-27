@@ -4,7 +4,7 @@ ra89r_flash.py -- flash an image into an RA89R over its programming port.
 
 Uses the stock bootloader's serial protocol, reverse engineered from
 `bootloader.bin` (0x08000000-0x08003FFF) and the CPS updater
-`Radio_UpData_All.exe` -- see `ra89r_bootloader.md` for the evidence.
+`Radio_UpData_All.exe` -- see `docs/ra89r_bootloader.md` for the evidence.
 
 Protocol shape (all frames are ``FE FE EE EF <cmd> <payload> FD``):
 
@@ -36,7 +36,7 @@ the request and then starts the image, so the radio comes back with 0xFF either
 way -- but it changes nothing for the worse and stays the default;
 `--no-valid-marker` skips it if the extra update-mode trip is unwanted.
 
-Speed notes (see ra89r_bootloader.md section 5):
+Speed notes (see docs/ra89r_bootloader.md section 5):
 
   * baud is the main lever -- the bootloader's table reaches 1.024 Mbaud, but it
     runs on the 8 MHz reset clock without OVER8, so ~384 kbaud is the practical
@@ -56,12 +56,10 @@ Usage:
 """
 
 import argparse
-import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import ra89r  # noqa: E402  (the codec lives in the repository root)
+import ra89r  # the codec is a sibling in this directory
 
 PREAMBLE = bytes([0xFE, 0xFE, 0xEE, 0xEF])
 TERMINATOR = 0xFD
@@ -619,7 +617,7 @@ def main(argv=None):
     p.set_defaults(fn=cmd_probe)
 
     f = sub.add_parser("flash", help="program an .icf image")
-    f.add_argument("icf", help=".icf produced by ra89r.py mkicf or the stock CPS")
+    f.add_argument("icf", help=".icf produced by tools/ra89r.py mkicf or the stock CPS")
     f.set_defaults(fn=cmd_flash)
 
     args = ap.parse_args(argv)

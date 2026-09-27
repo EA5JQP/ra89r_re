@@ -112,7 +112,7 @@ void spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len)
 /* ---------------------------------------------------------------------------
  * Writing.
  *
- * The read path above is validated on the radio (ra89r_eeprom.md); this half is
+ * The read path above is validated on the radio (docs/ra89r_eeprom.md); this half is
  * new and is what the pending write test in that document exercises, so it stays
  * conservative: explicit write-enable before every erase or program, and a
  * status-register poll for WIP after each one.  A program never crosses a page

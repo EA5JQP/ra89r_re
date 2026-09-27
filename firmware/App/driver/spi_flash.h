@@ -2,7 +2,7 @@
  *
  * What the CPS calls the EEPROM (channels, channel names, band ranges, settings,
  * DTMF/2-tone/5-tone tables, voice prompts) is this chip, not the MCU's flash:
- * see ra89r_findings.md, "CPS (programming software) -- band ranges are
+ * see docs/ra89r_findings.md, "CPS (programming software) -- band ranges are
  * CPS/EEPROM data" for the offset map.
  *
  * It is a Puya PY25Q16HB -- 16 Mbit / 2 MB, per a photo of the board; the JEDEC

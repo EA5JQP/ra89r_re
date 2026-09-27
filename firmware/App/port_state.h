@@ -1,4 +1,4 @@
-/* The port's application state facade (see port_state.c and ra89r_port.md). */
+/* The port's application state facade (see port_state.c and docs/ra89r_port.md). */
 #ifndef APP_PORT_STATE_H
 #define APP_PORT_STATE_H
 

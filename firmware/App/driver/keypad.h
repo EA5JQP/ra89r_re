@@ -6,7 +6,7 @@
  * six ADC channels, stores a per-key hold counter and posts the key's code at
  * the 4th in-window sample (0x08005724) -- and the windows below are its own
  * calibration, copied verbatim, so a reading can be compared with the stock
- * decode directly (see ra89r_keypad.md).
+ * decode directly (see docs/ra89r_keypad.md).
  *
  * This module only *reads*: the ADC samples the ladder, nothing drives or pulls
  * those pins (that is what warmed the radio up while a pin probe held them up).
@@ -46,7 +46,7 @@ typedef enum {
 } KEY_Code_t;
 
 /* The stock application's own numbering, which keypad_stock_code() reports so a
- * reading can be matched against the decode in ra89r_findings.md: 10..19 are
+ * reading can be matched against the decode in docs/ra89r_findings.md: 10..19 are
  * digits 0..9 (digit = code - 10), 0x14..0x19 the function keys in their short
  * form, 4..9 the programmable keys, and 100 the key that pulls PA2 fully low. */
 #define KEYPAD_NONE (-1)

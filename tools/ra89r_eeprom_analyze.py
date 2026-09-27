@@ -6,7 +6,7 @@
 
 The chip is a 2 MB Puya P25Q16.  What the CPS calls the EEPROM -- channels,
 names, band ranges, settings, tone tables -- lives in the first few tens of KB;
-the landmarks below come from the old CPS decompilation (see ra89r_findings.md,
+the landmarks below come from the old CPS decompilation (see docs/ra89r_findings.md,
 "CPS (programming software)"), which was never re-verified, so treat them as
 places to look, not as a settled layout.
 
@@ -19,7 +19,7 @@ import re
 import sys
 from collections import Counter
 
-# Offsets the CPS uses, per ra89r_findings.md.  Names are the doc's.
+# Offsets the CPS uses, per docs/ra89r_findings.md.  Names are the doc's.
 LANDMARKS = [
     ("channel names", 4416),
     ("channels", 7936),

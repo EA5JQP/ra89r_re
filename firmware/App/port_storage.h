@@ -1,5 +1,5 @@
 /* Storage: the external SPI NOR flash behind the K1's PY25Q16 interface, and
- * the port's settings blob on it (see port_storage.c and ra89r_eeprom.md). */
+ * the port's settings blob on it (see port_storage.c and docs/ra89r_eeprom.md). */
 #ifndef APP_PORT_STORAGE_H
 #define APP_PORT_STORAGE_H
 

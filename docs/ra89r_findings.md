@@ -7,7 +7,7 @@ same container and baseline (`0x66`, 72 records from `0x08004000`), 146,064
 bytes, 83% of bytes differing from the RA89R V49 image at equal offsets (they are
 different builds, so compare by content, not by offset).  Useful as a
 cross-check for any subsystem when the two models disagree.
-Decoded with `ra89r.py` -> `work/FIRMWARE_RA89R_20260203_V49.bin`
+Decoded with `tools/ra89r.py` -> `work/FIRMWARE_RA89R_20260203_V49.bin`
 (72 records, baseline `0x66`, 145,772 bytes, flash `0x08004000..0x0802796C`).
 Analysis: `tools/ra89r_analyze.py` -> `work/analysis/{listing,functions,strings,
 peripherals,datarefs}.txt|csv`.
@@ -23,7 +23,7 @@ out wrongly, so every address in the earlier revision is shifted. See
 | block | identification | evidence |
 |---|---|---|
 | MCU | **Puya PY32F403** (Cortex-M4F), 384 KB flash `0x08000000`, 64 KB SRAM `0x20000000`, `PY32F403xD` register map | vendor SDK + datasheet in `PY32F4xx_Firmware/`, `PY32F403_Datasheet_V1.8.pdf`; `FLASH_END = 0x0805FFFF` in `py32f403xD.h` |
-| Bootloader | 16 KB at `0x08000000`, dumped separately (`bootloader.bin`), SP `0x20003190`, reset `0x08000145`, contains the `.icf` record validator at `0x08000BE0` | `ra89r.py` docstring; `bootloader.bin` |
+| Bootloader | 16 KB at `0x08000000`, dumped separately (`bootloader.bin`), SP `0x20003190`, reset `0x08000145`, contains the `.icf` record validator at `0x08000BE0` | `tools/ra89r.py` docstring; `bootloader.bin` |
 | RF transceiver | **BK4815 / BK4829** (both supported by this build) | UI/debug strings `4815 Error`, `4829 Error` at `0x080270F4`ff; the four-byte register frame below matches the BK481x 3-wire write |
 | External flash | **Puya PY25Q16HB**, 16 Mbit / 2 MB SPI NOR, on SPI1's remapped pins (CS `PA15`, SCK `PB3`, MISO `PB4`, MOSI `PB5`) | read it over the console: `0x90` answers `0x8514`, JEDEC `0x852015`; the part number is also read off a photo of the board. The stock's own check (`0x08018C7C` then `0x08018BA0`) compares against `0xEF16` — a Winbond 32 Mbit id — so it **fails on this board** |
 | Display | **128x64 mono dot matrix, ST7565-family controller, bit-banged 4-wire bus** | see `ra89r_lcd.md` |
@@ -53,7 +53,7 @@ Verified examples (payload found by content match):
 Older analysis is therefore still useful for its *conclusions*, but addresses must
 be re-derived from the current decode.
 
-## `.icf` container (verified, authoritative: `ra89r.py`)
+## `.icf` container (verified, authoritative: `tools/ra89r.py`)
 
 One CR-separated ASCII-hex record per line: `[6-byte header][payload][1 check]`.
 Header bytes are XORed with a per-family baseline (`0x66` RA89R, `0x88` UV8800,
@@ -67,8 +67,8 @@ The earlier revision described a "v3/v4" per-section key heuristic
 (`key = h[4] ^ (h[3] ^ 0x66)`). That heuristic reproduces the true key for 71 of
 this file's 72 records, which is why the old decodes looked mostly right, but it
 is not the format: it fails on the short final record and does not generalise
-(`ra89r.py` is validated on 616 records from nine stock files across three
-radios). There is no "v3/v4" question any more — use `ra89r.py`.
+(`tools/ra89r.py` is validated on 616 records from nine stock files across three
+radios). There is no "v3/v4" question any more — use `tools/ra89r.py`.
 
 ## Address map of the current decode
 
@@ -282,11 +282,11 @@ the link needs the AT-command layer read, not a pointer search.
 ### Loading the current decode into Ghidra
 
 The Ghidra project in `~/Repos/h8_re` holds programs laid out by the *old*
-decoder, so decompiling them gives shifted addresses.  Load the `ra89r.py`
+decoder, so decompiling them gives shifted addresses.  Load the `tools/ra89r.py`
 decode instead:
 
 ```sh
-python3 ra89r.py decode FIRMWARE_RA89R_20260203_V49.icf work/FIRMWARE_RA89R_20260203_V49.bin
+python3 tools/ra89r.py decode FIRMWARE_RA89R_20260203_V49.icf work/FIRMWARE_RA89R_20260203_V49.bin
 cp work/FIRMWARE_RA89R_20260203_V49.bin work/stock_v49_raw.bin
 ```
 
@@ -368,7 +368,7 @@ From the earlier revision's CPS decompilation (sources `cps_decompiled/` in
 | 5 | `0x0800d9a2` is data, real helper `FUN_0800d9ba`/`FUN_0800db9c` | **renamed/corrected** -> `0x0801199C` / `0x08011B74` (see GPIO table) |
 | 6 | `FUN_0801c6d0`/`FUN_080064f8` = DMA/streaming, `0x40020080`/`0x40020408` = DMA1_CH7/DMA2_CH1 | **consistent**: those are DMA register addresses; the DMA layer is now located at `0x08011154`/`0x080111D8`/`0x080115FC` and is used by the SPI-flash driver |
 | 7 | `FUN_0800b08c` degenerate | unchanged region, not re-checked |
-| 8 | "v3 vs v4 decode" story | **superseded** — the container format is exact (`ra89r.py`); only the *layout* of the old images was wrong |
+| 8 | "v3 vs v4 decode" story | **superseded** — the container format is exact (`tools/ra89r.py`); only the *layout* of the old images was wrong |
 | 9 | 300 MHz absent from any encoding | **confirmed** (no 300 MHz constant in the current decode) |
 
 ## Open points
@@ -408,14 +408,14 @@ From the earlier revision's CPS decompilation (sources `cps_decompiled/` in
    are still open.
 8. ~~Bootloader upload protocol~~ — **done**: see `ra89r_bootloader.md` (frames,
    commands, baud table, record handling) with `tools/ra89r_flash.py` and
-   `ra89r.py mkicf` as the working host-side implementation.  Remaining unknowns
+   `tools/ra89r.py mkicf` as the working host-side implementation.  Remaining unknowns
    are listed there (update-mode key combination, `E1`/`E3` semantics).
 
 ## Reproduce
 
 ```sh
-python3 ra89r.py verify FIRMWARE_RA89R_20260203_V49.icf     # baseline 0x66, all 72 records valid
-python3 ra89r.py mkicf my_firmware.bin my_firmware.icf # wrap an image for the bootloader
-python3 ra89r.py decode FIRMWARE_RA89R_20260203_V49.icf work/FIRMWARE_RA89R_20260203_V49.bin
+python3 tools/ra89r.py verify FIRMWARE_RA89R_20260203_V49.icf     # baseline 0x66, all 72 records valid
+python3 tools/ra89r.py mkicf my_firmware.bin my_firmware.icf # wrap an image for the bootloader
+python3 tools/ra89r.py decode FIRMWARE_RA89R_20260203_V49.icf work/FIRMWARE_RA89R_20260203_V49.bin
 python3 tools/ra89r_analyze.py work/FIRMWARE_RA89R_20260203_V49.bin
 ```

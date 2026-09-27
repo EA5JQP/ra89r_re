@@ -16,7 +16,7 @@
  * so 1850 with the K1's own 1900 fallback calibration reads as 7.40 V.
  *
  * Where the real number has to come from: this radio's gauge chip, whose
- * protocol is decoded but which never answers us (ra89r_battery.md), or the
+ * protocol is decoded but which never answers us (docs/ra89r_battery.md), or the
  * stock's own battery path.  Until one of those lands, the screens show a fixed
  * pack -- which is at least honest about being a placeholder.
  */

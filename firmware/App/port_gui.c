@@ -66,7 +66,7 @@ static uint32_t port_gui_step(void)
 }
 
 /* PTT: the radio's own measured transmit chain (driver/tx.c), not the K1's
- * chip sequence -- see ra89r_rfpath.md.  The K1 state is set too, so the
+ * chip sequence -- see docs/ra89r_rfpath.md.  The K1 state is set too, so the
  * screens show TX and the status line follows. */
 static void port_gui_ptt(bool down)
 {

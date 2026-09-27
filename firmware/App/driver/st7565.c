@@ -16,7 +16,7 @@
  * limitations under the License.
  *
  * ---------------------------------------------------------------------------
- * RA89R adaptation (see NOTICE and ra89r_port.md):
+ * RA89R adaptation (see NOTICE and docs/ra89r_port.md):
  *
  *   * the API, the buffer geometry and the page mapping are the K1's: the
  *     status line is panel page 0, gFrameBuffer[0..6] are pages 1..7, and the
@@ -26,7 +26,7 @@
  *     which mirrors the stock firmware's byte writer) instead of the K1's
  *     hardware SPI, so CS/A0/SCLK handling stays in one place;
  *   * the init sequence is lcd_init(), i.e. the bootloader-proven standard
- *     ST7565 sequence, which is known to drive this glass (ra89r_lcd.md).
+ *     ST7565 sequence, which is known to drive this glass (docs/ra89r_lcd.md).
  *
  * Define ST7565_HOST_TEST to build the buffer half only, with the panel calls
  * compiled out (firmware/tools/preview_k1.c renders layout on a PC).

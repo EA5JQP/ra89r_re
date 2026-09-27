@@ -33,7 +33,7 @@
  *     the driver does not reach into an application settings struct.
  *
  * Register `0x00` is the identity, so `BK4819_Init` doubles as the presence
- * check the stock makes: it must read back 0x4829 (see ra89r_bk4829.md).
+ * check the stock makes: it must read back 0x4829 (see docs/ra89r_bk4829.md).
  *
  * Copyright for the register sequences below remains with the K1 authors; this
  * tree carries no license file of its own, which is worth fixing before the port
@@ -379,7 +379,7 @@ void BK4819_ToggleGpioOut(BK4819_GPIO_PIN_t Pin, bool bSet)
 
     /* Port addition (see NOTICE): the K1 firmware lights its status LED through
      * these two chip outputs.  On the RA89R the LED is on the MCU (PA13 red /
-     * PA14 green, measured -- ra89r_led.md), so the two are mirrored here and
+     * PA14 green, measured -- docs/ra89r_led.md), so the two are mirrored here and
      * the chip write above stays as it was. */
     if (Pin == BK4819_GPIO5_PIN1_RED)
         led_set(bSet ? LED_RED : LED_OFF);
@@ -1057,7 +1057,7 @@ void BK4819_ExitTxMute(void)
      * stock's own transmit path writes 0x3B20 in three places, the K1's
      * bk4819.c agrees, and a muted TX audio path is a carrier that carries
      * nothing.  Measured -- with it the microphone and the tone are audible on
-     * a second receiver; see ra89r_rfpath.md. */
+     * a second receiver; see docs/ra89r_rfpath.md. */
     BK4819_WriteRegister(BK4819_REG_50, 0x3B20);
 }
 

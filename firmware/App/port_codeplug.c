@@ -1,9 +1,9 @@
-/* The RA89R codeplug decoder -- see port_codeplug.h and ra89r_codeplug.md.
+/* The RA89R codeplug decoder -- see port_codeplug.h and docs/ra89r_codeplug.md.
  *
  * Read-only: every function here reads the chip and never writes it.  The one
  * write path the port will need (a channel the user edited) is not implemented,
  * because the stock's journal is how that has to be done and the journal's
- * `valid` byte is still an open question (ra89r_eeprom.md).
+ * `valid` byte is still an open question (docs/ra89r_eeprom.md).
  */
 #include <string.h>
 
@@ -321,7 +321,7 @@ void port_codeplug_save_attributes(uint16_t channel, uint16_t value)
      * the middle of the stock's channel records, so writing it would destroy
      * the codeplug.  The stock's own scan-allow bitmap is what this would have
      * to change, and that is a write into a stock region the port does not do
-     * yet (ra89r_codeplug.md, "Writing"). */
+     * yet (docs/ra89r_codeplug.md, "Writing"). */
     (void)channel;
     (void)value;
 }
@@ -502,7 +502,7 @@ bool port_codeplug_freq_restore(const uint8_t *src, size_t size)
 
 void port_codeplug_shared_settings(void)
 {
-    /* Not mapped yet: ra89r_codeplug.md records what the block contains and
+    /* Not mapped yet: docs/ra89r_codeplug.md records what the block contains and
      * which of it the K1 has an equivalent for.  Until then the port's own
      * defaults and its blob decide, and the stock's block is left alone. */
 }

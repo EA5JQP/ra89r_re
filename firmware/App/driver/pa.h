@@ -26,7 +26,7 @@
  * PA0 = 0`); only the chip's PA enable and `0x36` differ.
  *
  * Values measured on the radio: `0x36 = 0x8822`, PWM compare 128 -> voice heard
- * on a second receiver.  See `ra89r_rfpath.md`.
+ * on a second receiver.  See `docs/ra89r_rfpath.md`.
  */
 #ifndef DRIVER_PA_H
 #define DRIVER_PA_H
