@@ -417,26 +417,29 @@ static void cp_freq_unpack(const uint8_t *in, ChannelScanDisplayInfo_t *info)
     }
 }
 
+static void cp_freq_default_one(unsigned band, unsigned vfo)
+{
+    ChannelScanDisplayInfo_t info;
+
+    memset(&info, 0, sizeof info);
+    info.rx.Frequency = frequencyBandTable[band].lower;
+    info.tx.Frequency = info.rx.Frequency;
+    info.modulation = MODULATION_FM;
+    info.stepSetting = STEP_12_5kHz;
+    info.stepFrequency = gStepFrequencyTable[STEP_12_5kHz];
+    info.outputPower = OUTPUT_POWER_HIGH;
+    info.txLock = 0;
+    cp_freq_pack(&info, cp_freq[band][vfo]);
+}
+
 static void cp_freq_defaults(void)
 {
     unsigned band;
     unsigned vfo;
 
-    for (band = 0; band < CP_FREQ_BANDS; band++) {
-        for (vfo = 0; vfo < CP_FREQ_VFOS; vfo++) {
-            ChannelScanDisplayInfo_t info;
-
-            memset(&info, 0, sizeof info);
-            info.rx.Frequency = frequencyBandTable[band].lower;
-            info.tx.Frequency = info.rx.Frequency;
-            info.modulation = MODULATION_FM;
-            info.stepSetting = STEP_12_5kHz;
-            info.stepFrequency = gStepFrequencyTable[STEP_12_5kHz];
-            info.outputPower = OUTPUT_POWER_HIGH;
-            info.txLock = 0;
-            cp_freq_pack(&info, cp_freq[band][vfo]);
-        }
-    }
+    for (band = 0; band < CP_FREQ_BANDS; band++)
+        for (vfo = 0; vfo < CP_FREQ_VFOS; vfo++)
+            cp_freq_default_one(band, vfo);
 }
 
 bool port_codeplug_freq_get(uint16_t channel, uint8_t vfo, ChannelScanDisplayInfo_t *info)
@@ -470,10 +473,26 @@ void port_codeplug_freq_snapshot(uint8_t *dest, size_t size)
 
 bool port_codeplug_freq_restore(const uint8_t *src, size_t size)
 {
+    unsigned band;
+    unsigned vfo;
+
     if (src == 0 || size < sizeof cp_freq)
         return false;
 
     memcpy(cp_freq, src, sizeof cp_freq);
+
+    /* A stored entry with a zero frequency is not an entry: it decodes as 0 Hz,
+     * which RADIO_ConfigureChannel then clamps into band 1 -- 18 MHz in
+     * frequency mode, which is what a settings blob saved before the defaults
+     * existed produced.  Keep the band's own default instead. */
+    for (band = 0; band < CP_FREQ_BANDS; band++) {
+        for (vfo = 0; vfo < CP_FREQ_VFOS; vfo++) {
+            const uint8_t *e = cp_freq[band][vfo];
+
+            if ((e[0] | e[1] | e[2] | e[3]) == 0u)
+                cp_freq_default_one(band, vfo);
+        }
+    }
     return true;
 }
 
