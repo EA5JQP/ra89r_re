@@ -58,6 +58,10 @@ CPS sources) lives outside the workspace (see "External inputs").
   semantics and clock/DMA numbering; do not edit it, and do not add build output to it.
 - `PY32F403_Datasheet_V1.8.pdf` and `PY32F4xx_Firmware/Documentation/PY32F403_User_Manual.chm`
   — register/datasheet reference.
+- `LICENSE` — **Apache License 2.0**, the same license as the UV-K1/K5V3 (F4HWN)
+  project this firmware is ported from, which carries DualTachyon's original
+  UV-K5 copyright.  Imported files keep their own copyright headers; the
+  per-file attribution list lives in `NOTICE` (on `port`).
 
 ## Verified commands
 
