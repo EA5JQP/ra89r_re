@@ -15,6 +15,26 @@ static uint16_t s_compare;
 
 static bool s_uhf;
 
+/* Which chip-side front-end selection to apply.
+ *
+ * 0 is the state this board was validated in: PA0 per band, and the chip's GPIO
+ * register left exactly as BK4819_Init() wrote it (0x9000 -- neither of the two
+ * path bits set).  It is the default again because reception in *both* bands
+ * stopped as soon as this port began setting those bits: RX used to work with
+ * them clear, so on this board they are not the benign LNA selects the K1's pin
+ * names suggest.  The console 'f' command cycles the possibilities so the
+ * working one is found on the radio rather than guessed at. */
+enum {
+    PA_CHIP_PATH_LEAVE = 0,   /* as BK4819_Init() left it -- validated */
+    PA_CHIP_PATH_VHF,         /* 0x33 bit 0x04 set, bit 0x08 clear */
+    PA_CHIP_PATH_UHF,         /* 0x33 bit 0x08 set, bit 0x04 clear */
+    PA_CHIP_PATH_NONE,        /* both cleared */
+    PA_CHIP_PATH_AUTO,        /* by frequency (the K1's rule) */
+    PA_CHIP_PATH_MODES
+};
+
+static uint8_t s_chip_path = PA_CHIP_PATH_LEAVE;
+
 bool pa_is_uhf(uint32_t freq_10hz)
 {
     return freq_10hz >= PA_VHF_UHF_SPLIT;
@@ -33,14 +53,51 @@ bool pa_band_is_uhf(void)
     return s_uhf;
 }
 
+uint8_t pa_chip_path_mode(void)
+{
+    return s_chip_path;
+}
+
+void pa_set_chip_path_mode(uint8_t mode)
+{
+    if (mode < PA_CHIP_PATH_MODES)
+        s_chip_path = mode;
+}
+
+uint16_t pa_chip_path_reg(void)
+{
+    return BK4819_ReadRegister(BK4819_REG_33);
+}
+
+static void pa_apply_chip_path(void)
+{
+    switch (s_chip_path) {
+        case PA_CHIP_PATH_VHF:
+            BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, true);
+            BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, false);
+            break;
+        case PA_CHIP_PATH_UHF:
+            BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, false);
+            BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, true);
+            break;
+        case PA_CHIP_PATH_NONE:
+            BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, false);
+            BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, false);
+            break;
+        case PA_CHIP_PATH_AUTO:
+            BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, !s_uhf);
+            BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, s_uhf);
+            break;
+        default:                /* LEAVE: touch nothing */
+            break;
+    }
+}
+
 void pa_select_band(uint32_t freq_10hz)
 {
     s_uhf = pa_is_uhf(freq_10hz);
     pa_band_path();
-
-    /* The chip's own front-end path bits -- 0x33 bit 0x08 for UHF, bit 0x04 for
-     * VHF.  The K1's helper drives exactly those two from the frequency. */
-    BK4819_PickRXFilterPathBasedOnFrequency(freq_10hz);
+    pa_apply_chip_path();
 }
 
 void pa_init(void)

@@ -203,6 +203,7 @@ static void print_help(void)
     uart_puts("\nthe K1 GUI owns the panel; these are console diagnostics\n"
               "          h help   i diagnostics   d dump screen as ASCII\n"
               "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
+              "          F cycle the VHF/UHF front-end selection (find what receives)\n"
               "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
               "          v/V contrast   L status led cycle (PA13/PA14)\n"
@@ -999,6 +1000,31 @@ int main(void)
             case 'P':
                 print_profile();
                 break;
+            case 'F': {
+                /* Find the front-end setting this board receives with.  RX works
+                 * with the chip's path bits clear, so the K1's pin semantics are
+                 * not this part's; cycle and listen (or watch 'S'). */
+                static const char *const names[] = {
+                    "leave the register as BK4819_Init() left it (default)",
+                    "VHF bit: 0x33 |= 0x04, 0x08 clear",
+                    "UHF bit: 0x33 |= 0x08, 0x04 clear",
+                    "both cleared",
+                    "auto by frequency (the K1's rule)",
+                };
+                uint8_t mode = (uint8_t)((pa_chip_path_mode() + 1u) % 5u);
+                uint32_t freq = gRxVfo ? gRxVfo->pRX->Frequency : 0u;
+
+                pa_set_chip_path_mode(mode);
+                if (freq)
+                    pa_select_band(freq);
+                uart_printf("\nfront end: mode %u -- %s\n", (unsigned)mode, names[mode]);
+                uart_printf("  PA0 %s, reg 0x33 = 0x%04X (mode 0 leaves it at 0x9000)\n",
+                            pa_band_is_uhf() ? "high" : "low",
+                            (unsigned)pa_chip_path_reg());
+                uart_puts("  listen (or 'S' with a carrier) and press 'f' for the next;"
+                          " note which mode receives\n");
+                break;
+            }
             case '0':
                 /* Hand the panel back to the bring-up screens (and to the
                  * GUI again on the next press). */

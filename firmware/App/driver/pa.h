@@ -79,6 +79,21 @@ void pa_select_band(uint32_t freq_10hz);
  * console. */
 bool pa_band_is_uhf(void);
 
+/* Which chip-side front-end selection is applied, and how to change it.  The
+ * console 'f' command cycles these to find the setting this board actually
+ * receives with; the register is read back for the log.  See pa.c for why the
+ * default is "leave the register alone". */
+uint8_t  pa_chip_path_mode(void);
+void     pa_set_chip_path_mode(uint8_t mode);
+uint16_t pa_chip_path_reg(void);
+
+/* Which chip-side front-end selection is applied, and how to change it: the
+ * console 'f' command cycles these to find the one this board actually receives
+ * with (see pa.c).  The register's value is read back for the log. */
+uint8_t  pa_chip_path_mode(void);
+void     pa_set_chip_path_mode(uint8_t mode);
+uint16_t pa_chip_path_reg(void);
+
 /* Chip side, transmit: PA enable on (`0x33 = 0x0020`, the stock's clean
  * transmit select) and `0x36 = PA_REG36_ON`. */
 void pa_tx_enable(void);
