@@ -20,7 +20,7 @@
 
 #include "driver/fonts.h"
 
-/* Panel geometry (see ../ra89r_lcd.md): a 128x64 monochrome glass behind an
+/* Panel geometry (see docs/ra89r_lcd.md): a 128x64 monochrome glass behind an
  * ST7565-family controller, addressed as 8 pages x 128 columns.  The stock
  * firmware adds 4 to the column address before writing it (0x0800F698) and the
  * open-source UV-K1/K5V3 ST7565 driver does the same; if a bring-up shows the
