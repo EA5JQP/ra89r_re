@@ -5,7 +5,7 @@
  * The peripheral instances (GPIOA, USART1) live in board.h.
  *
  * All values come from reverse engineering the stock firmware -- see
- * ../ra89r_findings.md and ../ra89r_lcd.md.
+ * ../../docs/ra89r_findings.md and ../../docs/ra89r_lcd.md.
  */
 #ifndef APP_BOARD_PINS_H
 #define APP_BOARD_PINS_H

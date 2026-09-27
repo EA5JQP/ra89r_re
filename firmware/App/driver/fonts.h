@@ -1,4 +1,4 @@
-/* Bitmap fonts taken from the stock RA89R firmware (see ra89r_lcd.md).
+/* Bitmap fonts taken from the stock RA89R firmware (see docs/ra89r_lcd.md).
  * Layout of both fonts: column-major and page-major, i.e. a glyph is stored
  * as N bytes per 8-pixel page, each byte being one column of that page with
  * bit 0 = the topmost pixel.  That is exactly the order the panel wants, so

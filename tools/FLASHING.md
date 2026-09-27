@@ -1,7 +1,7 @@
 # Flashing the RA89R — step by step
 
 Everything below is in this repository and needs no Windows software.  The
-protocol is documented in `../ra89r_bootloader.md`.
+protocol is documented in `../docs/ra89r_bootloader.md`.
 
 **What gets written:** the application records plus one byte at `0x0805FFF0`
 (the bootloader's "application is valid" marker — without it the radio reboots
@@ -16,7 +16,7 @@ therefore recoverable: re-flash the stock image.
 
 * The radio, plus the **Kenwood-style programming cable** (the one the CPS uses).
   **USB-C cannot flash this radio** — it goes to the MCU's USB peripheral and
-  nothing in the stock firmware enables it (`../ra89r_bootloader.md` §1).
+  nothing in the stock firmware enables it (`../docs/ra89r_bootloader.md` §1).
 * A 3.3 V USB-serial cable/adapter (CH340/FTDI/CP210x all work).  The radio's
   UART is 3.3 V; do not feed 5 V into the jack.
 
@@ -32,31 +32,29 @@ python3 + pyserial
 
 If pyserial is missing: `pip install pyserial` (or `python3-pyserial`).
 
-## 3. Build (produces the flashable image)
+## 3. Get the image to flash
 
-```sh
-cd firmware
-export ARM_TOOLCHAIN_ROOT=~/Apps/toolchains/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi
-cmake --preset Release
-cmake --build build/Release
-```
-
-Outputs in `firmware/build/Release/`:
+Build it first — see [`BUILDING.md`](BUILDING.md) — or use the stock image that
+ships here.  The build writes `firmware/build/<preset>/ra89r_fw.icf`, and that is
+the file the bootloader accepts:
 
 | file | what it is |
 |---|---|
 | `ra89r_fw.elf` | debug/symbols |
 | `ra89r_fw.bin` | raw image (0x08004000…) |
 | **`ra89r_fw.icf`** | **the file to flash** — records the bootloader accepts |
-| `ra89r_fw.icf.meta` | sidecar for `ra89r.py encode/decode` |
+| `ra89r_fw.icf.meta` | sidecar for `tools/ra89r.py encode/decode` |
 | `ra89r_fw.map` | link map |
 
 `ra89r_fw.icf` is generated automatically by the build.  Manually, if needed:
 
 ```sh
-python3 ../ra89r.py mkicf build/Release/ra89r_fw.bin build/Release/ra89r_fw.icf --base 0x08004000
-python3 ../ra89r.py verify build/Release/ra89r_fw.icf     # -> baseline 0x66, all N records valid
+python3 tools/ra89r.py mkicf firmware/build/Release/ra89r_fw.bin \
+    firmware/build/Release/ra89r_fw.icf --base 0x08004000
+python3 tools/ra89r.py verify firmware/build/Release/ra89r_fw.icf   # -> baseline 0x66, all N valid
 ```
+
+`tools/ra89r.py verify` must report `baseline 0x66` before you flash the image.
 
 ## 4. Back up what is on the radio
 
@@ -65,7 +63,7 @@ The stock firmware is already in this repository
 Worth doing as well, if you want a copy of the *current* contents:
 
 ```sh
-python3 ../ra89r.py decode FIRMWARE_RA89R_20260203_V49.icf /tmp/stock_backup.bin
+python3 tools/ra89r.py decode FIRMWARE_RA89R_20260203_V49.icf /tmp/stock_backup.bin
 ```
 
 ## 5. Connect and find the port
@@ -142,7 +140,8 @@ if needed, so a failed switch cannot lose the session.)
 `EXIT` makes the bootloader reset the MCU; on reset it checks that the
 application's initial stack pointer looks like SRAM and jumps into it, so the
 new firmware starts by itself within ~50 ms.  The panel should show the test
-card described in `README.md` ("What you should see").
+card described in [`../docs/firmware.md`](../docs/firmware.md)
+("What you should see").
 
 Open a serial terminal on the same port at **115200 8N1** (that is the new
 firmware's console — the bootloader used 9600, so switch after flashing) and
@@ -166,8 +165,8 @@ application runs from `0x08004000` like ours does.
 | `record N ... was rejected by the bootloader` | the record failed the bootloader's checksum, or the link desynced; the tool resyncs and retries. If it keeps failing, try `--erase-first`, then `--baud 5` (115200) or `--baud keep` (9600) |
 | `link lost (no answer to the resync handshake)` | power-cycle the radio back into update mode and re-run |
 | `permission denied` | `usermod -aG dialout` (step 5) |
-| flashing is slow | you are pinned to a low rate: `--baud auto` (default) is fastest; see `../ra89r_bootloader.md` §6 |
-| screen blank after flashing | over the serial console send `v` a few times (contrast), then check the troubleshooting list in `README.md` |
+| flashing is slow | you are pinned to a low rate: `--baud auto` (default) is fastest; see `../docs/ra89r_bootloader.md` §6 |
+| screen blank after flashing | over the serial console send `v` a few times (contrast), then check the troubleshooting list in [`../docs/firmware.md`](../docs/firmware.md) |
 | screen shows something but the console is silent | set the terminal to 115200 8N1; if still silent, the UART side needs checking (`firmware/App/board_pins.h`) |
 
 ## Doing it without a radio (dry run / regression)

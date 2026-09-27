@@ -24,7 +24,7 @@
 
 /* The bootloader only starts this application while this byte is 0x11; it
  * clears it on entering update mode and the stock app writes it back
- * (ra89r_bootloader.md section 4c).  Reported at boot, and worth knowing about
+ * (docs/ra89r_bootloader.md section 4c).  Reported at boot, and worth knowing about
  * when the screen stays dark. */
 #define APP_VALID_MARKER  ((volatile uint8_t *)0x0805FFF0)
 

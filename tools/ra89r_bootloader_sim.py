@@ -2,7 +2,7 @@
 """
 ra89r_bootloader_sim.py -- test double for the stock RA89R bootloader.
 
-Speaks the protocol documented in ra89r_bootloader.md on a pseudo terminal, so
+Speaks the protocol documented in docs/ra89r_bootloader.md on a pseudo terminal, so
 `tools/ra89r_flash.py` can be exercised end to end without a radio:
 
     python3 tools/ra89r_bootloader_sim.py --pty /tmp/ra89r-pty &
@@ -24,7 +24,7 @@ from a simulation are representative of the serial+flash part.
 
 Limitations: a PTY has no baud rate, so the simulator answers at whatever rate
 the host asks for -- the real ceiling comes from the bootloader running on the
-8 MHz reset clock (~384 kbaud; see ra89r_bootloader.md section 5).
+8 MHz reset clock (~384 kbaud; see docs/ra89r_bootloader.md section 5).
 """
 
 import argparse
@@ -33,8 +33,7 @@ import struct
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import ra89r  # noqa: E402
+import ra89r  # the codec is a sibling in this directory
 
 PREAMBLE = bytes([0xFE, 0xFE, 0xEE, 0xEF])
 TERMINATOR = 0xFD

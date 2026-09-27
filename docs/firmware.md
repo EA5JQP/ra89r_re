@@ -1,8 +1,8 @@
 # RA89R custom firmware (bring-up stage)
 
 Minimal firmware for the Retevis RA89R: **screen + UART only**.  It exists to
-prove the reverse-engineered hardware facts (see `../ra89r_lcd.md`,
-`../ra89r_findings.md`) on real silicon before any radio functionality is
+prove the reverse-engineered hardware facts (see `ra89r_lcd.md`,
+`ra89r_findings.md`) on real silicon before any radio functionality is
 brought over from the UV-K1/K5V3 port tree
 (`/home/gonzalo/Repos/uv-k1-k5v3-firmware-custom`).
 
@@ -154,25 +154,29 @@ Not verified — needs the radio:
 
 ## Flashing — via the stock bootloader
 
-The bootloader's serial protocol is documented in `../ra89r_bootloader.md` and
-implemented in `../tools/ra89r_flash.py`.  Our image is linked exactly where the
+The bootloader's serial protocol is documented in `ra89r_bootloader.md`, the
+step-by-step procedure in `../tools/FLASHING.md`, and the flasher is
+`../tools/ra89r_flash.py`.  Our image is linked exactly where the
 stock application lives (0x08004000), so flashing replaces that region and
 leaves the bootloader (0x08000000-0x08003FFF) intact.
 
 ```sh
+# from the repository root
+
 # 1. wrap the built image into records the bootloader accepts
-python3 ../ra89r.py mkicf build/Release/ra89r_fw.bin build/Release/ra89r_fw.icf
+python3 tools/ra89r.py mkicf firmware/build/Release/ra89r_fw.bin \
+    firmware/build/Release/ra89r_fw.icf
 
 # 2. put the radio in update mode (the CPS's prompt tells you the key combo)
 
 # 3. check that the bootloader is listening and see its identity
-python3 ../tools/ra89r_flash.py --port /dev/ttyUSB0 probe
+python3 tools/ra89r_flash.py --port /dev/ttyUSB0 probe
 
 # 4. flash
-python3 ../tools/ra89r_flash.py --port /dev/ttyUSB0 flash build/Release/ra89r_fw.icf
+python3 tools/ra89r_flash.py --port /dev/ttyUSB0 flash firmware/build/Release/ra89r_fw.icf
 
 # to go back to stock
-python3 ../tools/ra89r_flash.py --port /dev/ttyUSB0 flash ../FIRMWARE_RA89R_20260203_V49.icf
+python3 tools/ra89r_flash.py --port /dev/ttyUSB0 flash FIRMWARE_RA89R_20260203_V49.icf
 ```
 
 Add `--dry-run` to inspect every frame first (no port needed), `--baud keep`
@@ -180,12 +184,12 @@ to stay at 9600, `--erase-first` if a flash is refused.  The baud is picked
 automatically (`--baud auto`): the bootloader tops out near 384 kbaud because it
 runs on the 8 MHz reset clock, and 256000 has 0% divisor error.  Expect ~0.5 s
 for this firmware and ~4-6 s for the full stock image (the flash erase/program
-alone is ~0.5 s per 146 KB).  See `../ra89r_bootloader.md` section 6.
+alone is ~0.5 s per 146 KB).  See `ra89r_bootloader.md` section 6.
 
 Still unverified without the radio: the update-mode key combination, and whether
 the first `E2` record is accepted on the first try (the record encoding is proven
 from the bootloader's own validator, but see open point 3 in
-`../ra89r_bootloader.md`).
+`ra89r_bootloader.md`).
 
 Fallback route: **SWD** on the PY32F403's SWD pins (PA13 SWDIO / PA14 SWCLK by
 default) if the PCB exposes them -- that also gives a recovery path if a flash

@@ -11,7 +11,7 @@ port, reverse engineered from two sources:
   designed against, so its behaviour is the reference for the host side.
 
 Tooling built from this: `tools/ra89r_flash.py` (host side) and
-`ra89r.py mkicf` (wrap a raw image into records the bootloader accepts).
+`tools/ra89r.py mkicf` (wrap a raw image into records the bootloader accepts).
 
 ## 1. Port
 
@@ -28,24 +28,7 @@ or touches it**: no write to `RCC_APB1ENR` bit 23 (`USBEN`), zero references to
 0x40005C00 in either image (verified over the full disassembly of both), and
 the CPS updater uses `System.IO.Ports.SerialPort` only (COM ports).  So USB-C
 can neither flash this radio nor talk to the stock firmware; the bootloader's
-only port is USART1.''')
-open(p,'w').write(s)
-
-p='firmware/README.md'; s=open(p).read()
-s=s.replace(## Which connector
-
-**Use the Kenwood-style programming jack, not USB-C.**  The bootloader speaks
-only USART1 (PB6/PB7), which is the Kenwood jack; the USB-C port goes to the
-MCU's USB pins (PY32F403 has a USB device peripheral at 0x40005C00) but nothing
-in the stock bootloader or application ever enables it, and the CPS updater only
-knows COM ports.  See `../ra89r_bootloader.md` §1.
-
-(That USB port is still interesting *later*: the vendor SDK ships CherryUSB, and
-the UV-K1/K5V3 port tree already implements a USB CDC console — so USB-C could
-become a log/console port for this firmware once USB + the 48 MHz clock are set
-up.  Flashing would still be Kenwood-only.)
-
-## Flashing — via the stock bootloader
+only port is USART1.
 
 ## 2. Frames
 
@@ -88,7 +71,7 @@ those records itself (`0x08000C30`: `cmp addr, #0x08000000`, `cmp addr,
 
 ## 3. Programming: the `E2` payload is a raw `.icf` record
 
-The handler at `0x08000BE0` is exactly the validator described in `ra89r.py`,
+The handler at `0x08000BE0` is exactly the validator described in `tools/ra89r.py`,
 but fed from the frame buffer at offset 5 (i.e. right after `FE FE EE EF E2`):
 
 ```
@@ -99,8 +82,8 @@ address = buf[7]<<24 | buf[8]<<16 | buf[9]<<8 | buf[10]          0x08000C0C
           (i.e. header[2..4] scaled by 0x100 — the .icf address field)
 ```
 
-So the payload is the **raw record bytes** — the same bytes `ra89r.py` parse
-(header, payload, check byte) — 6-byte header first.  `ra89r.py mkicf` produces
+So the payload is the **raw record bytes** — the same bytes `tools/ra89r.py` parse
+(header, payload, check byte) — 6-byte header first.  `tools/ra89r.py mkicf` produces
 such a file from a flat image.
 
 Writing (`0x0800266C`):
@@ -279,7 +262,7 @@ with the old wait behaviour at 115200).
 
 ```sh
 # wrap the firmware image into records the bootloader accepts
-python3 ra89r.py mkicf firmware/build/Release/ra89r_fw.bin firmware/build/Release/ra89r_fw.icf
+python3 tools/ra89r.py mkicf firmware/build/Release/ra89r_fw.bin firmware/build/Release/ra89r_fw.icf
 
 # is the radio in update mode?  (send the handshake, print the identity)
 python3 tools/ra89r_flash.py --port /dev/ttyUSB0 probe
@@ -309,7 +292,7 @@ refused unless `--allow-bootloader-region` is given.
    and exactly what `tools/ra89r_flash.py` sends.  The distributor update file
    `Ra89G_R_UpDataFile20260401_V52_10W_Enable.icf` confirms the container: same
    ASCII-hex CR-separated records, same `0x66` baseline, records from
-   `0x08004000` in 2048-byte steps, and `ra89r.py verify` accepts it
+   `0x08004000` in 2048-byte steps, and `tools/ra89r.py verify` accepts it
    (72 records).  The only dead branch is `CommunicationStep == 2`
    (`StrToAscii` on the first line), which the live path never reaches.
 4. **Identity bytes** (the 9 meaningful ones) are read from a flash table at

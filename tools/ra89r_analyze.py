@@ -4,7 +4,7 @@ ra89r_analyze.py -- static analysis of a decoded RA89R flash image.
 
     python3 tools/ra89r_analyze.py work/FIRMWARE_RA89R_20260203_V49.bin
 
-Reads the image plus its .meta sidecar written by ra89r.py, then
+Reads the image plus its .meta sidecar written by tools/ra89r.py, then
 
   * scans strings (ASCII, UTF-16LE, CJK),
   * finds function entry points from the vector table and from every BL/BLX
@@ -156,7 +156,7 @@ class Image(object):
         with open(meta_path, "rb") as f:
             blob = f.read()
         if not blob.startswith(MAGIC):
-            raise SystemExit("%s is not a sidecar written by ra89r.py" % meta_path)
+            raise SystemExit("%s is not a sidecar written by tools/ra89r.py" % meta_path)
         off = len(MAGIC)
         self.baseline, self.base, self.size, self.nrec = \
             struct.unpack_from("<BIII", blob, off)

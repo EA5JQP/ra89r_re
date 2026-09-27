@@ -8,17 +8,21 @@ CPS sources) lives outside the workspace (see "External inputs").
 
 ## Layout and ownership
 
-- `ra89r.py` — the authoritative `.icf` codec, and the only source of truth for the
+- `tools/ra89r.py` — the authoritative `.icf` codec, and the only source of truth for the
   container format. Its module docstring documents the record layout, the per-family
   baselines, and the bootloader routine the check byte was derived from. Stdlib only
   (`argparse`, `os`, `struct`, `sys`) — keep it that way.
-- `ra89r_findings.md` — the main write-up: hardware identification, address map,
+- `tools/BUILDING.md` — how to build the firmware and the host tools.
+- `tools/FLASHING.md` — the concrete flash procedure: hardware, entering update
+  mode, the probe/flash commands, and how to go back to stock.
+- `docs/README.md` — the index of the write-ups; read it before `docs/ra89r_*.md`.
+- `docs/ra89r_findings.md` — the main write-up: hardware identification, address map,
   RF/band data, UI strings, open points. Addresses in it are for the **current**
   decode; older notes/quoted addresses use a shifted coordinate system, see
   "Address drift" in that file.
-- `ra89r_bootloader.md` — the flashing protocol of the stock bootloader, with
+- `docs/ra89r_bootloader.md` — the flashing protocol of the stock bootloader, with
   the evidence from `bootloader.bin` and from the decompiled CPS updater.
-- `ra89r_lcd.md` — the screen/display driver write-up (panel, pin map, init
+- `docs/ra89r_lcd.md` — the screen/display driver write-up (panel, pin map, init
   sequence, addressing, fonts, port notes).
 - `tools/ra89r_flash.py` — host-side flasher implementing the bootloader protocol
   (`probe` and `flash` subcommands, `--dry-run` to inspect frames, `--baud auto`
@@ -31,9 +35,10 @@ CPS sources) lives outside the workspace (see "External inputs").
 - `tools/ra89r_analyze.py` — capstone-based analyzer: function discovery from the
   vector table, `bl`/`blx` sweep and pointer tables, recursive disassembly with
   literal-pool resolution, string scan, peripheral/data reference annotation.
-  Needs `capstone` (installed) and the `.meta` sidecar from `ra89r.py decode`.
+  Needs `capstone` (installed) and the `.meta` sidecar from `tools/ra89r.py decode`.
 - `firmware/` — the RA89R custom firmware project (minimum viable bring-up:
-  screen + UART), with its own README and `firmware/FLASHING.md` (the concrete
+  screen + UART), documented in `docs/firmware.md`; build with
+  `tools/BUILDING.md`, flash with `tools/FLASHING.md` (the concrete
   flash procedure, including how to enter update mode and how to go back to
   stock).  The build emits `build/<preset>/ra89r_fw.icf`, the file the
   bootloader accepts.  It does **not** use the HAL/LL: the
@@ -41,13 +46,13 @@ CPS sources) lives outside the workspace (see "External inputs").
   CMSIS device header from `PY32F4xx_Firmware/`.  `firmware/tools/extract_fonts.py`
   regenerates the stock font tables from a decoded image, and
   `firmware/tools/preview.c` renders the screen layout on a PC (build it with
-  `-DLCD_HOST_TEST`, as documented in `firmware/README.md`) -- use it to check
+  `-DLCD_HOST_TEST`, as documented in `docs/firmware.md`) -- use it to check
   layout changes instead of guessing.
 - `work/` — generated artifacts (`*.bin`, `*.meta`, `analysis/`). Rebuild them
   from the stock `.icf` rather than editing them by hand.
 - `bootloader.bin` — 16 KiB bootloader dumped from the radio over serial, mapped at
   `0x08000000` (SP `0x20003190`, reset `0x08000145`). It contains the record
-  validator at `0x08000BE0` that `ra89r.py`'s check byte reproduces.
+  validator at `0x08000BE0` that `tools/ra89r.py`'s check byte reproduces.
 - `PY32F4xx_Firmware/` — vendored upstream Puya SDK (`github.com/OpenPuya/PY32F4xx_Firmware`,
   tag `1.4.8`, its own nested git repo). Read-only reference for peripheral/register
   semantics and clock/DMA numbering; do not edit it, and do not add build output to it.
@@ -57,15 +62,15 @@ CPS sources) lives outside the workspace (see "External inputs").
 ## Verified commands
 
 ```sh
-python3 ra89r.py verify  FIRMWARE_RA89R_20260203_V49.icf   # baseline 0x66, 72 records
-python3 ra89r.py verify  FW.icf              # validate every record's check byte
-python3 ra89r.py info    FW.icf              # one line per record: address, length, key
-python3 ra89r.py decode  FW.icf work/fw.bin  # writes work/fw.bin + work/fw.bin.meta
-python3 ra89r.py encode  work/fw.bin out.icf # uses the sidecar, or --like FW.icf
+python3 tools/ra89r.py verify  FIRMWARE_RA89R_20260203_V49.icf   # baseline 0x66, 72 records
+python3 tools/ra89r.py verify  FW.icf              # validate every record's check byte
+python3 tools/ra89r.py info    FW.icf              # one line per record: address, length, key
+python3 tools/ra89r.py decode  FW.icf work/fw.bin  # writes work/fw.bin + work/fw.bin.meta
+python3 tools/ra89r.py encode  work/fw.bin out.icf # uses the sidecar, or --like FW.icf
 
 python3 tools/ra89r_analyze.py work/fw.bin   # -> work/analysis/{listing,functions,...}
 
-python3 ra89r.py mkicf my_firmware.bin my_firmware.icf --base 0x08004000
+python3 tools/ra89r.py mkicf my_firmware.bin my_firmware.icf --base 0x08004000
 python3 tools/ra89r_flash.py --dry-run flash my_firmware.icf     # inspect frames
 python3 tools/ra89r_flash.py --port /dev/ttyUSB0 probe           # is the radio in update mode?
 python3 tools/ra89r_flash.py --port /dev/ttyUSB0 flash my_firmware.icf
@@ -83,7 +88,7 @@ cmake --preset Debug && cmake --build build/Debug
 Round-trip check (the fastest way to prove a change did not break the codec):
 
 ```sh
-python3 ra89r.py decode FW.icf work/fw.bin && python3 ra89r.py encode work/fw.bin work/out.icf && cmp work/out.icf FW.icf
+python3 tools/ra89r.py decode FW.icf work/fw.bin && python3 tools/ra89r.py encode work/fw.bin work/out.icf && cmp work/out.icf FW.icf
 ```
 
 `encode` self-checks the records it produced and exits non-zero on failure. Patches
@@ -95,7 +100,7 @@ must not change the image size; edit the image in place and re-encode.
   application: 72 records, flash `0x08004000..0x0802796C` (145,772 bytes). The
   bootloader is the separate 16 KiB dump at `0x08000000`. `decode` derives the base
   from the lowest record address and writes it into the sidecar; do not re-base by hand.
-- **Family baseline** is `0x66` (RA89R), `0x88` (UV8800), `0x90` (TH9000D); `ra89r.py`
+- **Family baseline** is `0x66` (RA89R), `0x88` (UV8800), `0x90` (TH9000D); `tools/ra89r.py`
   detects it by trying all 256 values. Stock RA89R V49 reports `baseline 0x66 -- all 72
   records valid` — that is the sanity check to run before any analysis.
 - **Only size-preserving edits are representable**, and `encode` needs either the
@@ -133,7 +138,7 @@ onto `develop`.
 ## Firmware / flashing
 
 - **The bootloader only starts the application while `0x0805FFF0` holds `0x11`**
-  (ra89r_bootloader.md §4c).  It clears that byte when it enters update mode, so
+  (docs/ra89r_bootloader.md §4c).  It clears that byte when it enters update mode, so
   a flashing tool must set it again or the radio reboots into the bootloader
   (black screen, silent UART).  `tools/ra89r_flash.py` does this by default;
   `firmware/App/main.c` reports the byte at boot over the UART.
@@ -141,7 +146,7 @@ onto `develop`.
   region: the stock bootloader at `0x08000000-0x08003FFF` must stay intact, and
   the stock application lives exactly where our image goes.
 - Flashing goes through the stock bootloader over the programming port (USART1,
-  PB6/PB7, from 9600 baud): see `ra89r_bootloader.md`.  The bootloader itself
+  PB6/PB7, from 9600 baud): see `docs/ra89r_bootloader.md`.  The bootloader itself
   refuses records in `0x08000000-0x08003FFF`; so does `tools/ra89r_flash.py`.
 - Nothing has been run on hardware yet, and the key combination that puts the
   radio into update mode is not recovered — treat "does it run?" as unverified.
@@ -158,7 +163,7 @@ classes of part, so read it before writing new ones:
 
 - `App/driver/st7565.c` — 128x64 ST7565 LCD over SPI (mode 3, MSB first) with a
   `gFrameBuffer[7][128]` + `gStatusLine[128]` shadow buffer, and the same `column + 4` offset the RA89R
-  firmware uses. Compare it against `ra89r_lcd.md` before writing the RA89R panel
+  firmware uses. Compare it against `docs/ra89r_lcd.md` before writing the RA89R panel
   driver.
 - `App/driver/bk4819.c`, `bk4829.c` — RF transceiver (bit-banged 3-wire).
 - `App/driver/py25q16.c`, `mb_flash.c` — external SPI NOR flash and firmware slots.

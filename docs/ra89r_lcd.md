@@ -1,7 +1,7 @@
 # RETEVIS RA89R — LCD / screen driver (reverse engineered)
 
 All addresses are in the **correct** decode of
-`FIRMWARE_RA89R_20260203_V49.icf` (see `ra89r.py`; image base `0x08004000`).
+`FIRMWARE_RA89R_20260203_V49.icf` (see `tools/ra89r.py`; image base `0x08004000`).
 Addresses quoted from the old `ra89r_findings.md` are shifted — the mapping is
 documented in `ra89r_findings.md` ("Address drift").
 

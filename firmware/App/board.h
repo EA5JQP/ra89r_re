@@ -5,7 +5,7 @@
  * adds the peripheral instances and therefore needs the vendor device header.
  *
  * Everything below is reverse engineered from the stock firmware -- see
- * ../ra89r_findings.md and ../ra89r_lcd.md.
+ * ../../docs/ra89r_findings.md and ../../docs/ra89r_lcd.md.
  */
 #ifndef APP_BOARD_H
 #define APP_BOARD_H

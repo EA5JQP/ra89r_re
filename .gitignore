@@ -3,10 +3,10 @@ __pycache__/
 *.pyc
 
 # codec containers: the stock firmware images are reference inputs, not sources
-# (regenerate the decoded .bin/.meta from a local copy with ra89r.py)
+# (regenerate the decoded .bin/.meta from a local copy with tools/ra89r.py)
 *.icf
 
-# generated artifacts (regenerate from the stock .icf with ra89r.py /
+# generated artifacts (regenerate from the stock .icf with tools/ra89r.py /
 # tools/ra89r_analyze.py; see AGENTS.md)
 work/
 
@@ -15,3 +15,6 @@ firmware/build/
 
 # host/tooling state
 .reasonix/
+
+# editor settings
+.vscode/
