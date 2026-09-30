@@ -5,8 +5,8 @@
  * (`0x50 = 0x3B20`), and both of those are where our imported driver was wrong.
  * This is the sequence that a second receiver confirms, in order:
  *
- *   pa_tx_enable()                  0x33 = 0x0020 (pin 1 = PA enable), 0x36 = 0x8822
- *   pa_band_path()                  PA1 = 1, PA0 = 0
+ *   pa_select_band()                PA0/PA1, the BK4815 0x75 band, the RX path bit
+ *   pa_tx_enable()                  0x33 = 0x42 VHF / 0x22 UHF (band pin + T/R), 0x36 = 0x8822
  *   BK4815 0x0C = 0x0203            the T/R path's other-branch state
  *   BK4819_SetFrequency()           0x38/0x39
  *   0x7D = 0xE958                   the stock's power/bias value for this codeplug

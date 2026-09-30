@@ -2,6 +2,7 @@
 
 #include "board.h"
 #include "board_pins.h"
+#include "driver/bk4815.h"
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
 
@@ -9,53 +10,61 @@ static uint16_t s_reg36;
 static uint16_t s_reg33 = 0x9000u;
 static uint16_t s_compare;
 
-/* Selected front end.  The RA89R switches its VHF and UHF paths separately and
- * nothing here used to touch them at all; see pa.h for the evidence. */
-#define PA_VHF_UHF_SPLIT  28000000u   /* 280 MHz, in 10 Hz units */
-
+/* The band state pa_select_band() applied.  s_uhf is the VHF/UHF band index (the
+ * codeplug's 108-174 / 400-520 bands, split at 280 MHz); s_main is the stock's
+ * >134 MHz transceiver split. */
 static bool s_uhf;
+static bool s_main;
 
-/* Which chip-side front-end selection to apply.
- *
- * Mode 4 (by frequency) is the default.  An earlier reading of a "cannot
- * receive" report blamed these bits and defaulted to 0; the radio then settled
- * it -- with a carrier present, register 0x67 goes from ~59 to ~216 (past the
- * stock's 180/207 squelch marks) in modes 1, 2 AND 3 alike, so all of these bits
- * are benign LNA selects and the reception problem is elsewhere.  The console
- * 'F' command still walks every mode, which is how that was established. */
+/* The 'F' experiment: which chip-side receive path to apply.  AUTO is the K1
+ * application's receive rule (and the one the radio received with); the other
+ * modes let the radio settle the stock's own pin-4 activity on the bench.
+ * Every mode goes through BK4819_ToggleGpioOut so 0x33's other bits survive. */
 enum {
-    PA_CHIP_PATH_LEAVE = 0,   /* as BK4819_Init() left it -- validated */
+    PA_CHIP_PATH_LEAVE = 0,   /* as BK4819_Init() left it */
     PA_CHIP_PATH_VHF,         /* 0x33 bit 0x04 set, bit 0x08 clear */
     PA_CHIP_PATH_UHF,         /* 0x33 bit 0x08 set, bit 0x04 clear */
     PA_CHIP_PATH_NONE,        /* both cleared */
-    PA_CHIP_PATH_AUTO,        /* by frequency (the K1's rule) */
+    PA_CHIP_PATH_AUTO,        /* K1/app rule: VHF pin 4 below 280 MHz, UHF pin 3 */
     PA_CHIP_PATH_MODES
 };
-
 static uint8_t s_chip_path = PA_CHIP_PATH_AUTO;
 
-bool pa_is_uhf(uint32_t freq_10hz)
-{
-    return freq_10hz >= PA_VHF_UHF_SPLIT;
-}
+/* The 'B' experiment: the MCU band pin PA0.  The stock's value is LOW. */
+static uint8_t s_band_pin_mode = PA_BAND_PIN_STOCK;
+
+bool pa_is_uhf(uint32_t freq_10hz)  { return freq_10hz >= PA_BAND_SPLIT; }
+bool pa_is_main(uint32_t freq_10hz) { return freq_10hz > PA_MAIN_SPLIT; }
+
+bool pa_band_is_uhf(void)  { return s_uhf; }
+bool pa_band_is_main(void) { return s_main; }
 
 void pa_band_path(void)
 {
-    /* FUN_08013A70(2) for transmit and (3) for receive both leave PA1 high; PA0
-     * is the band, and low is the VHF state this board was validated in. */
+    /* FUN_08013A70(2) for transmit and (3) for receive both leave PA1 high and
+     * PA0 low; PA0 is not the VHF/UHF selector here (pa.h). */
     gpio_write(GPIOA, PA_BAND_PA1_PIN, 1);
-    gpio_write(GPIOA, PA_BAND_PA0_PIN, s_uhf ? 1 : 0);
+    gpio_write(GPIOA, PA_BAND_PA0_PIN, pa_band_pa0_high() ? 1 : 0);
 }
 
-bool pa_band_is_uhf(void)
+bool pa_band_pa0_high(void)
 {
-    return s_uhf;
+    switch (s_band_pin_mode) {
+        case PA_BAND_PIN_HIGH: return true;
+        case PA_BAND_PIN_AUTO: return s_uhf;
+        default:               return false;   /* STOCK */
+    }
 }
 
-uint8_t pa_chip_path_mode(void)
+uint8_t pa_band_pin_mode(void) { return s_band_pin_mode; }
+
+void pa_set_band_pin_mode(uint8_t mode)
 {
-    return s_chip_path;
+    if (mode < PA_BAND_PIN_MODES)
+        s_band_pin_mode = mode;
 }
+
+uint8_t pa_chip_path_mode(void) { return s_chip_path; }
 
 void pa_set_chip_path_mode(uint8_t mode)
 {
@@ -63,11 +72,12 @@ void pa_set_chip_path_mode(uint8_t mode)
         s_chip_path = mode;
 }
 
-uint16_t pa_chip_path_reg(void)
-{
-    return BK4819_ReadRegister(BK4819_REG_33);
-}
+uint16_t pa_chip_path_reg(void) { return BK4819_ReadRegister(BK4819_REG_33); }
 
+/* Apply the chip-side receive path.  AUTO is the K1 application's rule (and the
+ * one the radio received with); the other modes are the 'F' experiment, which
+ * walks the individual LNA pins so the radio can settle the stock's own pin-4
+ * activity on the bench.  Every mode is a read-modify-write on `0x33`. */
 static void pa_apply_chip_path(void)
 {
     switch (s_chip_path) {
@@ -84,6 +94,15 @@ static void pa_apply_chip_path(void)
             BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, false);
             break;
         case PA_CHIP_PATH_AUTO:
+            /* Mirror the K1 application's own receive rule
+             * (BK4819_PickRXFilterPathBasedOnFrequency, called by
+             * RADIO_SetupRegisters): VHF LNA (pin 4) below 280 MHz, UHF LNA
+             * (pin 3) at or above it.  BK4819_ToggleGpioOut is a
+             * read-modify-write on the driver's output shadow, so the 0x9000
+             * bits BK4819_Init() set survive.  The previous raw write here
+             * (0x04 / 0x00) cleared them and stopped 0x67 following a carrier;
+             * the stock's own FUN_080137D4 also reads 0x33 back before masking.
+             * See docs/ra89r_port.md. */
             BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, !s_uhf);
             BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, s_uhf);
             break;
@@ -94,8 +113,15 @@ static void pa_apply_chip_path(void)
 
 void pa_select_band(uint32_t freq_10hz)
 {
-    s_uhf = pa_is_uhf(freq_10hz);
+    s_uhf  = pa_is_uhf(freq_10hz);
+    s_main = pa_is_main(freq_10hz);
+
     pa_band_path();
+
+    /* The BK4815's band register 0x75, the stock's FUN_08013790: band 1 (0x11)
+     * for VHF, band 2 (0x0A) for UHF. */
+    bk4815_write_reg(0x75, s_uhf ? 0x0Au : 0x11u);
+
     pa_apply_chip_path();
 }
 
@@ -140,9 +166,11 @@ void pa_power(uint16_t compare)
 
 void pa_tx_enable(void)
 {
-    /* The stock's transmit select: every chip GPIO output cleared and only
-     * pin 1 (PA enable) set -- FUN_08013A70(2) -> FUN_080137D4(0x20, 0x20). */
-    s_reg33 = 0x0020u;
+    /* The stock's transmit word: the band pin (`0x40` VHF / `0x20` UHF, set by
+     * FUN_0801BDE8 from the TX band index) plus the T/R pin (`0x02`, set by
+     * FUN_08013A70(2)) -- 0x42 / 0x22.  The port used to write 0x0020 alone,
+     * which is only the UHF band pin. */
+    s_reg33 = (uint16_t)((s_uhf ? PA_REG33_BAND_UHF : PA_REG33_BAND_VHF) | PA_REG33_TR);
     BK4819_WriteRegister(BK4819_REG_33, s_reg33);
     s_reg36 = PA_REG36_ON;
     BK4819_WriteRegister(BK4819_REG_36, s_reg36);
@@ -150,10 +178,9 @@ void pa_tx_enable(void)
 
 void pa_rx_enable(void)
 {
-    /* Whatever the K1 init left, which is what receive has been validated
-     * with, and no PA-CTL. */
-    s_reg33 = 0x9000u;
-    BK4819_WriteRegister(BK4819_REG_33, s_reg33);
+    /* Back to the receive path (`pa_apply_chip_path()`, AUTO by default), and
+     * no PA-CTL. */
+    pa_apply_chip_path();
     s_reg36 = 0x0000u;
     BK4819_WriteRegister(BK4819_REG_36, s_reg36);
     pa_power(0);

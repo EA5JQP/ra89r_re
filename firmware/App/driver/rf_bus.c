@@ -32,10 +32,17 @@ uint8_t rf_bus_delay_setting(void)
 
 static void rf_delay(void)
 {
-    volatile unsigned i;
+    /* The runtime value read once, then a plain loop.  The old `volatile
+     * unsigned i` forced a memory load and store every iteration, so one call
+     * cost ~3.2 us at 48 MHz (console 'P': 100 x BK4819_GetRSSI = 23 ms) rather
+     * than the ~1 us the iteration count suggests -- and that was the port's
+     * dominant RF cost, about five times the K1's own 1 us SYSTICK_DelayUs
+     * edges.  A few cycles per iteration now, so the default 8 is ~0.6 us, still
+     * above the stock's own edge (docs/ra89r_rfpath.md). */
+    unsigned n = gRfBusDelay;
 
-    for (i = 0; i < gRfBusDelay; i++)
-        ;
+    while (n-- != 0u)
+        __NOP();
 }
 
 static void scl(int level) { gpio_write(SCL_PORT, SCL_PIN, level); }

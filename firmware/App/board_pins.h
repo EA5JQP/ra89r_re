@@ -114,7 +114,7 @@
 #define KEYPAD_PTT2_PIN       (1u << 9)
 
 /* RF transceivers: two BK481x parts are fitted, sharing one bit-banged bus with
- * a chip select each (docs/ra89r_rf.md).  Clock `PA12`, bidirectional data `PB12`
+ * a chip select each (docs/ra89r_rfpath.md).  Clock `PA12`, bidirectional data `PB12`
  * (driven to send, released to read), and `PB8` = BK4829, `PB13` = BK4815 --
  * both selects are active low and the stock drives them by hand.
  *

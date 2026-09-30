@@ -17,9 +17,15 @@ at the bottom for the stage-by-stage log):
 **The K1 GUI is what the radio boots into**: the panel and the keys belong to it
 from power-on, straight into the VFO (the K1 boot screen is still there behind
 console `4`), and the bring-up screens are console diagnostics behind `0`.  The
-**double-channel UI** is the default: `ui/main.c`'s `isMainOnly()` is
-"dual watch off *and* cross-band off", so the defaults now set
-`gEeprom.DUAL_WATCH = DUAL_WATCH_CHAN_A` and the main screen draws both VFOs.
+**double-channel UI** is the default, but it no longer rides on dual-watch:
+`port_features.h`'s `PORT_TWO_ROW_UI` forces `ui/main.c`'s `isMainOnly()` false
+(which normally means "dual watch off *and* cross-band off"), and
+`gEeprom.DUAL_WATCH`/`CROSS_BAND_RX_TX` stay **OFF**.  Leaving dual-watch on just
+to draw the second row also ran the K1's `DualwatchAlternate()`: it toggles
+`gEeprom.RX_VFO` and retunes every ~500 ms, so the receiver ignored the VFO the
+user selected with `EXIT` (this radio's A/B key), and it diverted
+`CheckForIncoming()` away from the port's polled `g_SquelchLost`.  The receiver
+now follows the selected VFO; `preview_k1` asserts it.
 Placeholder channels until the stock codeplug is mapped: VFO A on 145.7500 and
 VFO B on 145.5000, so the two rows are visibly different.  The console: **`1`** back to the
 GUI, **`2`** VFO, **`3`** menu, **`M`**/`G` draw those once, **`4`** the boot
@@ -101,6 +107,18 @@ the third is *decisions*.
    radiates above 134 MHz is unresolved.  The app assumes one transceiver; the
    port must either settle this or keep the "bind to the BK4829" decision and
    test each band on the radio.
+
+   *This branch's current stage (2026-09-30):* RX is deliberately **BK4829-only**.
+   The port tunes the BK4829 (`rx_set_frequency()`, now called from
+   `port_gui_tick()` when the GUI RX frequency moves, in addition to the app's
+   own `RADIO_SetupRegisters()`) and selects its receive path.  `pa.c`'s
+   `PA_CHIP_PATH_AUTO` uses `BK4819_ToggleGpioOut` (a read-modify-write, as the
+   stock's `FUN_080137D4` does) with the K1/app LNA rule, so register `0x33`'s
+   `0x9000` bits survive; the previous raw write (`0x04`/`0`) had cleared them
+   and stopped `0x67` following a carrier.  The BK4815 is still configured and
+   parked (`0x75`/`0x0c`), but its receive dispatch is deferred until this stage
+   is settled on the radio.  `firmware/tools/test_rf.c` pins the `0x9000`
+   preservation as a host regression.
 
 ### B. Modules the application needs that do not exist here
 
@@ -278,7 +296,7 @@ here are the port's todo list:
   Known split, deliberate: `radio.c`'s own chip sequences
   (`RADIO_SetupRegisters`, `RADIO_SetTxParameters`) are the K1's and are *not*
   used yet -- on this radio they need comparing against the stock first
-  (`ra89r_rfeatures.md` locates them).  The measured `rx.c`/`tx.c` chains are what
+  (`ra89r_rffeatures.md` locates them).  The measured `rx.c`/`tx.c` chains are what
   the port runs.
 
 * **Stage 3b -- the K1's own key handling and app loop run the radio

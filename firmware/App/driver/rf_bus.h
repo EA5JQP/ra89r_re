@@ -51,14 +51,15 @@ void rf_bus_delay(void);
 void rf_bus_bit_out(int bit);       /* set data while the clock is low, then rise */
 int  rf_bus_bit_in(void);           /* sample while the clock is low, then rise */
 
-/* Bit-bang delay, in loop iterations of about six cycles each, at the current
- * clock.  The value the bus was validated with (40 iterations, ~25 us at the
- * 8 MHz the port used to run at, ~5 us at 48 MHz) is the default: the clock was
- * raised six-fold and the delay cut five-fold at the same time, which is a 30x
- * change to every edge of this bus, and writes are the half that would show up
- * as "the squelch opens but there is no audio".  console 'D' steps it down so
- * the fastest value that still works can be found on the radio. */
-#define RF_BUS_DELAY_VALIDATED  40u
+/* Bit-bang delay, in loop iterations of a few cycles each at the current clock.
+ * One call is the edge; a register access is 24 bits x 3 calls.  The default 8
+ * is ~0.6 us per edge at 48 MHz -- above the stock's own bit-bang (tens of
+ * cycles, docs/ra89r_rfpath.md) and close to the K1's 1 us SYSTICK_DelayUs.  It
+ * was briefly 40 on a "marginal write" theory (the clock had gone up six-fold
+ * while the delay came down five-fold) and that did not restore receive; 40 is
+ * also what made every RF access, and so tuning, slow.  Console 'D' steps the
+ * value (40/24/16/12/8/4/1) to bisect it on the radio. */
+#define RF_BUS_DELAY_VALIDATED  8u
 extern uint8_t gRfBusDelay;
 void    rf_bus_set_delay(uint8_t iterations);
 uint8_t rf_bus_delay_setting(void);

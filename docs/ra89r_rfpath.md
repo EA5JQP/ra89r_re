@@ -162,12 +162,14 @@ A decompiler pass over the runtime paths (not the boot init) now answers most of
     state, `0x0a03` to leave it, which is exactly the value its boot init writes.
 * **Band/filter — correction.**  The two calls are *not* two halves of one
   register.  `FUN_080137D4(mask, value)` is **BK4829-only**: it reads register
-  `0x33`, clears bit `14 - n` for every bit `n` set in `mask`, and sets bits
-  `0..6` from `value`.  `FUN_08013790(band)` is **BK4815-only**: it rewrites the
-  low six bits of register `0x75` with `0x09` for band 0, `0x11` for 1, `0x0A`
-  for 2 and `0x12` for 3.  The bring-up calls `FUN_08013790(3)` and
-  `FUN_080137D4(3, 0)` — band 3 on the BK4815, and clear the mask-`3` filter bits
-  on the BK4829.
+  `0x33`, and for each bit `n` set in `mask` clears output bit `0x40 >> n` and the
+  paired bit `14 - n`, setting `0x40 >> n` when bit `n` is set in `value` (so mask
+  bit `n` is the K1's `BK4819_GPIO_PIN_t` pin number and the output bit is
+  `0x40 >> n`; the full call table is under "Band and path selection: the pins").
+  `FUN_08013790(band)` is **BK4815-only**: it rewrites the low six bits of
+  register `0x75` with `0x09` for band 0, `0x11` for 1, `0x0A` for 2 and `0x12`
+  for 3.  The bring-up calls `FUN_08013790(3)` and `FUN_080137D4(3, 0)` — band 3
+  on the BK4815, and clear the mask-`3` output bits on the BK4829.
 * **Squelch / metering**: `FUN_080052B8` reads **BK4829** registers `0x63`,
   `0x67` (masked `& 0x1ff` — the RSSI the debug page prints as `RSSI R67 %d`) and
   `0x65`, plus `0x99` elsewhere, and walks **BK4829** register `0x13` in an
@@ -231,6 +233,136 @@ frequency flag decides is only which part receives the *T/R state* writes
 (`0x47`/`0x13`/`0x30`/`0x31` versus `0x0c`).  Whether both parts are then in the
 signal path at once, or one is a band the other is not, is not established.
 
+**The BK4829 is not switched off above 134 MHz -- but the radio does not transmit
+below it either.**  The codeplug's TX ranges are 144–146 MHz and 430–440 MHz
+(band table, EEPROM `0x1F40`), both above 134, so the ≤134 MHz branch is
+receive-only (airband) and neither part transmits there in normal use.  In the TX
+range the stock writes *both* chips: the BK4829's TX setup (`0x38`/`0x39`,
+`0x47`, `0x37`, `0x50`, `0x70`, `0x30`) via `FUN_08017280` -- which has no band
+test and runs for every TX -- and the BK4815's T/R state (`0x0c`) and per-mode
+config (`FUN_08016CEC`).  Which of the two actually radiates above 134 MHz is the
+open question: the port's own BK4829-only TX at 145.75 MHz shows the BK4829's
+registers suffice to produce a carrier, but not that it is the stock's intended
+path.  A plausible reading is that the BK4829 is the modulator (mic ADC + TX DSP
+in `0x30`, the `0x7D` bias) and the BK4815 the band/PA above 134 MHz, matching
+the two-PA board -- an interpretation, not a finding.
+
+## Band and path selection: the pins
+
+The stock has **no VHF/UHF mode** and no VHF/UHF string in the image.  The RF path
+is selected by two independent things: the **frequency split at 134.0 MHz** (the
+transceiver select above) and a **band index** derived from the frequency.  The
+per-path lines are the **BK4829's register `0x33`** (its GPIO outputs) plus a
+handful of MCU pins, not a dedicated MCU band-select pin.
+
+### The band index
+
+`FUN_08009AEC(channel, freq)` returns a **band index** from the RAM band table at
+`0x20009BB8` (the same 3 × 16-byte `Rx lo/hi, Tx lo/hi` table `FUN_08019804`
+fills, matching the codeplug's at EEPROM `0x1F40`):
+
+* entry 0 — 108–174 MHz → `0`
+* entry 1 — 250 M (disabled on this codeplug) → `1`
+* entry 2 — 400–520 MHz → `2`
+* none → `6`
+
+`FUN_0800E7E2(channel, 0|1)` stores it in `channel + 0x11` (0 = Rx frequency, 1 =
+Tx frequency), and `FUN_080105F0(channel)` returns the **Tx** band index.  That
+byte `+0x11` is what `FUN_08016DE8`/`FUN_08016CEC` then read to pick the BK4815's
+`0x75` band (`1` → `0x11`, otherwise `0x0A`).
+
+### The BK4829 `0x33` GPIO outputs
+
+`FUN_080137D4(mask, value)` reads `0x33`; for each bit `n` set in `mask` it clears
+output bit `0x40 >> n` **and** the paired bit `14 - n`, and sets output bit
+`0x40 >> n` when bit `n` is also set in `value`.  So mask bit `n` *is* the K1's
+`BK4819_GPIO_PIN_t` pin number and the output bit is `0x40 >> n`.  Every call site
+in the image:
+
+| output | mask | routine | args | condition |
+|---|---|---|---|---|
+| `0x40` | `1` | `FUN_0801BDE8` | `(3,1)` | **TX band 0 (VHF)** |
+| `0x20` | `2` | `FUN_0801BDE8` | `(3,2)` | **TX band 1/2 (UHF)** |
+| `0x10` | `4` | `FUN_08005638` / `FUN_08015D44` / `FUN_08004E20` | `(4,4)` / `(4,0)` | tone/CTCSS, plus a config-gated case |
+| `0x08` | `8` | `FUN_0800D35C` / `FUN_0800D434` | `(8,8)` / `(8,0)` | band byte `0x20003EE4` |
+| `0x04` | `0x10` | `FUN_08016CEC` / `FUN_08016DE8` | `(0x10,0x10)` / `(0x10,0)` | **> 134 MHz path** |
+| `0x02` | `0x20` | `FUN_08013A70` / `FUN_08013B12` | `(0x20,0x20)` / `(0x20,0)` | **T/R (PA enable)** |
+| all | `0x7f` | `FUN_08013C24` | `(0x7f,0)` | full clear |
+
+**Only `FUN_0801BDE8` sets pins 0/1**, and it is reached only from the transmit
+start (`FUN_08016A2C` → `FUN_0801830C` → `FUN_0801BDE8`, the "Pow AdjData"
+routine).  It is the **TX path pair**:
+
+* `band == 0` (VHF) → `FUN_080137D4(3, 1)` → **`0x40`**
+* `band == 1 or 2` (250 M / UHF) → `FUN_080137D4(3, 2)` → **`0x20`**
+
+so **VHF selects `0x40`, UHF selects `0x20`** — exactly the two-PA / two-filter
+path select.  The receive path does *not* use a matching pair: it **clears** pins
+0/1 (`FUN_080093EC`, `FUN_08016DE8`) and selects the path with the transceiver
+(`0x20000303`) and the BK4815 `0x75` band, setting `0x33` pin 4 (`0x04`) for the
+> 134 MHz path.
+
+### The MCU pins
+
+`FUN_08013A70(mode)` / `FUN_08013B12(mode)`:
+
+| mode | PA1 | PA0 | chip `0x02` | use |
+|---|---|---|---|---|
+| 0 | 1 | 1 | set | flag-1 path TX |
+| 1 | 1 | 1 | clear | flag-1 path RX |
+| 2 | 1 | 0 | set | TX (normal) |
+| 3 | 1 | 0 | clear | RX (normal) |
+
+`FUN_08013B12` is the same with PA1 = 0; `config+0x34` (settings byte 15 bit 7)
+selects which routine runs, and the per-VFO bytes `0x20000306` (Rx) /
+`0x20000307` (Tx) override the mode to 1/0.  On this codeplug `config+0x34 = 0`
+(settings byte 15 = `0x00`), so the stock uses modes 2/3: **PA1 = 1, PA0 = 0,
+chip `0x02` = T/R**.
+
+The other MCU lines the RF path touches:
+
+* `FUN_0800D35C` (band byte `0x20003EE4`): byte `0` → `0x33` pin 3 set, **PC14
+  (GPIOC `0x4000`) low**, **PB2 (GPIOB `0x04`) low**, PC13 low; byte `≠ 0` → pin 3
+  clear and PC13 high.
+* `FUN_080139E4` (the power-up handshake) pulses **PD0 (GPIOD `0x01`)** and
+  **PC15 (GPIOC `0x8000`)**, then calls `FUN_08013A70(3)`/`(1)`.
+* `FUN_08016CEC` (> 134 MHz) drives **PA14 low**; the squelch path drives PA14 too.
+
+### Summary
+
+* **Transceiver select**: flag `0x20000303` — `≤ 134.0 MHz` → BK4829,
+  `> 134.0 MHz` → BK4815.
+* **TX band path**: `0x33` pin 0 (`0x40`) for VHF, pin 1 (`0x20`) for UHF.
+* **RX band path**: the transceiver select plus the BK4815 `0x75` band register;
+  no separate RX VHF/UHF pin pair on the BK4829 `0x33`.
+* **T/R**: `0x33` pin 5 (`0x02`), set in TX and cleared in RX; MCU PA1 = 1,
+  PA0 = 0.
+
+### Observing the pins on the stock
+
+The stock drives the lines above from the same routines, but it has no console
+that shows them.  Two ways to watch them:
+
+* **Scope / logic analyser** on the candidate lines.  `0x40`/`0x20` are *chip*
+  outputs (the BK4829's own pins), so they must be probed at the chip; the MCU
+  candidates are PA0, PA1, PA13, PA14, PC13, PC14, PB2, PD0 and PC15.  Switch
+  bands and watch.
+* **Patch the stock** (size-preserving: edit `work/fw.bin` in place, re-encode
+  with `tools/ra89r.py encode`).  A hook on the writers captures everything:
+  `FUN_08011B74(port, mask, level)` is the single MCU GPIO writer, and
+  `FUN_080137D4(mask, value)` / `FUN_080220A0(value, reg)` are the BK4829 writers
+  (`FUN_080137D4` is the `0x33` one).  Appending `(pc, port/reg, mask, level)` to
+  a RAM ring buffer logs the whole sequence.  The stock already carries a serial
+  printer — `FUN_080168A4` formats through `FUN_08022FA4` on the programming
+  port, gated on the byte at `0x2000007e` (its own format string is
+  `RSSI_R67:%d\n` at `0x08005424`) — so a dump can reuse that path with
+  `0x2000007e = 1`, or write the values into the LCD framebuffer and read them
+  off the panel.
+
+The port's console is the cheaper option for the *port's* behaviour (`F`/`m`/`Q`
+read `0x33` back and print the band path), but only a stock patch shows what the
+*stock* does — which is what the map above is derived from.
+
 ## The two calls at the end of the bring-up
 
 `FUN_0800D434` is identified: it sets `RCC_AHB2ENR` bits 3 and 4 (the GPIOB and
@@ -255,9 +387,10 @@ It touches no RF register directly; the three callees are not identified yet.
 
 ## TX, and how the power is handled
 
-**There is no PWM and no MCU pin that enables a PA: the transmit power is a
-transceiver register, and the MCU's TX-side actions are the band/path switch and
-the indicators.**  The stock's TX entry, walked from both ends:
+**The transmit power is a transceiver register (`0x7D`) *plus* a PA-bias PWM on
+`PB14`/TIM1 channel 2** (the PWM subsection below).  The MCU's TX-side actions
+are the band/path switch, that PWM, and the indicators.  The stock's TX entry,
+walked from both ends:
 
 ```
 FUN_08018AB8   enter TX (PA13 high = red LED, PA14 low = green off)
@@ -311,9 +444,20 @@ same K1 sequence -- so the register side of TX is already available here.
 
 **The MCU-side TX actions**, from the whole TX callee tree (47 functions):
 
-* `FUN_08013A70` / `FUN_08013B12` drive `PA0`, `PA1` and the chip's GPIO pin 1
-  (register `0x33`, mask `0x20`) as a **4-way RF path/band select** -- the very pin
-  the K1 calls `BK4819_GPIO1_PIN29_PA_ENABLE`, wired as a path switch on this board;
+* `FUN_08013A70` / `FUN_08013B12` drive `PA0`, `PA1` and the chip's `0x33` pin 5
+  (output `0x02` -- **not** `0x20`; `FUN_080137D4` maps mask bit `n` to output
+  `0x40 >> n`) as the **T/R / PA-enable select**.  The mode is **not the
+  frequency**: `FUN_0800948C`/`FUN_08008F2C`/`FUN_080139E4` pick `FUN_08013A70` or
+  `FUN_08013B12` from `config+0x34`, and the mode argument is `config+0x32` (or
+  2/3/0/1 from the per-VFO bytes `0x20000306` (RX) / `0x20000307` (TX), which
+  `FUN_0801B018`/`FUN_0801AFF4` read).  `config+0x32/0x34` are bits of settings
+  byte 15 (`FUN_0800FE18`); on this radio byte 15 = `0x00`, so `config+0x34 = 0`
+  and the stock takes `FUN_08013A70(2)` for transmit and `(3)` for receive --
+  **`PA1 = 1, PA0 = 0`, the same for both bands**.  So `PA0` is not the VHF/UHF
+  selector here; the TX band path is the `0x33` pins 0/1 (`0x40`/`0x20`, see "Band
+  and path selection: the pins") and the RX path is the transceiver select plus the
+  BK4815 `0x75`.  The port's `PA0`-high-for-UHF is an inference, and the console's
+  `B` command exists to settle it;
 * `PA13`/`PA14` are the red/green LED (TX = red), and `FUN_08016228` even *reads*
   `PA13` as part of its T/R decision;
 * `PC13` is raised by `FUN_080177A8` in the T/R path and lowered by
@@ -353,10 +497,28 @@ FUN_08016A2C   the TX start (FUN_08018AB8, 5 ms, then this)
   compute it in floating point from the boot argument `0x64` (100):
   `1.44e8 / 100 / 1000 = 1440`, minus one.  `1.44e8` is the 144 MHz APB2 clock
   (the double at `0x08016CB0`), `1000.0` the divisor at `0x08016CB8`;
-* **the duty is the codeplug's power value** (`FUN_080201CC`: `(& 0x3F) << 2`, so
-  0..252), clamped to `ARR/2`, written to `CCR2`.  The boot arms the timer with
-  `CCR2 = 0` and the receive path (`FUN_08017340`) sets it back to 0, so **the PA
-  is biased only while transmitting**.
+* **the duty is the codeplug's power value**: `FUN_080201CC` returns 0..252
+  (`(& 0x3F) << 2`), `FUN_08018A88(v)` sets `FUN_080167B4((v * ARR) / 0xFF)`, and
+  `FUN_080167B4` clamps to `ARR/2` and writes it to `CCR2`.  The boot arms the
+  timer with `CCR2 = 0` and the receive path (`FUN_08017340`) sets it back to 0,
+  so **the PA is biased only while transmitting**.
+
+**There is only one PWM, and it is a common bias.**  Both PWM config structs
+(`0x20003720`, `0x20003760`) are initialised to TIM1 (`0x40012C00`, stored by
+`FUN_08016BEC` at `0x08016BF2`), every `FUN_0801306E` call uses channel 2, and
+`FUN_080131AC` configures only `PB14` as AF4 -- there is no second timer channel
+or AF pin.  The **same routine**, `FUN_0801BDE8`, sets that compare and the `0x33`
+band pin together:
+
+| line | what it sets |
+|---|---|
+| `PB14` / TIM1_CH2 | **how hard** -- the common PA bias (`value * ARR / 255`, clamp `ARR/2`) |
+| `0x33` pin 0/1 (`0x40`/`0x20`) | **which one** -- the VHF or UHF PA/filter path |
+
+So the PWM is not per-PA: it is one bias line whose level applies to whichever
+path the pin selects.  (That the `0x40`/`0x20` pin physically routes the bias to
+the selected PA is the reading that fits one PWM + one path pin set together and
+the two-PA board; a scope on `PB14` plus the two chip pins would confirm it.)
 
 ### The transmit configuration, validated on the radio
 
@@ -367,7 +529,7 @@ list the port keeps:
 |---|---|---|
 | `0x7D` | `0xE958` | the stock's own power/bias for this codeplug (`FUN_0801BAF4`, level 3) |
 | `0x36` | `0x8822` | **the amplifier enabler**: PA-CTL (bit 7) + bias `0x88` + gain.  The stock's own TX path never writes `0x36`; the K1 sets it in `BK4819_SetupPowerAmplifier`, and our imported `BK4819_TxOn_Beep` wrote it to **0** -- which is why the carrier existed and was never amplified |
-| `0x33` | `0x0020` | chip GPIO pin 1 (PA enable) *only*.  The stock's transmit path clears all seven and sets that one (`FUN_08013A70(2)` -> `FUN_080137D4(0x20, 0x20)`), and `FUN_080137D4` clears each driven pin's paired bit, so inheriting the K1 init's `0x9000` is not neutral |
+| `0x33` | `0x0020` | the port's measured value -- but note it is the **UHF band path pin** (`0x20`), not the T/R pin.  The stock's TX `0x33` is the band pin (`0x40` VHF / `0x20` UHF, `FUN_0801BDE8`) **plus** the T/R pin `0x02` (`FUN_08013A70(2)`), i.e. `0x42` / `0x22`; see "Band and path selection: the pins" |
 | `PA1`/`PA0` | `1` / `0` | the stock's transmit band path |
 | `PB14`/TIM1_CH2 | ARR 1439, compare 128 | the PA bias PWM (100 kHz) |
 | `0x30` | `0xC1FE` | mic ADC (bit 2) + TX DSP (bit 1) + PA gain (bit 3) |
@@ -394,16 +556,20 @@ RAM.
 
 1. **Which chip does what.**  Answered as far as static reading goes: the BK4829
    carries the filter (`0x33`), the RSSI/metering (`0x63`/`0x65`/`0x67`/`0x99`),
-   the squelch ramp (`0x13`) and the T/R set (`0x47`/`0x30`/`0x31`); the BK4815
-   carries the band select (`0x75`) and the path switch (`0x0c`); and the T/R
-   path picks between them from the channel frequency (`0x20000303`, see "What
-   the T/R flag is").  Still open: why the crossover is 134 MHz, what the state
-   byte `+0x75` means on its own, and which part actually radiates.
+   the squelch ramp (`0x13`), the T/R set (`0x47`/`0x30`/`0x31`) and the **whole
+   TX setup** (`0x38`/`0x39`/`0x30`/`0x50`/`0x7D`, written for both bands); the
+   BK4815 carries the band select (`0x75`), the T/R state (`0x0c`) and the per-mode
+   config above 134 MHz.  Still open: why the crossover is 134 MHz, what the state
+   byte `+0x75` means on its own, and **which part actually radiates above
+   134 MHz** -- the BK4829 is not switched off there (its TX registers are still
+   written), so this needs the radio, not the image.
 2. The power-on/off and sleep handling, and whether anything else gates the RF
    rails — the decompiler is now available, but these paths have not been walked.
 3. The per-channel/per-band routines that feed the T/R registers.  The TX power
    setting is answered above: `0x7D`, computed by `FUN_0801BAF4` from the codeplug
-   level; still open is which of `0x7D` and `0x30` bit 3 actually enables the PA.
+   level, plus the `PB14`/TIM1_CH2 bias PWM (`value * ARR / 255`); still open is
+   which of `0x7D`, `0x30` bit 3 and the PWM actually enables/limits the PA on the
+   radio.
 4. `FUN_0800A968`, `FUN_0801533C` and `FUN_0801537C` (the `FUN_08007F90` callees)
    are not identified.
 5. Which string `FUN_08015D14(0x0b)` actually renders, and what the byte at

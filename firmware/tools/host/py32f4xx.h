@@ -76,8 +76,31 @@ typedef struct {
     __IO uint32_t AHBENR;
     __IO uint32_t APBENR1;
     __IO uint32_t APBENR2;
+    __IO uint32_t AHB2ENR;
+    __IO uint32_t APB2ENR;
     __IO uint32_t CSR;
 } RCC_TypeDef;
+
+typedef struct {
+    __IO uint32_t CR1;
+    __IO uint32_t CR2;
+    __IO uint32_t SMCR;
+    __IO uint32_t DIER;
+    __IO uint32_t SR;
+    __IO uint32_t EGR;
+    __IO uint32_t CCMR1;
+    __IO uint32_t CCMR2;
+    __IO uint32_t CCER;
+    __IO uint32_t CNT;
+    __IO uint32_t PSC;
+    __IO uint32_t ARR;
+    __IO uint32_t RCR;
+    __IO uint32_t CCR1;
+    __IO uint32_t CCR2;
+    __IO uint32_t CCR3;
+    __IO uint32_t CCR4;
+    __IO uint32_t BDTR;
+} TIM_TypeDef;
 
 #define GPIOA ((GPIO_TypeDef *)&host_gpio_scratch[0])
 #define GPIOB ((GPIO_TypeDef *)&host_gpio_scratch[1])
@@ -90,6 +113,11 @@ typedef struct {
  * its pin through the inline `gpio_write` -- and a preview should run through
  * them rather than fault.  Nothing reads a value back. */
 extern GPIO_TypeDef host_gpio_scratch[6];
+
+/* `driver/pa.c` names TIM1; a preview never calls `pa_init()`, so the timer
+ * only has to exist for the reference to link. */
+extern TIM_TypeDef host_tim_scratch;
+#define TIM1 (&host_tim_scratch)
 
 #define ADC1  ((ADC_TypeDef *)0u)
 #define USART1 ((USART_TypeDef *)0u)

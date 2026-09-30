@@ -19,7 +19,25 @@
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
 #include "driver/bk4815.h"
+#include "driver/gpio.h"
+#include "driver/pa.h"
 #include "driver/rf_bus.h"
+
+/* The GPIO/timer scratch the host device-header double points at.  This test
+ * does not link tools/host/host_hw.c, so it supplies its own.  `pa_init()` is
+ * never called, so `RCC`'s null pointer is never dereferenced. */
+GPIO_TypeDef host_gpio_scratch[6];
+TIM_TypeDef  host_tim_scratch;
+
+/* `pa.c` calls these two in `pa_init()` only; the register test never brings
+ * the timer up, so they are no-ops.  Stubbing them keeps the K1 hardware
+ * surface out of this link (see `driver/gpio.c`). */
+void gpio_port_clock(GPIO_TypeDef *port) { (void)port; }
+void gpio_config_output(GPIO_TypeDef *port, uint32_t mask)
+{
+    (void)port;
+    (void)mask;
+}
 
 /* ------------------------------------------------------------- bus stub --- */
 
@@ -362,6 +380,47 @@ static void test_k1_interface(void)
           "with the driver's gains packed in ((11<<12)|(5<<4)|3)");
 }
 
+/* The RX path must not clobber register 0x33.  BK4819_Init() leaves the
+ * driver's output shadow at 0x9000; a receive select is a read-modify-write on
+ * top of it (the stock's FUN_080137D4 reads 0x33 back before masking), not a
+ * fresh 0x04/0x00.  This is the regression that stopped 0x67 following a
+ * carrier. */
+static uint16_t last_reg33(void)
+{
+    unsigned i;
+
+    for (i = log_len; i-- > 0; )
+        if (xfer_is(&log_[i], BK4829_CS_PIN, 0x33))
+            return (uint16_t)((log_[i].data[0] << 8) | log_[i].data[1]);
+    return 0xFFFFu;
+}
+
+static void test_pa_rx_path(void)
+{
+    printf("pa receive path (reg 0x33)\n");
+
+    /* 145.5000 MHz: VHF, the K1/app rule selects the VHF LNA (pin 4, 0x04). */
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    pa_select_band(14550000u);
+    check_hex(last_reg33(), 0x9004, "VHF receive keeps 0x9000 and sets pin 4");
+
+    /* 446.00625 MHz: UHF, pin 3 (0x08). */
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    pa_select_band(44600625u);
+    check_hex(last_reg33(), 0x9008, "UHF receive keeps 0x9000 and sets pin 3");
+
+    /* The below-134 MHz branch must still preserve the bits. */
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    pa_select_band(11800000u);      /* 118.0 MHz */
+    check_hex(last_reg33(), 0x9004, "118 MHz receive keeps 0x9000");
+}
+
 int main(void)
 {
     printf("rf register-layer test (stub bus, no radio)\n\n");
@@ -372,6 +431,7 @@ int main(void)
     test_bk4815_config();
     test_accessors();
     test_k1_interface();
+    test_pa_rx_path();
 
     printf("\n%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

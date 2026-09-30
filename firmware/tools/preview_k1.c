@@ -27,6 +27,9 @@
 #include "port_storage.h"
 #include "ui/menu.h"
 
+/* State assertions this preview checks (the panel rendering is eyeballed). */
+static int failures;
+
 /* One pass of the firmware's own loop (firmware/App/main.c): the application
  * state machine and panel, the port's transmit check, then the 10 ms slice --
  * which is where the K1's CheckKeys() lives and therefore the only place a key
@@ -247,5 +250,56 @@ int main(void)
     }
     render("CheckKeys(): three KEY_DOWN presses moved the cursor");
 
-    return 0;
+    /* The VFO switch.  This radio has no A/B key, so a short EXIT with nothing
+     * to cancel is the port's binding (app/main.c MAIN_Key_EXIT ->
+     * COMMON_SwitchVFOs).  The receiver must follow it: `gRxVfo` is what the
+     * port's RX tick tunes, so a stale `gRxVfo` here is exactly why the radio
+     * kept receiving on the previous VFO. */
+    {
+        unsigned int tx_before;
+        uint32_t     rx_before;
+        bool         ok;
+        int          i;
+
+        gScreenToDisplay = DISPLAY_MAIN;
+        tx_before = gEeprom.TX_VFO;
+        rx_before = gRxVfo->freq_config_RX.Frequency;
+
+        press(KEY_EXIT);
+
+        ok = (gEeprom.TX_VFO != tx_before)
+             && (gEeprom.RX_VFO == gEeprom.TX_VFO)
+             && (gRxVfo == &gEeprom.VfoInfo[gEeprom.TX_VFO]);
+
+        printf("[vfo] %s EXIT: TX_VFO %u -> %u, RX_VFO %u, gRxVfo %u.%05u -> "
+               "%u.%05u (VFO0 %u.%05u, VFO1 %u.%05u)\n",
+               ok ? "ok  " : "FAIL", tx_before, (unsigned)gEeprom.TX_VFO,
+               (unsigned)gEeprom.RX_VFO,
+               (unsigned)(rx_before / 100000u), (unsigned)(rx_before % 100000u),
+               (unsigned)(gRxVfo->freq_config_RX.Frequency / 100000u),
+               (unsigned)(gRxVfo->freq_config_RX.Frequency % 100000u),
+               (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency / 100000u),
+               (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency % 100000u),
+               (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency / 100000u),
+               (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency % 100000u));
+        if (!ok)
+            failures++;
+
+        /* And it must stay there: the K1's dual-watch engine would toggle the
+         * receive VFO back on the next slices. */
+        for (i = 0; i < 20; i++)
+            step();
+
+        ok = (gEeprom.RX_VFO == gEeprom.TX_VFO)
+             && (gRxVfo == &gEeprom.VfoInfo[gEeprom.TX_VFO]);
+        printf("[vfo] %s the receive VFO stays on the selected one over 20 slices "
+               "(TX_VFO %u, RX_VFO %u)\n",
+               ok ? "ok  " : "FAIL", (unsigned)gEeprom.TX_VFO,
+               (unsigned)gEeprom.RX_VFO);
+        if (!ok)
+            failures++;
+    }
+
+    printf("\n%d failures\n", failures);
+    return failures ? 1 : 0;
 }

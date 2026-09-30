@@ -34,6 +34,10 @@ void host_nvic_system_reset(void)
  * `gpio_write`, which lands here and is simply recorded. */
 GPIO_TypeDef host_gpio_scratch[6];
 
+/* `driver/pa.c` names TIM1; a preview never calls `pa_init()`, so it only has to
+ * exist for the reference to link. */
+TIM_TypeDef host_tim_scratch;
+
 void gpio_port_clock(GPIO_TypeDef *port) { (void)port; }
 void gpio_config_output(GPIO_TypeDef *port, uint32_t mask) { (void)port; (void)mask; }
 

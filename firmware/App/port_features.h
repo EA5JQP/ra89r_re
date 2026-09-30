@@ -35,6 +35,17 @@
 #define ENABLE_KEEP_MEM_NAME 1
 #define ENABLE_WIDE_RX 1
 
+/* The port draws the K1's double-channel VFO layout without the K1's dual-watch
+ * engine.  The K1 draws both rows only when DUAL_WATCH (or CROSS_BAND) is not
+ * OFF -- `ui/main.c`'s isMainOnly() -- so the port forces isMainOnly() false
+ * and leaves `gEeprom.DUAL_WATCH` OFF.  The alternative, leaving DUAL_WATCH set
+ * for the layout, also runs `app/app.c`'s DualwatchAlternate(): it toggles
+ * `gEeprom.RX_VFO` and retunes every ~500 ms, ignoring the VFO the user
+ * selected (this radio's A/B key is EXIT), and it diverts CheckForIncoming()
+ * away from the port's polled `g_SquelchLost`.  Dual-watch is an RF behaviour
+ * the port has no engine for. */
+#define PORT_TWO_ROW_UI 1
+
 /* Version strings the K1's menus and boot screen print.  The RA89R port is its
  * own build, so these say so rather than impersonating the K1 release. */
 #define AUTHOR_STRING "RA89R port"

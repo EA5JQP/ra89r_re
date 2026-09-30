@@ -13,6 +13,7 @@
 
 #include "app/menu.h"
 #include "driver/keyboard.h"
+#include "driver/led.h"
 #include "driver/rx.h"
 #include "driver/tx.h"
 #include "driver/st7565.h"
@@ -103,23 +104,51 @@ void port_gui_poll(void)
 
 void port_gui_tick(uint32_t now_ms)
 {
-    static uint32_t last;
-    static bool     squelch_open;
+    static bool squelch_open;
 
     /* The receiver's own poll: the squelch marks are the stock's, and the RSSI
      * the screen reads comes from the chip (BK4819_GetRSSI). */
     if (rx_ready())
         rx_poll();
 
+    /* The K1 application tunes the chip directly (radio.c), but the port's own
+     * tick is the only place that tracks the RX frequency, so retune here too:
+     * `rx_set_frequency()` writes the BK4829's 0x38/0x39 and re-applies the band
+     * path (PA0/PA1, the BK4815 band register 0x75 and the chip's RX path bit)
+     * when the GUI frequency moves.  This makes the configured RX frequency
+     * authoritative even on a path that skips RADIO_SetupRegisters(). */
+    {
+        static uint32_t last_freq;
+        uint32_t freq = (gRxVfo != 0) ? gRxVfo->pRX->Frequency : 0u;
+
+        if (freq != last_freq) {
+            last_freq = freq;
+            if (freq != 0u)
+                rx_set_frequency(freq);
+        }
+    }
+
     if (rx_ready() && rx_squelch_open() != squelch_open) {
         squelch_open = rx_squelch_open();
-        FUNCTION_Select(squelch_open ? FUNCTION_INCOMING : FUNCTION_RECEIVE);
+
+        /* The K1 app's whole receive path keys off `g_SquelchLost`:
+         * CheckForIncoming() promotes FOREGROUND to INCOMING on it, and
+         * HandleIncoming() reverts to FOREGROUND without it.  It is normally set
+         * by the chip's squelch interrupt, which this port never arms -- its
+         * rx_init() leaves REG_3F at BK4819_Init()'s 0 -- so the flag stayed
+         * false and setting FUNCTION_INCOMING was undone on the next slice.  That
+         * is why 0x67 could say "open" (console 'S') with no screen, status or
+         * LED change.  Publish the polled result instead, and mirror the level
+         * CheckRadioInterrupts() would have put on the green LED. */
+        g_SquelchLost = squelch_open;
+        if (!tx_active())
+            led_set(squelch_open ? LED_GREEN : LED_OFF);
         gUpdateDisplay = true;
+        gUpdateStatus  = true;
     }
 
     /* The application repaints on its own (gUpdateDisplay); this tick only
      * needs to keep the receiver polled, so it stays cheap. */
-    (void)last;
     (void)now_ms;
     (void)PORT_GUI_REFRESH_MS;
 }

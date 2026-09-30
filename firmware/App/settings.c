@@ -62,11 +62,12 @@ void PORT_SettingsDefaults(void)
     gEeprom.CHANNEL_DISPLAY_MODE = 0;
     gEeprom.TAIL_TONE_ELIMINATION = false;
     gEeprom.VFO_OPEN = true;
-    /* The double-channel UI: ui/main.c's isMainOnly() is
-     * (DUAL_WATCH == OFF && CROSS_BAND == OFF), so any other dual-watch mode
-     * makes the main screen draw both VFOs.  Cross-band stays off: that is an
-     * RF behaviour, and the port has no engine for it yet. */
-    gEeprom.DUAL_WATCH = DUAL_WATCH_CHAN_A;
+    /* The double-channel UI no longer rides on dual-watch: the port forces
+     * ui/main.c's isMainOnly() false (port_features.h) to draw both rows, and
+     * leaves dual-watch and cross-band OFF.  Both are RF behaviours -- the K1's
+     * DualwatchAlternate() toggles the receive VFO between the two channels --
+     * and the port has no engine for them. */
+    gEeprom.DUAL_WATCH = DUAL_WATCH_OFF;
     gEeprom.CROSS_BAND_RX_TX = CROSS_BAND_OFF;
     gEeprom.BATTERY_SAVE = 0;
     gEeprom.BACKLIGHT_TIME = 4;
@@ -161,6 +162,12 @@ void SETTINGS_InitEEPROM(void)
             gEeprom.MrChannel[1]     = second;
         }
     }
+
+    /* A blob saved before the layout was decoupled still carries a dual-watch
+     * mode, and the K1's dual-watch engine would then toggle the receiver
+     * between the two VFOs.  The receiver must follow the selected VFO, so
+     * force it off whatever the blob says. */
+    gEeprom.DUAL_WATCH = DUAL_WATCH_OFF;
 }
 
 void SETTINGS_LoadCalibration(void)

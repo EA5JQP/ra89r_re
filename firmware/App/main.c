@@ -204,13 +204,14 @@ static void print_help(void)
     uart_puts("\nthe K1 GUI owns the panel; these are console diagnostics\n"
               "          h help   i diagnostics   d dump screen as ASCII\n"
               "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
-              "          F cycle the VHF/UHF front-end selection (find what receives)\n"
-              "          D step the RF bus delay down (find what still gives audio)\n"
+              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n"
+              "          D step the RF bus delay (find what still gives audio)\n"
               "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
               "          v/V contrast   L status led cycle (PA13/PA14)\n"
               "          R probe RF ids   W configure both   X verify config\n"
               "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
+              "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
               "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
@@ -237,10 +238,11 @@ static void print_mode(void)
                 (unsigned)gEeprom.FreqChannel[0], (unsigned)gEeprom.FreqChannel[1],
                 (unsigned)gEeprom.MrChannel[0], (unsigned)gEeprom.MrChannel[1],
                 (unsigned)gEeprom.VFO_OPEN);
-    uart_printf("  front end %s (PA0 %s, reg 0x33 %s) -- VHF/UHF split 280 MHz\n",
+    uart_printf("  front end %s (%s, PA0 %s, reg 0x33 0x%04X)\n",
                 pa_band_is_uhf() ? "UHF" : "VHF",
-                pa_band_is_uhf() ? "high" : "low",
-                pa_band_is_uhf() ? "bit 0x08" : "bit 0x04");
+                pa_band_is_main() ? ">134 MHz" : "<=134 MHz",
+                pa_band_pa0_high() ? "high" : "low",
+                (unsigned)pa_chip_path_reg());
     uart_printf("  A %u.%05u MHz  B %u.%05u MHz  CHANNEL_SAVE %u  band %u  RX_VFO %u\n",
                 (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency / 100000u),
                 (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency % 100000u),
@@ -264,6 +266,14 @@ static void print_profile(void)
         sink += BK4819_GetRSSI();
     t1 = systick_millis();
     uart_printf("  100 x BK4819_GetRSSI               %5u ms\n", (unsigned)(t1 - t0));
+
+    /* One tune, i.e. what every UP/DOWN and channel change pays: the K1's
+     * RADIO_SetupRegisters, which is ~30 RF register accesses.  With the bus
+     * delay as it is, this is the number that makes tuning feel slow. */
+    t0 = systick_millis();
+    RADIO_SetupRegisters(true);
+    t1 = systick_millis();
+    uart_printf("  1 x RADIO_SetupRegisters (a tune)  %5u ms\n", (unsigned)(t1 - t0));
 
     t0 = systick_millis();
     for (i = 0; i < 20u; i++)
@@ -711,8 +721,13 @@ static void rf_watch(void)
     uint16_t min = 0xFFFFu, max = 0, last = 0;
     unsigned i;
 
-    uart_puts("\nRF: reg 0x67 every 200 ms for 4 s "
-              "(0xB4 / 0xCF are the stock's squelch marks)\n");
+    uart_printf("\nRF: BK4829 reg 0x67 every 200 ms for 4 s "
+                "(0xB4 / 0xCF are the stock's squelch marks)\n"
+                "  RX %u.%05u MHz, %s, %s (>134 MHz split)\n",
+                (unsigned)(rx_rx_frequency() / 100000u),
+                (unsigned)(rx_rx_frequency() % 100000u),
+                pa_band_is_uhf() ? "UHF" : "VHF",
+                pa_band_is_main() ? "main" : "sub");
     if (!rx_ready())
         uart_puts("  note: 'K' has not run this boot, so the part is not tuned or\n"
                   "  in RX and these readings will not follow a carrier.\n");
@@ -733,6 +748,85 @@ static void rf_watch(void)
 
     uart_printf("  min 0x%03X  max 0x%03X  last 0x%03X\n",
                 (unsigned)min, (unsigned)max, (unsigned)last);
+}
+
+/* Console 'Q': characterise the squelch on the two bench frequencies, VHF then
+ * UHF.  For each one it measures the noise floor (tinySA output off) and the
+ * carrier (output on) and reports the open/close mark that falls between them,
+ * so the marks can be set from the radio instead of by eye.  Each phase waits
+ * for a key, with a timeout, so the tinySA can be moved between bands. */
+static void rf_squelch_autodetect(void)
+{
+    /* 145.5000 then 446.00625 MHz, in the codec's 10 Hz units. */
+    static const uint32_t freqs[] = { 14550000u, 44600625u };
+    static const char *const names[] = { "VHF", "UHF" };
+    uint32_t saved = (gRxVfo != 0) ? gRxVfo->pRX->Frequency : 0u;
+    unsigned f;
+
+    uart_puts("\nsquelch auto-detect (BK4829 reg 0x67) -- "
+              "VHF (145.5000) first, then UHF (446.00625)\n");
+
+    for (f = 0; f < sizeof freqs / sizeof freqs[0]; f++) {
+        uint16_t floor_lo = 0xFFFFu, floor_hi = 0;
+        uint16_t sig_lo = 0xFFFFu, sig_hi = 0;
+        uint32_t floor_sum = 0, sig_sum = 0;
+        unsigned i;
+
+        uart_printf("\n--- %s %u.%05u MHz ---\n"
+                    "  set the tinySA to this frequency with its output OFF,\n"
+                    "  then press any key (or wait 15 s)\n",
+                    names[f], (unsigned)(freqs[f] / 100000u),
+                    (unsigned)(freqs[f] % 100000u));
+        (void)uart_getc_timeout(15000);
+
+        rx_set_frequency(freqs[f]);
+        systick_delay_ms(100);              /* let the PLL settle */
+
+        for (i = 0; i < 10u; i++) {
+            uint16_t v = BK4819_GetRSSI();
+            if (v < floor_lo) floor_lo = v;
+            if (v > floor_hi) floor_hi = v;
+            floor_sum += v;
+            systick_delay_ms(100);
+        }
+        uart_printf("  floor  : min 0x%03X max 0x%03X mean 0x%03X\n",
+                    (unsigned)floor_lo, (unsigned)floor_hi,
+                    (unsigned)(floor_sum / 10u));
+
+        uart_puts("  now turn the tinySA output ON, then press any key (or wait 15 s)\n");
+        (void)uart_getc_timeout(15000);
+
+        for (i = 0; i < 10u; i++) {
+            uint16_t v = BK4819_GetRSSI();
+            if (v < sig_lo) sig_lo = v;
+            if (v > sig_hi) sig_hi = v;
+            sig_sum += v;
+            systick_delay_ms(100);
+        }
+        uart_printf("  carrier: min 0x%03X max 0x%03X mean 0x%03X\n",
+                    (unsigned)sig_lo, (unsigned)sig_hi,
+                    (unsigned)(sig_sum / 10u));
+
+        if ((int)sig_lo - (int)floor_hi >= 0x10) {
+            /* Midpoint between the floor and the carrier, keeping the stock's
+             * 0x1B (0xCF-0xB4) hysteresis between open and close. */
+            uint16_t open_mark = (uint16_t)(floor_hi + ((int)sig_lo - (int)floor_hi) / 2);
+
+            uart_printf("  detected: open 0x%03X, close 0x%03X "
+                        "(between floor and carrier; stock 0x%03X / 0x%03X)\n",
+                        (unsigned)open_mark, (unsigned)(open_mark - 0x1Bu),
+                        (unsigned)RX_SQUELCH_OPEN_MARK,
+                        (unsigned)RX_SQUELCH_CLOSE_MARK);
+        } else {
+            uart_puts("  detected: floor and carrier overlap -- no carrier seen\n");
+        }
+    }
+
+    if (saved) {
+        rx_set_frequency(saved);
+        uart_printf("\nback on %u.%05u MHz\n", (unsigned)(saved / 100000u),
+                    (unsigned)(saved % 100000u));
+    }
 }
 
 static void rf_configure(void)
@@ -1024,15 +1118,17 @@ int main(void)
                 print_profile();
                 break;
             case 'F': {
-                /* Find the front-end setting this board receives with.  RX works
-                 * with the chip's path bits clear, so the K1's pin semantics are
-                 * not this part's; cycle and listen (or watch 'S'). */
+                /* The chip-side receive path.  AUTO is the K1 application's
+                 * rule (VHF LNA pin 4 below 280 MHz, UHF LNA pin 3 at or above
+                 * it); the other modes walk the individual LNA bits so the
+                 * radio can settle the stock's own pin-4 activity.  Cycle and
+                 * listen (or watch 'S'). */
                 static const char *const names[] = {
-                    "leave the register as BK4819_Init() left it (default)",
+                    "leave the register as BK4819_Init() left it",
                     "VHF bit: 0x33 |= 0x04, 0x08 clear",
                     "UHF bit: 0x33 |= 0x08, 0x04 clear",
                     "both cleared",
-                    "auto by frequency (the K1's rule)",
+                    "the K1/app rule: VHF pin 4 below 280 MHz, UHF pin 3 (default)",
                 };
                 uint8_t mode = (uint8_t)((pa_chip_path_mode() + 1u) % 5u);
                 uint32_t freq = gRxVfo ? gRxVfo->pRX->Frequency : 0u;
@@ -1041,11 +1137,35 @@ int main(void)
                 if (freq)
                     pa_select_band(freq);
                 uart_printf("\nfront end: mode %u -- %s\n", (unsigned)mode, names[mode]);
-                uart_printf("  PA0 %s, reg 0x33 = 0x%04X (mode 0 leaves it at 0x9000)\n",
-                            pa_band_is_uhf() ? "high" : "low",
+                uart_printf("  PA0 %s, reg 0x33 = 0x%04X\n",
+                            pa_band_pa0_high() ? "high" : "low",
                             (unsigned)pa_chip_path_reg());
-                uart_puts("  listen (or 'S' with a carrier) and press 'f' for the next;"
+                uart_puts("  listen (or 'S' with a carrier) and press 'F' for the next;"
                           " note which mode receives\n");
+                break;
+            }
+            case 'B': {
+                /* The MCU band pin PA0.  The stock takes PA0 from its config,
+                 * not the frequency (pa.h); on this codeplug that is PA0 = 0,
+                 * so the default is the stock's value and this experiment is
+                 * what settles it on the radio. */
+                static const char *const names[] = {
+                    "PA0 low whatever the band (the stock's value, default)",
+                    "PA0 high whatever the band",
+                    "auto: PA0 high for UHF, low for VHF (an inference)",
+                };
+                uint8_t mode = (uint8_t)((pa_band_pin_mode() + 1u) % PA_BAND_PIN_MODES);
+                uint32_t freq = gRxVfo ? gRxVfo->pRX->Frequency : 0u;
+
+                pa_set_band_pin_mode(mode);
+                if (freq)
+                    pa_select_band(freq);
+                uart_printf("\nMCU band pin: mode %u -- %s\n", (unsigned)mode, names[mode]);
+                uart_printf("  PA1 high, PA0 %s (%s)\n",
+                            pa_band_pa0_high() ? "high" : "low",
+                            pa_band_is_uhf() ? "UHF" : "VHF");
+                uart_puts("  retune UHF, press 'S' with a carrier and listen;"
+                          " note the level that works\n");
                 break;
             }
             case '0':
@@ -1156,6 +1276,9 @@ int main(void)
                 break;
             case 'S':
                 rf_watch();
+                break;
+            case 'Q':
+                rf_squelch_autodetect();
                 break;
             case 'e': {
                 /* The external SPI NOR flash: identity, then a hexdump. */
