@@ -285,7 +285,7 @@ void GPIO_DisableAudioPath(void) { }
 void systick_delay_ms(uint32_t ms) { (void)ms; }
 
 bool tx_active(void) { return false; }
-void tx_start(uint32_t freq_10hz, tx_source_t source) { (void)freq_10hz; (void)source; }
+void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source) { (void)freq_10hz; (void)power; (void)source; }
 void tx_stop(void) { }
 
 /* More of the RF driver's entry points the app core calls. */

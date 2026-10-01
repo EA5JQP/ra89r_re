@@ -50,11 +50,11 @@
 #define PA_PWM_MAX_DUTY  (PA_PWM_ARR / 2u)
 
 /* The chip's PA-CTL and bias word: bit 7 enables PA-CTL, bits 15:8 are the
- * bias, bits 5:0 the gain tuning.  0x8822 is the measured working value. */
-#define PA_REG36_BIAS    0x8800u
-#define PA_REG36_CTL     0x0080u
-#define PA_REG36_GAIN    0x0022u
-#define PA_REG36_ON      (PA_REG36_BIAS | PA_REG36_CTL | PA_REG36_GAIN)
+ * bias, bits 5:0 the gain tuning.  The K1's `BK4819_SetupPowerAmplifier` builds
+ * it as `(bias << 8) | PA-CTL | gain`, with the gain per band. */
+#define PA_REG36_CTL       0x0080u
+#define PA_REG36_GAIN_VHF  0x08u    /* (1 << 3) | (0 << 0), the K1's VHF gain */
+#define PA_REG36_GAIN_UHF  0x22u    /* (4 << 3) | (2 << 0), the K1's UHF gain */
 
 /* The stock's two frequency splits, in the codec's 10 Hz units. */
 #define PA_MAIN_SPLIT    13400000u  /* 134.0 MHz: <=134 the BK4829 branch, >134 the BK4815 */
@@ -117,8 +117,10 @@ uint8_t pa_band_pin_mode(void);
 void    pa_set_band_pin_mode(uint8_t mode);
 
 /* Chip side, transmit: the band pin (`0x40` VHF / `0x20` UHF) plus the T/R pin
- * (`0x02`), and `0x36 = PA_REG36_ON`. */
-void pa_tx_enable(void);
+ * (`0x02`), and `0x36 = (power << 8) | PA-CTL | gain` (the K1's
+ * `SetupPowerAmplifier`).  `power` is the K1's `TXP_CalculatedSetting` (0..255),
+ * and the same value drives the PB14 bias PWM with the stock's arithmetic. */
+void pa_tx_enable(uint8_t power);
 
 /* Chip side, receive: re-apply `pa_apply_chip_path()` (AUTO = the K1/app LNA
  * rule), `0x36 = 0`, compare 0. */

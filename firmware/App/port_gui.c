@@ -76,7 +76,8 @@ static void port_gui_ptt(bool down)
 
     if (down) {
         FUNCTION_Select(FUNCTION_TRANSMIT);
-        tx_start(gTxVfo->freq_config_TX.Frequency, TX_SOURCE_MIC);
+        tx_start(gTxVfo->freq_config_TX.Frequency,
+                 gTxVfo->TXP_CalculatedSetting, TX_SOURCE_MIC);
     } else {
         tx_stop();
         FUNCTION_Select(FUNCTION_RECEIVE);

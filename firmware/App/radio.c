@@ -560,7 +560,10 @@ void RADIO_ConfigureSquelchAndOutputPower(VFO_Info_t *pInfo)
     else if (currentPower == 6)
         Op = 2; // High eeprom calibration data
 
-    PY25Q16_ReadBuffer(0x100D0 + (Band * 16) + (Op * 3), Txp, 3);
+    /* Port adaptation (see NOTICE, docs/ra89r_rfpath.md): the K1 reads this from
+     * its EEPROM at `0x100D0 + band*16 + op*3`, which is erased (0xFF) on this
+     * radio; settings.c supplies provisional values until a measured sweep. */
+    SETTINGS_GetTxCalibration((uint8_t)Band, (uint8_t)Op, Txp);
 
 #ifdef ENABLE_FEAT_F4HWN
     // make low and mid even lower

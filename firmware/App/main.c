@@ -610,6 +610,10 @@ static bool tx_on;
 static tx_source_t bench_source;
 static unsigned pa_duty = TX_POWER_COMPARE;    /* 'Y' steps it */
 
+/* The bench TX power setting (the K1's TXP_CalculatedSetting shape); 'Y' still
+ * steps the raw PB14 compare on top of it. */
+#define BENCH_TX_POWER 0x88u
+
 
 
 /* Panel read-out: the source, and the registers that decide whether the signal
@@ -654,7 +658,7 @@ static void bench_screen(unsigned duty, uint16_t r50, uint16_t r36, uint16_t r7d
 static void radio_tx(int on, tx_source_t source)
 {
     if (on) {
-        tx_start(BENCH_FREQ_HZ, source);
+        tx_start(BENCH_FREQ_HZ, BENCH_TX_POWER, source);
         pa_power((uint16_t)pa_duty);        /* the console can step this */
     } else {
         tx_stop();

@@ -422,6 +422,34 @@ static void test_pa_rx_path(void)
     check_hex(last_reg33(), 0x9000, "118 MHz receive clears both LNA pins, keeps 0x9000");
 }
 
+/* The K1's power ladder reaches 0x36 (its SetupPowerAmplifier) and, with the
+ * stock's arithmetic, the PB14 bias PWM compare. */
+static void test_pa_tx_path(void)
+{
+    printf("pa transmit path (0x33/0x36/PWM)\n");
+
+    /* 145.5000 MHz: VHF, so the K1's VHF PA gain (0x08), not the UHF one. */
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    pa_select_band(14550000u);
+    pa_tx_enable(0x40u);
+    check_hex(pa_last_reg33(), 0x0042u, "VHF TX: band pin 0x40 + T/R 0x02");
+    check_hex(pa_last_reg36(), 0x4088u, "VHF TX: 0x36 = (0x40<<8) | PA-CTL | gain 0x08");
+    check_hex(pa_last_compare(), (0x40u * PA_PWM_ARR) / 255u,
+              "VHF TX: PWM compare = power*ARR/255");
+
+    /* 446.00625 MHz: UHF, the K1's UHF gain (0x22). */
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    pa_select_band(44600625u);
+    pa_tx_enable(0xFFu);
+    check_hex(pa_last_reg33(), 0x0022u, "UHF TX: band pin 0x20 + T/R 0x02");
+    check_hex(pa_last_reg36(), 0xFFA2u, "UHF TX: 0x36 = (0xFF<<8) | PA-CTL | gain 0x22");
+    check_hex(pa_last_compare(), PA_PWM_MAX_DUTY, "UHF TX: full power clamps the compare");
+}
+
 int main(void)
 {
     printf("rf register-layer test (stub bus, no radio)\n\n");
@@ -433,6 +461,7 @@ int main(void)
     test_accessors();
     test_k1_interface();
     test_pa_rx_path();
+    test_pa_tx_path();
 
     printf("\n%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

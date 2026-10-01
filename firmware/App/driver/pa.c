@@ -164,16 +164,23 @@ void pa_power(uint16_t compare)
     TIM1->CCR2 = compare;
 }
 
-void pa_tx_enable(void)
+void pa_tx_enable(uint8_t power)
 {
     /* The stock's transmit word: the band pin (`0x40` VHF / `0x20` UHF, set by
      * FUN_0801BDE8 from the TX band index) plus the T/R pin (`0x02`, set by
-     * FUN_08013A70(2)) -- 0x42 / 0x22.  The port used to write 0x0020 alone,
-     * which is only the UHF band pin. */
+     * FUN_08013A70(2)) -- 0x42 / 0x22. */
+    const uint8_t gain = s_uhf ? PA_REG36_GAIN_UHF : PA_REG36_GAIN_VHF;
+
     s_reg33 = (uint16_t)((s_uhf ? PA_REG33_BAND_UHF : PA_REG33_BAND_VHF) | PA_REG33_TR);
     BK4819_WriteRegister(BK4819_REG_33, s_reg33);
-    s_reg36 = PA_REG36_ON;
+
+    /* The K1's BK4819_SetupPowerAmplifier: 0x36 = (bias << 8) | PA-CTL | gain.
+     * The RA89R's own power knob is the PB14 bias PWM, so the same setting
+     * drives it with the stock's arithmetic (`power * ARR / 255`, clamped). */
+    s_reg36 = (uint16_t)(((uint16_t)power << 8) | PA_REG36_CTL | gain);
     BK4819_WriteRegister(BK4819_REG_36, s_reg36);
+
+    pa_power((uint16_t)(((uint32_t)power * PA_PWM_ARR) / 255u));
 }
 
 void pa_rx_enable(void)

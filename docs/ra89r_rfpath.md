@@ -566,6 +566,18 @@ second transceiver's state and the PB14 power PWM.  What is still open is only t
 (`FUN_0801C3A8`, `0x40`) and AF level (`0x48`/`0x6C`) the stock fills from its own
 RAM.
 
+**The port's power ladder (the K1 wired to this radio).**  The K1's
+`TXP_CalculatedSetting` (0..255, from the channel's `OUTPUT_POWER` via
+`RADIO_ConfigureSquelchAndOutputPower`) now drives **both** `0x36`
+(`bias << 8 | PA-CTL | gain`, the K1's `SetupPowerAmplifier`, with the band's gain
+`0x08` VHF / `0x22` UHF) and the PB14 compare (`power * ARR / 255`, the stock's
+arithmetic) -- `pa_tx_enable(power)` does both, and `tx_start()` takes the
+setting.  The K1 reads its per-band low/mid/high calibration from EEPROM
+`0x100D0`, which is **erased (`0xFF`)** on this radio, so
+`SETTINGS_GetTxCalibration()` supplies the K1's values for the nearest bands as a
+**provisional** stand-in; the per-level duty for each band still needs a measured
+sweep, and the provisional table is where its results go.
+
 ## Open
 
 1. **Which chip does what.**  Answered as far as static reading goes: the BK4829

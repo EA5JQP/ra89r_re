@@ -13,15 +13,16 @@ void tx_init(void)
     pa_init();
 }
 
-void tx_start(uint32_t freq_10hz, tx_source_t source)
+void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source)
 {
     if (s_active && source == s_source)
         return;
 
     /* The band state first (PA0/PA1, the BK4815 0x75 band and the RX path),
-     * then the TX band pin -- pa_tx_enable() overwrites 0x33. */
+     * then the TX band pin -- pa_tx_enable() overwrites 0x33 and sets 0x36 and
+     * the PB14 bias PWM from `power`. */
     pa_select_band(freq_10hz);
-    pa_tx_enable();                         /* 0x33 = 0x42 VHF / 0x22 UHF, 0x36 = 0x8822 */
+    pa_tx_enable(power);
     bk4815_write_reg(0x0C, pa_band_is_main() ? 0x0203u : 0xFFFBu);  /* the T/R path */
     BK4819_SetFrequency(freq_10hz);
     BK4819_WriteRegister(BK4819_REG_7D, TX_REG7D_POWER);
@@ -41,7 +42,6 @@ void tx_start(uint32_t freq_10hz, tx_source_t source)
                              (uint16_t)(0x3000u | ((uint16_t)TX_MIC_GAIN << 4)));
     }
 
-    pa_power(TX_POWER_COMPARE);
     led_set(LED_RED);                       /* red = transmit, as the stock shows it */
 
     s_active = true;

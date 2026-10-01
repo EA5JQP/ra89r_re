@@ -178,6 +178,30 @@ void SETTINGS_LoadCalibration(void)
      * load here -- and nothing that may overwrite the stock's calibration. */
 }
 
+void SETTINGS_GetTxCalibration(uint8_t band, uint8_t op, uint8_t out[3])
+{
+    /* Provisional.  The K1 reads its TX calibration (the low/mid/high reference
+     * for each band) from EEPROM 0x100D0, which is erased -- 0xFF -- on this
+     * radio, so RADIO_ConfigureSquelchAndOutputPower() would compute a garbage
+     * TXP_CalculatedSetting.  These are the K1's own values for the nearest
+     * bands, a stand-in until a measured power sweep replaces them
+     * (docs/ra89r_rfpath.md). */
+    static const uint8_t cal[7][3] = {
+        { 0x32, 0x64, 0x8c },   /* 0: 50 MHz  */
+        { 0x32, 0x64, 0x8c },   /* 1: 108 MHz */
+        { 0x4b, 0x78, 0x96 },   /* 2: 137 MHz (the port's VHF) */
+        { 0x32, 0x64, 0x8c },   /* 3: 174 MHz */
+        { 0x5a, 0x64, 0xa0 },   /* 4: 350 MHz */
+        { 0x4b, 0x78, 0x96 },   /* 5: 400 MHz (the port's UHF) */
+        { 0x32, 0x64, 0x94 },   /* 6: 470 MHz */
+    };
+    const uint8_t v = (band < 7u && op < 3u) ? cal[band][op] : 0x32u;
+
+    out[0] = v;
+    out[1] = v;
+    out[2] = v;
+}
+
 /* ---------------------------------------------------------------------------
  * Channels
  * ------------------------------------------------------------------------- */
