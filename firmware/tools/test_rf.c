@@ -28,6 +28,7 @@
  * never called, so `RCC`'s null pointer is never dereferenced. */
 GPIO_TypeDef host_gpio_scratch[6];
 TIM_TypeDef  host_tim_scratch;
+RCC_TypeDef  host_rcc_scratch;   /* pa_init() references RCC; not called here */
 
 /* `pa.c` calls these two in `pa_init()` only; the register test never brings
  * the timer up, so they are no-ops.  Stubbing them keeps the K1 hardware

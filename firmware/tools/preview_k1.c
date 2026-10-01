@@ -17,6 +17,7 @@
 #include "driver/keyboard.h"
 #include "driver/st7565.h"
 #include "host_hw.h"
+#include "py32f4xx.h"      /* TIM7/DMA/SYSCFG scratch, for the backlight checks */
 #include "misc.h"
 #include "port_codeplug.h"
 #include "port_state.h"
@@ -298,6 +299,70 @@ int main(void)
                (unsigned)gEeprom.RX_VFO);
         if (!ok)
             failures++;
+    }
+
+    /* The K1 backlight driver: the logic is host-testable, the TIM7/DMA writes
+     * land in scratch.  See docs/ra89r_led.md. */
+    {
+        bool ok;
+        int  i;
+
+        gEeprom.BACKLIGHT_TIME = 4;
+        gEeprom.BACKLIGHT_MIN  = 1;
+        gEeprom.BACKLIGHT_MAX  = 5;
+
+        ok = value[0] == 0 && value[1] == 8 && value[5] == 48 && value[10] == 255;
+        printf("[backlight] %s value[] is the F4HWN table\n", ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        /* The keypad's ADC1 map lives in CFGR[2] bits[6:0]; the backlight uses
+         * bits[14:8] and must not disturb it. */
+        SYSCFG->CFGR[2] = 0x12345678u;
+        BACKLIGHT_InitHardware();
+        ok = (SYSCFG->CFGR[2] & 0x7Fu) == 0x78u && ((SYSCFG->CFGR[2] >> 8) & 0x7Fu) == 0x35u;
+        printf("[backlight] %s InitHardware keeps CFGR[2] bits[6:0], sets [14:8]=0x35\n", ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        ok = !BACKLIGHT_IsOn();
+        printf("[backlight] %s InitHardware leaves the panel dark\n", ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        BACKLIGHT_TurnOn();
+        ok = BACKLIGHT_IsOn() && gBacklightCountdown_500ms == 41u;
+        printf("[backlight] %s TurnOn(TIME=4) lights it, countdown 41\n", ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        /* Update() runs on the 10 ms slice and must not touch the 500 ms timer. */
+        for (i = 0; i < 20; i++) BACKLIGHT_Update();
+        ok = gBacklightCountdown_500ms == 41u;
+        printf("[backlight] %s Update() leaves the countdown alone\n", ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        BACKLIGHT_SetBrightness(5);
+        for (i = 0; i < 64; i++) BACKLIGHT_Update();
+        ok = BACKLIGHT_DutyOnCount() == (48u * 32u / 255u);   /* == 6 */
+        printf("[backlight] %s fade to index 5 -> duty level 6\n", ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        /* MIN=0 is a true dark idle: index 0 stops the PWM. */
+        gEeprom.BACKLIGHT_MIN = 0;
+        BACKLIGHT_SetBrightness(0);
+        for (i = 0; i < 64; i++) BACKLIGHT_Update();
+        ok = !(TIM7->CR1 & TIM_CR1_CEN);
+        printf("[backlight] %s index 0 stops the PWM\n", ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        gEeprom.BACKLIGHT_TIME = 61;
+        BACKLIGHT_TurnOn();
+        ok = BACKLIGHT_IsOn() && gBacklightCountdown_500ms == 0u;
+        printf("[backlight] %s TIME=61 is always-on (no countdown)\n", ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        gEeprom.BACKLIGHT_TIME = 0;
+        BACKLIGHT_TurnOn();
+        ok = !BACKLIGHT_IsOn();
+        printf("[backlight] %s TIME=0 leaves it off\n", ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
     }
 
     printf("\n%d failures\n", failures);

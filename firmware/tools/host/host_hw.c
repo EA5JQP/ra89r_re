@@ -38,6 +38,14 @@ GPIO_TypeDef host_gpio_scratch[6];
  * exist for the reference to link. */
 TIM_TypeDef host_tim_scratch;
 
+/* `driver/backlight.c` is host-tested through `BACKLIGHT_InitHardware()`, so
+ * its TIM7/DMA/SYSCFG/RCC registers are scratch too. */
+TIM_TypeDef         host_tim7_scratch;
+DMA_TypeDef         host_dma_scratch;
+DMA_Channel_TypeDef host_dma_ch2_scratch;
+SYSCFG_TypeDef      host_syscfg_scratch;
+RCC_TypeDef         host_rcc_scratch;
+
 void gpio_port_clock(GPIO_TypeDef *port) { (void)port; }
 void gpio_config_output(GPIO_TypeDef *port, uint32_t mask) { (void)port; (void)mask; }
 
