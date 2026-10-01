@@ -99,7 +99,12 @@ static void BACKLIGHT_SetHardwareBrightness(uint8_t brightness)
 
 void BACKLIGHT_InitHardware(void)
 {
+    /* The pin must be a push-pull output: the reset state is analog/input, and
+     * neither the direct writes nor the DMA's BSRR writes drive it until it is
+     * configured.  The K1 does this in BOARD_GPIO_Init; here the driver owns the
+     * pin. */
     gpio_port_clock(BACKLIGHT_PORT);
+    gpio_config_output(BACKLIGHT_PORT, BACKLIGHT_PIN);
     RCC->APB1ENR |= RCC_APB1ENR_TIM7EN;
     RCC->AHB1ENR |= RCC_AHB1ENR_DMA1EN;
     RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
@@ -117,8 +122,12 @@ void BACKLIGHT_InitHardware(void)
     DMA1_Channel2->CMAR = (uint32_t)dutyCycle;
     DMA1_Channel2->CNDTR = BL_LEVELS;
     DMA1->IFCR = DMA_IFCR_CGIF2;
-    DMA1_Channel2->CCR = DMA_CCR_MINC | DMA_CCR_CIRC | DMA_CCR_PSIZE_1 |
-                         DMA_CCR_MSIZE_1 | DMA_CCR_PL;
+    /* Memory -> peripheral (DIR), circular, memory increment, peripheral fixed,
+     * 32-bit both sides, high priority.  DIR is the one that makes the DMA
+     * *drive* the pin; without it the transfer runs the wrong way and the panel
+     * never lights. */
+    DMA1_Channel2->CCR = DMA_CCR_DIR | DMA_CCR_MINC | DMA_CCR_CIRC |
+                         DMA_CCR_PSIZE_1 | DMA_CCR_MSIZE_1 | DMA_CCR_PL;
 
     /* Init leaves the light off: the counter and channel stay off until a
      * brightness asks for them.  (At boot the state is BSS-zero anyway; setting

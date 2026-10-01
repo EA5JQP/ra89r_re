@@ -156,6 +156,7 @@ extern RCC_TypeDef        host_rcc_scratch;
 /* The register bits the backlight driver uses (standard values; see the real
  * py32f403xB.h). */
 #define DMA_CCR_EN           (1u << 0)
+#define DMA_CCR_DIR          (1u << 4)      /* 1 = memory -> peripheral */
 #define DMA_CCR_CIRC         (1u << 5)
 #define DMA_CCR_MINC         (1u << 7)
 #define DMA_CCR_PSIZE_1      (1u << 9)

@@ -327,6 +327,11 @@ int main(void)
         printf("[backlight] %s InitHardware leaves the panel dark\n", ok ? "ok  " : "FAIL");
         if (!ok) failures++;
 
+        /* The DMA must drive the pin: memory -> peripheral. */
+        ok = (DMA1_Channel2->CCR & DMA_CCR_DIR) != 0;
+        printf("[backlight] %s DMA is memory->peripheral (DIR set)\n", ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
         BACKLIGHT_TurnOn();
         ok = BACKLIGHT_IsOn() && gBacklightCountdown_500ms == 41u;
         printf("[backlight] %s TurnOn(TIME=4) lights it, countdown 41\n", ok ? "ok  " : "FAIL");
