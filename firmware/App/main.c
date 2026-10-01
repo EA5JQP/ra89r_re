@@ -28,6 +28,7 @@
 #include "driver/rf_bus.h"
 #include "driver/tx.h"
 #include "driver/lcd_st7565.h"
+#include "driver/st7565.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
 #include "driver/py25q16.h"
@@ -150,8 +151,17 @@ static void print_diagnostics(void)
                 (unsigned)LCD_COLUMN_OFFSET);
     uart_printf("  uart        USART1 PB6/PB7 AF%u @ %u 8N1\n",
                 (unsigned)BOARD_UART_AF, (unsigned)BOARD_UART_BAUD);
-    uart_printf("  backlight   GPIOA pin 5, now %s\n",
-                BACKLIGHT_IsOn() ? "on" : "off");
+    uart_printf("  backlight   GPIOA pin 5, now %s; BLTime %u, BLMin %u, BLMax %u, "
+                "index %u, duty %u/32, pin %u\n",
+                BACKLIGHT_IsOn() ? "on" : "off",
+                (unsigned)gEeprom.BACKLIGHT_TIME, (unsigned)gEeprom.BACKLIGHT_MIN,
+                (unsigned)gEeprom.BACKLIGHT_MAX, (unsigned)BACKLIGHT_GetBrightness(),
+                BACKLIGHT_DutyOnCount(), gpio_read(GPIOA, BACKLIGHT_PIN) ? 1u : 0u);
+    uart_printf("  backlight hw TIM7 CR1=%04X ARR=%u DIER=%04X; DMA1 ch2 CCR=%04X "
+                "CNDTR=%u; SYSCFG CFGR2=%08X\n",
+                (unsigned)TIM7->CR1, (unsigned)TIM7->ARR, (unsigned)TIM7->DIER,
+                (unsigned)DMA1_Channel2->CCR, (unsigned)DMA1_Channel2->CNDTR,
+                (unsigned)SYSCFG->CFGR[2]);
 }
 
 static void lcd_set_contrast(uint8_t value)
@@ -1032,8 +1042,14 @@ int main(void)
     uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");    lcd_init();
     uart_puts("lcd: init done\n");
 
-    BACKLIGHT_Init();
-    uart_puts("backlight: on (GPIOA pin 5 -- confirmed on the radio)\n");
+    /* Clear the panel RAM and the K1 buffers, as the K1's BOARD_Init does with
+     * ST7565_Init(); without it the controller keeps its power-on RAM, which is
+     * the noise the un-drawn pages show. */
+    ST7565_Init();
+
+    BACKLIGHT_InitHardware();
+    uart_printf("backlight: K1 driver up (GPIOA pin 5, TIM7+DMA PWM), now %s\n",
+                BACKLIGHT_IsOn() ? "on" : "off");
     led_init();
     uart_puts("led: PA13 red / PA14 green, both active high (measured); "
               "'L' cycles off/red/green/both\n");
@@ -1043,6 +1059,16 @@ int main(void)
      * The settings and the codeplug come first, so radio_boot() tunes the
      * measured receive chain to the channel the codeplug put the radio on. */
     port_state_init();
+    /* Settings are loaded now, so BACKLIGHT_TIME/MIN/MAX mean something: light
+     * the panel, as the K1 does after its welcome screen (SETTINGS_InitEEPROM ->
+     * UI_DisplayWelcome -> BACKLIGHT_TurnOn).  Turning it on before this point
+     * reads BACKLIGHT_TIME == 0 and leaves the panel dark. */
+    BACKLIGHT_TurnOn();
+    uart_printf("backlight: %s, brightness index %u of %u, %u/32 duty\n",
+                BACKLIGHT_IsOn() ? "on" : "off",
+                (unsigned)BACKLIGHT_GetBrightness(),
+                (unsigned)gEeprom.BACKLIGHT_MAX,
+                BACKLIGHT_DutyOnCount());
     radio_boot();
     port_gui_init();
     /* The K1's main() builds the menu view once, before its loop: the menu key
@@ -1051,6 +1077,10 @@ int main(void)
     UI_MENU_BuildView();
     port_gui_screen(DISPLAY_MAIN);   /* straight into the VFO (console '4' has the
                                       * K1 boot screen if it is wanted) */
+    /* Paint the status line once at boot, as the K1's Main() does with
+     * gUpdateStatus = true: gUpdateDisplay only draws pages 1..7, so without
+     * this the top bar keeps whatever the panel powered up with. */
+    gUpdateStatus = true;
     uart_puts("boot complete. 'h' for commands, 'd' dumps the screen over this\n"
               "console, 'i' shows diagnostics.\n");
     print_help();

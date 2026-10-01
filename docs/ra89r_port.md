@@ -57,7 +57,7 @@ Drivers, each validated on the radio where the doc says so:
 |---|---|
 | `driver/gpio.c`, `clock.c`, `early.c`, `systick.c`, `uart.c`, `fault.c` | bring-up, console at 115200 on USART1 |
 | `driver/lcd_st7565.c` + `ui.c` | the panel, bit-banged, fonts lifted from the stock |
-| `driver/backlight.c` | `PA5`, confirmed |
+| `driver/backlight.c` | `PA5`, confirmed; the K1 driver: TIM7+DMA software PWM (4 kHz, 32 levels), fade, `BACKLIGHT_MIN/MAX` |
 | `driver/keypad.c` | 20 buttons, returns the K5V3 `KEY_Code_e` |
 | `driver/led.c` | `PA13` red / `PA14` green, both active high, measured |
 | `driver/rf_bus.c` | the shared 3-wire bus (clock `PA12`, data `PB12`, selects `PB8`/`PB13`) |

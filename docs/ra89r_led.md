@@ -112,19 +112,30 @@ is parked (it drives PA0/PA1 on request and documents that nothing happens).
 
 ## The backlight is GPIOA pin 5
 
-**Confirmed on the radio by eye**: driving it lights the panel.  `driver/backlight.c`
-drives it as a plain push-pull output, level 1 = on, and the console's `l` toggles it.
+**Confirmed on the radio by eye**: driving it lights the panel.  The port carries
+the **K1/F4HWN driver** on it (`driver/backlight.c`): a **TIM7 update event
+driving DMA1 channel 2** to write duty words into `GPIOA->BSRR`, 32 words per
+4 kHz period, so the pin is a software PWM with `level/32` duty.  PA5 has no
+timer-output alternate function, which is exactly why the K1 toggles it by DMA.
+The K1's `value[11]` brightness staircase, the fade (`BACKLIGHT_Update`) and the
+power-on fade-in are ported with it, and `BACKLIGHT_MIN`/`BACKLIGHT_MAX` choose
+the steps -- so the `BL*` menu items (timeout, min/max brightness) are live.  The
+console's `l` still toggles it.
 
 Related facts:
 
 * The bootloader blinks the same pin five times when it enters update mode
   (`0x08000AD2`), ending lit -- which is the "Update..." screen being visible.
-* The stock application also configures PA5 as `DAC_OUT2` (`FUN_0800A8F4` configures
-  PA4 and PA5 as DAC outputs), so the stock is probably *dimming* the backlight through
-  the DAC.  Plain on/off is what this radio needs today; a brightness ramp through the
-  DAC is a later refinement.
+* The **stock** application instead configures PA5 as `DAC_OUT2`
+  (`FUN_0800A8F4` configures PA4 and PA5 as DAC outputs) and dims the backlight
+  through the DAC.  The port keeps the K1's DMA method rather than port a DAC
+  path; the observable result (a dimmable backlight) is the same.
 * The old driver drove PA1 alongside PA5 on the theory that one of them was the lamp.
   PA1 does nothing, so it is not driven any more.
+* `BACKLIGHT_InitHardware()` brings the timer and DMA up with the light **off**;
+  `main.c` calls `BACKLIGHT_TurnOn()` only after `port_state_init()`, because
+  before the settings load `BACKLIGHT_TIME` is 0 and the K1 driver reads that as
+  "off".  That ordering is what lights the panel at power-on.
 
 **A consequence worth keeping**: since PA5 is the backlight, the **beep must be PA4**
 (`DAC_OUT1`) -- the beep and the backlight are separate pins and do not conflict.  The
