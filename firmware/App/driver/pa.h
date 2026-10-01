@@ -16,13 +16,16 @@
  *    `BK4819_GPIO_PIN_t` pin).  The stock uses:
  *      * **pin 0 (`0x40`)** and **pin 1 (`0x20`)** -- the **TX** VHF / UHF PA
  *        paths, set by `FUN_0801BDE8` from the TX frequency's band index;
- *      * **pin 4 (`0x04`)** -- the **RX** path for `> 134 MHz`, set by
- *        `FUN_08016CEC` and cleared by `FUN_08016DE8`;
+ *      * **pin 4 (`0x04`)** -- part of the **BK4815** receive branch: set by
+ *        `FUN_08016CEC` (the > 134 MHz branch) and cleared by `FUN_08016DE8`
+ *        (the BK4829 branch).  The stock picks the branch from the flag at
+ *        `0x20000303` (1 = BK4829 at <= 134 MHz, 0 = BK4815 above it), so the
+ *        BK4829's own receive state leaves pin 4 **clear**;
  *      * **pin 5 (`0x02`)** -- the **T/R** (PA enable), set by
  *        `FUN_08013A70(2)` and cleared by `(3)`.
  *    So the stock's transmit word is `0x40|0x02 = 0x42` on VHF and
- *    `0x20|0x02 = 0x22` on UHF; receive is `0x04` above 134 MHz and neither of
- *    the TX pins below it.
+ *    `0x20|0x02 = 0x22` on UHF.  The BK4829's receive state clears pin 4 and
+ *    the TX pins; setting pin 4 costs ~16 dB on the BK4829 at VHF (measured).
  *
  * 3. **The amplifier enable is the chip's `0x36`** -- bit 7 (PA-CTL) with a bias
  *    in bits 15:8.  The stock's own transmit path never writes `0x36`; the K1
@@ -60,9 +63,9 @@
 /* BK4829 register 0x33 output bits (mask bit n -> output 0x40 >> n). */
 #define PA_REG33_BAND_VHF 0x0040u   /* pin 0: the VHF TX path (FUN_0801BDE8) */
 #define PA_REG33_BAND_UHF 0x0020u   /* pin 1: the UHF TX path */
-#define PA_REG33_RX_MAIN  0x0004u   /* pin 4: the stock's >134 MHz receive bit
-                                     * (FUN_08016CEC, BK4815 traffic); the K1
-                                     * VHF LNA shares the bit */
+#define PA_REG33_RX_MAIN  0x0004u   /* pin 4: the BK4815 receive branch's bit
+                                     * (FUN_08016CEC sets it, FUN_08016DE8
+                                     * clears it); the BK4829 leaves it clear */
 #define PA_REG33_TR       0x0002u   /* pin 5: T/R, the PA enable (FUN_08013A70) */
 
 /* Bring up the PWM pin and timer and park the band-path pins; compare 0, so the
@@ -94,9 +97,9 @@ bool pa_band_is_main(void);
 /* The actual level PA0 is driven to, after the band-pin mode is applied. */
 bool pa_band_pa0_high(void);
 
-/* Which chip-side front-end selection is applied ('F').  AUTO is the K1
- * application's receive rule -- the one the radio received with -- and is a
- * read-modify-write, so register `0x33`'s `0x9000` bits survive. */
+/* Which chip-side front-end selection is applied ('F').  AUTO is the BK4829's
+ * own receive state -- both LNA pins clear, the stock's BK4829 branch -- and is
+ * a read-modify-write, so register `0x33`'s `0x9000` bits survive. */
 uint8_t  pa_chip_path_mode(void);
 void     pa_set_chip_path_mode(uint8_t mode);
 uint16_t pa_chip_path_reg(void);

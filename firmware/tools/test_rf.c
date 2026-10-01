@@ -400,26 +400,26 @@ static void test_pa_rx_path(void)
 {
     printf("pa receive path (reg 0x33)\n");
 
-    /* 145.5000 MHz: VHF, the K1/app rule selects the VHF LNA (pin 4, 0x04). */
+    /* The BK4829's own receive state clears both LNA pins (the stock's BK4829
+     * branch, FUN_08016DE8 -> FUN_080137D4(0x10, 0)); pin 4 is the BK4815
+     * branch's.  The 0x9000 bits BK4819_Init() set must survive. */
     log_reset();
     BK4819_Init();
     log_reset();
     pa_select_band(14550000u);
-    check_hex(last_reg33(), 0x9004, "VHF receive keeps 0x9000 and sets pin 4");
+    check_hex(last_reg33(), 0x9000, "VHF receive clears both LNA pins, keeps 0x9000");
 
-    /* 446.00625 MHz: UHF, pin 3 (0x08). */
     log_reset();
     BK4819_Init();
     log_reset();
     pa_select_band(44600625u);
-    check_hex(last_reg33(), 0x9008, "UHF receive keeps 0x9000 and sets pin 3");
+    check_hex(last_reg33(), 0x9000, "UHF receive clears both LNA pins, keeps 0x9000");
 
-    /* The below-134 MHz branch must still preserve the bits. */
     log_reset();
     BK4819_Init();
     log_reset();
     pa_select_band(11800000u);      /* 118.0 MHz */
-    check_hex(last_reg33(), 0x9004, "118 MHz receive keeps 0x9000");
+    check_hex(last_reg33(), 0x9000, "118 MHz receive clears both LNA pins, keeps 0x9000");
 }
 
 int main(void)

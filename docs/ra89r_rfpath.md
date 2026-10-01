@@ -285,7 +285,7 @@ in the image:
 | `0x20` | `2` | `FUN_0801BDE8` | `(3,2)` | **TX band 1/2 (UHF)** |
 | `0x10` | `4` | `FUN_08005638` / `FUN_08015D44` / `FUN_08004E20` | `(4,4)` / `(4,0)` | tone/CTCSS, plus a config-gated case |
 | `0x08` | `8` | `FUN_0800D35C` / `FUN_0800D434` | `(8,8)` / `(8,0)` | band byte `0x20003EE4` |
-| `0x04` | `0x10` | `FUN_08016CEC` / `FUN_08016DE8` | `(0x10,0x10)` / `(0x10,0)` | **> 134 MHz path** |
+| `0x04` | `0x10` | `FUN_08016CEC` / `FUN_08016DE8` | `(0x10,0x10)` / `(0x10,0)` | **BK4815 branch** (> 134 MHz) / **BK4829 branch** (<= 134 MHz) |
 | `0x02` | `0x20` | `FUN_08013A70` / `FUN_08013B12` | `(0x20,0x20)` / `(0x20,0)` | **T/R (PA enable)** |
 | all | `0x7f` | `FUN_08013C24` | `(0x7f,0)` | full clear |
 
@@ -299,8 +299,22 @@ routine).  It is the **TX path pair**:
 so **VHF selects `0x40`, UHF selects `0x20`** — exactly the two-PA / two-filter
 path select.  The receive path does *not* use a matching pair: it **clears** pins
 0/1 (`FUN_080093EC`, `FUN_08016DE8`) and selects the path with the transceiver
-(`0x20000303`) and the BK4815 `0x75` band, setting `0x33` pin 4 (`0x04`) for the
-> 134 MHz path.
+(`0x20000303`) and the BK4815 `0x75` band.
+
+**Pin 4 belongs to the BK4815 branch, not the BK4829's.**  `FUN_08016EE0(chan,
+flag)` picks the per-transceiver receive config from the flag at `0x20000303`
+(`FUN_08017340` drives it; `FUN_08006360` sets it to `1` at or below 134 MHz):
+flag `0` (BK4815, > 134 MHz) runs `FUN_08016CEC` -> `FUN_080137D4(0x10, 0x10)`
+(**sets** pin 4); flag `1` (BK4829, <= 134 MHz) runs `FUN_08016DE8` ->
+`FUN_080137D4(0x10, 0)` (**clears** pin 4).  So the BK4829's own receive state
+leaves pin 4 **clear**, and pin 4 is set only when the BK4815 is the receive
+branch.
+
+The port uses the **BK4829** above 134 MHz (its own choice — see the open
+question below), so it must clear pin 4.  Measured on the radio with console
+`F`: pin 4 set gave `0x67` = 199 at 145.500, clearing it gave 232 — about 16 dB
+at the chip's 0.5 dB/step.  `pa_apply_chip_path()`'s AUTO and the port's
+`BK4819_PickRXFilterPathBasedOnFrequency()` both clear both LNA pins now.
 
 ### The MCU pins
 
