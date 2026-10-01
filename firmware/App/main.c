@@ -1059,17 +1059,19 @@ int main(void)
      * The settings and the codeplug come first, so radio_boot() tunes the
      * measured receive chain to the channel the codeplug put the radio on. */
     port_state_init();
-    /* Settings are loaded now, so BACKLIGHT_TIME/MIN/MAX mean something: light
-     * the panel, as the K1 does after its welcome screen (SETTINGS_InitEEPROM ->
-     * UI_DisplayWelcome -> BACKLIGHT_TurnOn).  Turning it on before this point
-     * reads BACKLIGHT_TIME == 0 and leaves the panel dark. */
+    /* The RF/audio chain first: radio_boot() -> rx_init() -> BK4819_Init() brings
+     * the shared RF bus up.  BACKLIGHT_TurnOn() both lights the panel and plays
+     * the startup beep through the chip, so it must come after -- the K1 orders
+     * it the same way (BK4819_Init(), then SETTINGS, then BACKLIGHT_TurnOn at the
+     * welcome).  Before the settings load BACKLIGHT_TIME is 0 and the K1 driver
+     * reads that as "off"; before radio_boot the beep is silent. */
+    radio_boot();
     BACKLIGHT_TurnOn();
     uart_printf("backlight: %s, brightness index %u of %u, %u/32 duty\n",
                 BACKLIGHT_IsOn() ? "on" : "off",
                 (unsigned)BACKLIGHT_GetBrightness(),
                 (unsigned)gEeprom.BACKLIGHT_MAX,
                 BACKLIGHT_DutyOnCount());
-    radio_boot();
     port_gui_init();
     /* The K1's main() builds the menu view once, before its loop: the menu key
      * only asks for DISPLAY_MENU, so without this the menu screen would have an
