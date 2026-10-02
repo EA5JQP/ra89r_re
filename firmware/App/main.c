@@ -14,6 +14,7 @@
 
 #include "board.h"
 #include "driver/backlight.h"
+#include "driver/beeper.h"
 #include "driver/bk4815.h"
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
@@ -227,6 +228,7 @@ static void print_help(void)
               "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
               "          v/V contrast   L status led cycle (PA13/PA14)\n"
+              "          Z beeper test tones (DAC tone on PA4)\n"
               "          R probe RF ids   W configure both   X verify config\n"
               "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
               "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
@@ -1077,6 +1079,9 @@ int main(void)
     led_init();
     uart_puts("led: PA13 red / PA14 green, both active high (measured); "
               "'L' cycles off/red/green/both\n");
+    beeper_init();
+    uart_puts("beeper: DAC tone on PA4 (DAC_OUT1), TIM4 as the sample clock; "
+              "'Z' plays the test tones\n");
     /* The radio's interface is the ported K1 application from here on.  The
      * bring-up test card and its bench loop are console diagnostics ('0' hands
      * the panel back to them); at boot the K1 shows its own screen instead.
@@ -1348,6 +1353,17 @@ int main(void)
                             gpio_read(LED_PORT, LED_GREEN_PIN) ? 1u : 0u);
                 break;
             }
+            case 'Z':
+                /* The beeper: a DAC tone (driver/beeper.c), not the RF chip's
+                 * (the K1's beeps use it).  Three notes so a wrong pin or a
+                 * dead DAC is obvious by ear. */
+                uart_puts("\nbeeper: 500, 1000, 2000 Hz (DAC_OUT1 / PA4)\n"
+                          "  nothing? then the beep is PA5, or the amp's "
+                          "enable is elsewhere (docs/ra89r_beeper.md)\n");
+                beeper_play(500u, 250u);  systick_delay_ms(80);
+                beeper_play(1000u, 250u); systick_delay_ms(80);
+                beeper_play(2000u, 250u);
+                break;
             case 'q':
                 heartbeat = !heartbeat;
                 uart_printf("\nheartbeat %s\n", heartbeat ? "on" : "off");

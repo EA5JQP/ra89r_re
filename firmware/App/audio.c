@@ -23,6 +23,7 @@
     #include "driver/bk1080.h"
 #endif
 #include "driver/bk4819.h"
+#include "driver/beeper.h"
 #include "driver/gpio.h"
 #include "driver/system.h"
 #include "driver/systick.h"
@@ -60,7 +61,7 @@ void AUDIO_PlayBeep(BEEP_Type_t Beep)
          Beep == BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL) &&
          !gEeprom.BEEP_CONTROL)
         return;
-        
+
     if (gCurrentFunction == FUNCTION_RECEIVE)
         return;
 
@@ -70,65 +71,15 @@ void AUDIO_PlayBeep(BEEP_Type_t Beep)
     if (Beep >= ARRAY_SIZE(BEEP_Classic_array))
         return;
 
-#ifdef ENABLE_FMRADIO_EMBEDDED
-    if (gFmRadioMode)
-        BK1080_Mute(true);
-#endif
-
-    AUDIO_AudioPathOff();
-
-    if (gCurrentFunction == FUNCTION_POWER_SAVE && gRxIdleMode)
-        BK4819_RX_TurnOn();
-
-    SYSTEM_DelayMs(20);
-
-    uint16_t ToneConfig = BK4819_ReadRegister(BK4819_REG_71);
-
-#ifdef ENABLE_FEAT_F4HWN
-    if(Beep == BEEP_400HZ_30MS || Beep == BEEP_500HZ_30MS || Beep == BEEP_600HZ_30MS)
-    {
-        BK4819_WriteRegister(BK4819_REG_70, BK4819_REG_70_ENABLE_TONE1 | ((1 & 0x7f) << BK4819_REG_70_SHIFT_TONE1_TUNING_GAIN));
-    }
-#endif
-
-    BK4819_PrepareToPlayTone(true);
-
-    SYSTEM_DelayMs(2);
-
-    AUDIO_AudioPathOn();
-
-    SYSTEM_DelayMs(60);
-
+    /* The beep is the MCU's own DAC tone (driver/beeper.c), not the RF chip's.
+     * It therefore needs none of the audio-path/mute dance the chip path did,
+     * and it leaves the receiver untouched -- which is the point of the stock's
+     * DAC beeper. */
     for (uint8_t i = 0; i < BEEP_Classic_array[Beep][BEEP_REPEATS]; i++) {
-        BK4819_PlayToneRaw( BEEP_Classic_array[Beep][BEEP_TONE], 
-                            BEEP_Classic_array[Beep][BEEP_DURATION]);
+        beeper_play(BEEP_Classic_array[Beep][BEEP_TONE],
+                    BEEP_Classic_array[Beep][BEEP_DURATION]);
         SYSTEM_DelayMs(20);
     }
-
-    AUDIO_AudioPathOff();
-
-    SYSTEM_DelayMs(5);
-    BK4819_TurnsOffTones_TurnsOnRX();
-    SYSTEM_DelayMs(5);
-    BK4819_WriteRegister(BK4819_REG_71, ToneConfig);
-
-#ifdef ENABLE_FMRADIO_EMBEDDED
-    const bool isFmRadio = gFmRadioMode;
-    
-    if (isFmRadio)
-        SYSTEM_DelayMs(10);
-#endif
-
-    if (gEnableSpeaker)
-        AUDIO_AudioPathOn();
-
-#ifdef ENABLE_FMRADIO_EMBEDDED
-    if (isFmRadio)
-        BK1080_Mute(false);
-#endif
-
-    if (gCurrentFunction == FUNCTION_POWER_SAVE && gRxIdleMode)
-        BK4819_Sleep();
 
 #ifdef ENABLE_VOX
     gVoxResumeCountdown = 80;

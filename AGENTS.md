@@ -148,7 +148,7 @@ python3 tools/ra89r_bootloader_sim.py --pty /tmp/ra89r-pty &
 python3 tools/ra89r_flash.py --port "$(cat /tmp/ra89r-pty)" flash firmware/build/Debug/ra89r_fw.icf
 
 # the RF register layers, the K1-compatible one and the PA/RX path on a PC
-# (56 checks).  `driver/bk4819.c` mirrors the status LED onto `driver/led.c`,
+# (62 checks).  `driver/bk4819.c` mirrors the status LED onto `driver/led.c`,
 # which needs the target's GPIO registers, so the host LED stand-in goes in its
 # place; `driver/pa.c` is linked for the `0x33` regression, with its two
 # `pa_init()` GPIO calls stubbed in the test (so `driver/gpio.c` is not pulled
@@ -156,6 +156,12 @@ python3 tools/ra89r_flash.py --port "$(cat /tmp/ra89r-pty)" flash firmware/build
 cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver tools/test_rf.c \
     App/driver/bk4829.c App/driver/bk4815.c App/driver/bk4819.c \
     App/driver/pa.c tools/host/host_led.c -o /tmp/test_rf && /tmp/test_rf
+
+# the beeper's tone math (the phase step and the sine table) on a PC.  It links
+# nothing else: driver/beeper.h is device-header free on purpose, so the tone
+# the DAC will play can be checked without a radio.
+cd firmware && gcc -std=c11 -I App -I App/driver tools/test_beeper.c \
+    -o /tmp/test_beeper && /tmp/test_beeper
 
 # screen layout on a PC, then eyeball the ASCII art (see docs/firmware.md)
 cd firmware && gcc -std=c11 -I App -I App/driver -DLCD_HOST_TEST \
@@ -170,6 +176,7 @@ cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver \
     -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
     -ffunction-sections -fdata-sections -Wl,--gc-sections \
     tools/preview_k1.c tools/host/host_hw.c tools/host/host_bk4819.c \
+    tools/host/host_beeper.c \
     App/ui/main.c App/ui/menu.c App/ui/ui.c App/ui/status.c App/ui/welcome.c \
     App/ui/battery.c App/ui/scanner.c App/ui/helper.c App/ui/inputbox.c \
     App/app/menu.c App/app/action.c App/app/app.c App/app/main.c \
@@ -240,6 +247,11 @@ driver/battery            gauge       -- OPEN, unmerged: the bus is silent for u
 driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR flash
                                          ("EEPROM") reads and dumps; the write test has
                                          not run yet, see docs/ra89r_eeprom.md
+driver/beeper             beeper      -- OPEN, unmerged: the DAC tone (driver/beeper.c,
+                                         PA4/DAC_OUT1, TIM4 as the sample clock),
+                                         host-tested; the pin and that it is audible
+                                         still have to be heard on the radio, see
+                                         docs/ra89r_beeper.md
 driver/audiocontrol       audio       -- MERGED.  It receives and transmits: the K1
                                          bring-up plus the audio path are audible on
                                          a second radio, the squelch mutes the
@@ -339,7 +351,7 @@ The open features have their own write-ups, and they are the places to start:
 | backlight | `docs/ra89r_led.md` | done: GPIOA pin 5, confirmed on the radio |
 | status LED | `docs/ra89r_led.md` | done: `PA13` red, `PA14` green, active high (measured); `driver/led.c`, 'L' |
 | battery gauge | `docs/ra89r_battery.md` | protocol decoded and implemented; the chip never answers |
-| beeper | `docs/ra89r_beeper.md` | traced (TIM4 + a tone generator, its pin is PA4); not written |
+| beeper | `docs/ra89r_beeper.md` | driver written (`driver/beeper.c`: a DAC tone on PA4/`DAC_OUT1`, TIM4); host-tested, not yet heard on the radio |
 | EEPROM (SPI NOR) | `docs/ra89r_eeprom.md` | read + full dump validated on the radio; write test pending |
 | RF transceivers | `docs/ra89r_bk4829.md`, `docs/ra89r_bk4815.md`, `docs/ra89r_rfpath.md` | done for the BK4829: ids, all writes, tuning and an RSSI response to a carrier validated on the radio; the BK4815's RF role is still open |
 | transmit / PA | `docs/ra89r_rfpath.md` | done: voice heard on a second radio; `driver/pa.c` + `driver/tx.c`, with the register table in the doc |
@@ -372,8 +384,11 @@ on the radio (`docs/ra89r_led.md`).  **Transmit works**: the `driver/audiocontro
 is merged, and the transmit chain it measured -- the `0x36` PA-CTL and bias, the
 `0x50` unmute, the `0x33` GPIO state, the band pins, the PB14/TIM1 bias PWM and the
 microphone gain -- is now `driver/pa.c` and `driver/tx.c`, with voice heard on a
-second receiver.  The **beeper** is traced but not written (TIM4 plus a tone
-generator, its pin is PA4 = `DAC_OUT1`).
+second receiver.  The **beeper** has a driver now too (`driver/beeper.c`): the
+stock's DAC tone on PA4 = `DAC_OUT1`, stepped by TIM4, with the K1's
+`AUDIO_PlayBeep` routed through it instead of the RF chip's tone generator.  It
+is host-tested but not yet heard on the radio, so the PA4-vs-PA5 pin question
+and the amp-enable are still open (`docs/ra89r_beeper.md`).
 
 ## Firmware / flashing
 
