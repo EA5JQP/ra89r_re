@@ -21,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 TOOL = os.path.join(HERE, "ra89r_eeprom.py")
 SIM = os.path.join(HERE, "ra89r_eeprom_sim.py")
-SIZE = 64 * 1024
+SIZE = 0x120000
 
 _failures = 0
 
@@ -62,7 +62,8 @@ def start_sim(tmp, **opts):
 
 
 def expected_chip(size):
-    return bytes(((i * 7 + 0x11) & 0xFF) for i in range(size))
+    return bytes((((i * 7 + 0x11) & 0xFF) if i < 0x110000 else 0xFF)
+                 for i in range(size))
 
 
 def main():
@@ -157,6 +158,21 @@ def main():
             got = open(back, "rb").read() if os.path.exists(back) else b""
             check("dry run left the chip alone", got == expected_chip(SIZE),
                   "content differs")
+        finally:
+            sim.terminate()
+
+        print("test: write validation on an empty sector")
+        sim, port = start_sim(tmp)
+        try:
+            r = run(tool(port, "writetest"))
+            check("writetest exits 0", r.returncode == 0, r.stderr.strip())
+            check("writetest reports PASS", "PASS" in r.stdout,
+                  r.stdout.strip())
+            back = os.path.join(tmp, "wtback.bin")
+            run(tool(port, "backup", back))
+            got = open(back, "rb").read() if os.path.exists(back) else b""
+            check("writetest restored the sector", got == expected_chip(SIZE),
+                  "chip changed")
         finally:
             sim.terminate()
 

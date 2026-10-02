@@ -184,7 +184,8 @@ static void print_help(void)
               "          s re-init panel (stock app variant, 8 extra bytes)\n"
               "          k keypad monitor (raw ADC per line + decoded key)\n"
               "          e eeprom id   E dump the whole eeprom as binary (~6 min)\n"
-              "          W restore the whole eeprom (host: ra89r_eeprom.py restore)\n");
+              "          W restore the whole eeprom (host: ra89r_eeprom.py restore)\n"
+              "          Z write validation on an empty sector (run once)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -392,6 +393,69 @@ static void eeprom_restore(void)
                 (sum == declared) ? "OK" : "FAIL", (unsigned)sum);
 }
 
+/* One-shot validation that the write path works: find an empty (all-0xFF)
+ * sector in the erased tail, write a pattern, read it back, compare, then erase
+ * it again so the initial value is restored.  It refuses a sector that holds
+ * anything, so the "initial value" is 0xFF and the restore is an erase -- it can
+ * never damage real data.  Run it once, on a radio whose write path is unproven. */
+static void eeprom_write_validate(void)
+{
+    static uint8_t buf[4096];
+    uint32_t size, addr, i;
+    bool found = false;
+
+    spi_flash_init();
+    size = eeprom_size();
+    if (size == 0u) {
+        uart_puts("\nEEPROM WRITETEST FAIL no-chip\n");
+        return;
+    }
+
+    for (addr = 0x110000u; addr + 4096u <= size; addr += 4096u) {
+        spi_flash_read(addr, buf, 4096u);
+        for (i = 0; i < 4096u; i++)
+            if (buf[i] != 0xFFu)
+                break;
+        if (i == 4096u) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        uart_puts("\nEEPROM WRITETEST FAIL no empty sector in the free tail\n");
+        return;
+    }
+    uart_printf("\neeprom: write test on empty sector 0x%06X\n", (unsigned)addr);
+
+    for (i = 0; i < 4096u; i++)
+        buf[i] = (uint8_t)(i * 7u + 0x11u);
+    spi_flash_sector_erase(addr);
+    spi_flash_program(addr, buf, 4096u);
+
+    spi_flash_read(addr, buf, 4096u);
+    for (i = 0; i < 4096u; i++) {
+        if (buf[i] != (uint8_t)(i * 7u + 0x11u)) {
+            uart_printf("\nEEPROM WRITETEST FAIL read-back differs at 0x%06X\n",
+                        (unsigned)(addr + i));
+            spi_flash_sector_erase(addr);        /* restore anyway */
+            return;
+        }
+    }
+
+    spi_flash_sector_erase(addr);
+    spi_flash_read(addr, buf, 4096u);
+    for (i = 0; i < 4096u; i++) {
+        if (buf[i] != 0xFFu) {
+            uart_printf("\nEEPROM WRITETEST FAIL erase left 0x%02X at 0x%06X\n",
+                        (unsigned)buf[i], (unsigned)(addr + i));
+            return;
+        }
+    }
+
+    uart_puts("eeprom: wrote 4096 bytes, read them back, erased to 0xFF\n");
+    uart_puts("EEPROM WRITETEST PASS\n");
+}
+
 /* ------------------------------------------------------------------- main */
 
 int main(void)
@@ -582,6 +646,9 @@ int main(void)
                 break;
             case 'W':
                 eeprom_restore();
+                break;
+            case 'Z':
+                eeprom_write_validate();
                 break;
             default:
                 break;

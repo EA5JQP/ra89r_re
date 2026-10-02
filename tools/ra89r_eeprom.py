@@ -2,7 +2,7 @@
 """Back up and restore the RA89R's external SPI NOR flash -- the storage the
 CPS calls the EEPROM.
 
-The firmware's console carries three commands for this (see
+The firmware's console carries four commands for this (see
 tools/ra89r_eeprom_sim.py for the exact framing):
 
     e               identify the chip (0x90 manufacturer/device id and the 0x9F
@@ -12,6 +12,8 @@ tools/ra89r_eeprom_sim.py for the exact framing):
     W <size> <sum>  restore the whole chip from raw binary (4 KB sectors, each
                     acked with '.'), wrapped in
                         EEPROM RESTORE <size>\\n ...<size bytes>... \\nEEPROM RESTORE OK|FAIL <sum>\\n
+    Z               write validation on an empty sector (run once), ending in
+                        EEPROM WRITETEST PASS|FAIL
 
 This tool drives them over the console, so the chip's content can be saved
 (`backup`, an alias of `dump`) and put back (`restore`).  The CPS offset map for
@@ -239,6 +241,20 @@ def cmd_restore(ser, args):
     return 0
 
 
+def cmd_writetest(ser, args):
+    """Trigger the firmware's one-shot write validation on an empty sector."""
+    ser.reset_input_buffer()
+    ser.write(b"Z")
+    buf, match = read_match(ser, rb"EEPROM WRITETEST (PASS|FAIL)([^\n]*)\n",
+                            max(args.timeout, 120.0))
+    if not match:
+        sys.exit(f"no write-test verdict: {buf!r}")
+    sys.stdout.write(buf.decode("latin-1"))
+    if match.group(1) != b"PASS":
+        sys.exit(1)
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -270,6 +286,10 @@ def main():
     p_restore.add_argument("--dry-run", action="store_true",
                            help="print the frames without writing anything")
     p_restore.set_defaults(func=cmd_restore)
+
+    p_wt = sub.add_parser("writetest",
+                          help="one-shot write validation on an empty sector")
+    p_wt.set_defaults(func=cmd_writetest)
 
     args = ap.parse_args()
     with open_port(args) as ser:

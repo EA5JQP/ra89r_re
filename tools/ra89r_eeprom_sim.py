@@ -46,15 +46,19 @@ class Sim(object):
     def __init__(self, size=2 * 1024 * 1024, verbose=False, corrupt=0,
                  drop_after=0):
         self.chip = bytearray(size)
-        # a recognisable, non-uniform pattern so a lost byte is visible
-        for i in range(size):
+        # a recognisable, non-uniform pattern below the free tail, so a lost
+        # byte is visible; the tail (0x110000+) stays erased, like the radio's
+        for i in range(min(size, 0x110000)):
             self.chip[i] = (i * 7 + 0x11) & 0xFF
+        if size > 0x110000:
+            self.chip[0x110000:] = b"\xFF" * (size - 0x110000)
         self.size = size
         self.verbose = verbose
         self.corrupt = corrupt
         self.drop_after = drop_after
         self.dumps = 0
         self.restores = 0
+        self.writetests = 0
 
     def log(self, msg):
         if self.verbose:
@@ -77,6 +81,27 @@ class Sim(object):
         out.write(("\n" + END.decode() + "%08X\n"
                    % self.checksum(self.chip)).encode())
         self.log("dumped %d bytes" % self.size)
+
+    def cmd_writetest(self, out):
+        """Simulate the one-shot empty-sector write validation."""
+        self.writetests += 1
+        sector = None
+        for base in range(0x110000, self.size - 0x1000 + 1, 0x1000):
+            if all(b == 0xFF for b in self.chip[base:base + 0x1000]):
+                sector = base
+                break
+        if sector is None:
+            out.write(b"\nEEPROM WRITETEST FAIL no empty sector\n")
+            return
+        # read, write, read back, restore to 0xFF
+        pattern = bytes(((i * 7 + 0x11) & 0xFF) for i in range(0x1000))
+        self.chip[sector:sector + 0x1000] = pattern
+        ok = bytes(self.chip[sector:sector + 0x1000]) == pattern
+        self.chip[sector:sector + 0x1000] = b"\xFF" * 0x1000
+        ok = ok and all(b == 0xFF for b in self.chip[sector:sector + 0x1000])
+        out.write(("\neeprom: write test on empty sector %#08x\n" % sector).encode())
+        out.write(b"EEPROM WRITETEST %s\n" % (b"PASS" if ok else b"FAIL"))
+        self.log("write test at %#x -> %s" % (sector, "PASS" if ok else "FAIL"))
 
     def run(self, fd):
         buf = bytearray()
@@ -104,6 +129,10 @@ class Sim(object):
                 if buf[0:1] == b"E":
                     del buf[:1]
                     self.cmd_dump(out)
+                    continue
+                if buf[0:1] == b"Z":
+                    del buf[:1]
+                    self.cmd_writetest(out)
                     continue
 
                 # A restore header is line-based, then switches to raw bytes,
