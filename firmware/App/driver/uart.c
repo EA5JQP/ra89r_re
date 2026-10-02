@@ -68,6 +68,15 @@ void uart_write(const char *buf, uint32_t len)
         uart_putc(buf[i]);
 }
 
+/* No \n -> \r\n translation: for raw binary streams (the EEPROM dump). */
+void uart_write_raw(const char *buf, uint32_t len)
+{
+    uint32_t i;
+
+    for (i = 0; i < len; i++)
+        putc_raw(buf[i]);
+}
+
 void uart_puts(const char *s)
 {
     while (*s)
@@ -169,13 +178,13 @@ int uart_getc(void)
 
 int uart_getc_timeout(uint32_t ms)
 {
-    int c = uart_getc();
+    uint32_t start = systick_millis();
 
-    while (ms-- > 0u) {
-        if (c >= 0)
-            return c;
-        systick_delay_ms(1u);
-        c = uart_getc();
+    /* Busy-poll: the USART has no receive FIFO, so sleeping between samples
+     * loses bytes to overrun when a caller reads a burst (the EEPROM restore). */
+    while ((uint32_t)(systick_millis() - start) <= ms) {
+        if (uart_rx_ready())
+            return uart_getc();
     }
-    return c;
+    return -1;
 }

@@ -93,6 +93,7 @@ set(APP_SOURCES
     App/port_storage.c
     App/port_codeplug.c
     App/driver/spi_flash.c
+    App/driver/eeprom_console.c
     # --- end of imported sources ---------------------------------------------
     App/settings.c
     App/syscalls.c)
