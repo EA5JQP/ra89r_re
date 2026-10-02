@@ -25,7 +25,10 @@
 #include "radio.h"
 #include "settings.h"
 #include "ui/main.h"
-#include "port_gui.h"
+#include "driver/tx.h"
+#include "driver/rx.h"
+#include "ui/welcome.h"
+#include "ui/ui.h"
 #include "driver/py25q16.h"
 #include "ui/menu.h"
 
@@ -40,7 +43,7 @@ static int failures;
 static void step(void)
 {
     APP_Update();
-    port_gui_poll();
+    tx_poll_ptt();
     APP_TimeSlice10ms();
 }
 
@@ -175,14 +178,14 @@ int main(void)
     }
 
     /* ---- the boot screen and the status line ---------------------------- */
-    port_gui_init();
-    port_gui_welcome();
+    gScreenToDisplay = DISPLAY_MAIN; gUpdateDisplay = true;
+    UI_DisplayWelcome();
     render("K1 UI_DisplayWelcome(): the ported boot screen");
 
     /* ---- the key loop: the K1's own CheckKeys() driving the screens ------- */
     /* No hand-set frequency: the state is whatever the codeplug boot left, so
      * the lines below say what the keys actually do. */
-    port_gui_init();
+    gScreenToDisplay = DISPLAY_MAIN; gUpdateDisplay = true;
     printf("\n[keys] start: screen A = %u, VFO A %u.%05u MHz\n",
            (unsigned)gEeprom.ScreenChannel[0],
            (unsigned)(gRxVfo->freq_config_RX.Frequency / 100000u),

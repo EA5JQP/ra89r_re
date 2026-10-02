@@ -56,4 +56,8 @@ void tx_stop(void);
 bool tx_active(void);
 tx_source_t tx_source(void);
 
+/* Read PTT from the keypad and drive the measured transmit chain; called by the
+ * app loop (the K1's CheckKeys() leaves PTT to this port). */
+void tx_poll_ptt(void);
+
 #endif /* DRIVER_TX_H */

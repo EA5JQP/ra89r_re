@@ -304,6 +304,7 @@ void systick_delay_ms(uint32_t ms) { (void)ms; }
 bool tx_active(void) { return false; }
 void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source) { (void)freq_10hz; (void)power; (void)source; }
 void tx_stop(void) { }
+void tx_poll_ptt(void) { }
 
 /* More of the RF driver's entry points the app core calls. */
 void BK4819_Conditional_RX_TurnOn_and_GPIO6_Enable(void) { }

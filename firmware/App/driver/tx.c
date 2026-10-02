@@ -4,6 +4,11 @@
 #include "driver/bk4819.h"
 #include "driver/led.h"
 #include "driver/pa.h"
+#include "driver/keyboard.h"
+#include "functions.h"
+#include "misc.h"
+#include "radio.h"
+#include "settings.h"
 
 static bool s_active;
 static tx_source_t s_source;
@@ -70,3 +75,27 @@ void tx_stop(void)
 
 bool tx_active(void) { return s_active; }
 tx_source_t tx_source(void) { return s_source; }
+
+/* PTT from the keypad.  The K1's own PTT path runs its chip sequence, which this
+ * radio has not compared against the stock, so PTT drives the measured chain
+ * (this file) instead -- see docs/ra89r_rfpath.md.  The K1 function state is set
+ * too, so the screens show TX and the status line follows.  Called by the app
+ * loop (the K1's CheckKeys() deliberately leaves PTT alone here). */
+void tx_poll_ptt(void)
+{
+    const KEY_Code_t key  = KEYBOARD_GetKey();
+    const bool       down = (key == KEY_PTT) || (key == KEY_PTT2);
+
+    if (down == tx_active())
+        return;
+
+    if (down) {
+        FUNCTION_Select(FUNCTION_TRANSMIT);
+        tx_start(gTxVfo->freq_config_TX.Frequency,
+                 gTxVfo->TXP_CalculatedSetting, TX_SOURCE_MIC);
+    } else {
+        tx_stop();
+        FUNCTION_Select(FUNCTION_RECEIVE);
+    }
+    gUpdateDisplay = true;
+}

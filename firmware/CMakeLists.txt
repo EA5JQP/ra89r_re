@@ -68,7 +68,6 @@ set(APP_SOURCES
     App/ui/scanner.c
     App/ui/welcome.c
     App/driver/keyboard.c
-    App/port_gui.c
     App/app/menu.c
     App/app/action.c
     App/version.c

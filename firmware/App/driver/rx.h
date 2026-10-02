@@ -51,4 +51,8 @@ uint16_t rx_rssi(void);
 /* The frequency the BK4829 was last tuned to, in 10 Hz units, for diagnostics. */
 uint32_t rx_rx_frequency(void);
 
+/* The app loop's receive service: the squelch poll, the retune when the K1's
+ * selected VFO moves, and the g_SquelchLost publication. */
+void rx_service(void);
+
 #endif /* DRIVER_RX_H */

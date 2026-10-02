@@ -6,6 +6,11 @@
 #include "driver/bk4829.h"
 #include "driver/pa.h"
 #include "driver/tx.h"
+#include "driver/led.h"
+#include "functions.h"
+#include "misc.h"
+#include "radio.h"
+#include "settings.h"
 
 static bool s_ready;
 static bool s_squelch_open;
@@ -88,4 +93,42 @@ uint16_t rx_rssi(void)
 uint32_t rx_rx_frequency(void)
 {
     return s_freq_10hz;
+}
+
+/* The app loop's receive service, moved here from the old port_gui shim.
+ *
+ * It polls the squelch, retunes when the K1's selected VFO frequency moves
+ * (this is the only place that tracks it, so the configured RX frequency stays
+ * authoritative even on a path that skips RADIO_SetupRegisters), and publishes
+ * `g_SquelchLost`.  The K1 app's receive path keys off that flag --
+ * CheckForIncoming() promotes FOREGROUND to INCOMING on it -- but the chip's
+ * squelch interrupt is never armed here, so the polled result is what keeps the
+ * screen, status line and green LED in step. */
+void rx_service(void)
+{
+    static bool squelch_open;
+    static uint32_t last_freq;
+
+    if (rx_ready())
+        rx_poll();
+
+    {
+        const uint32_t freq = (gRxVfo != 0) ? gRxVfo->pRX->Frequency : 0u;
+
+        if (freq != last_freq) {
+            last_freq = freq;
+            if (freq != 0u)
+                rx_set_frequency(freq);
+        }
+    }
+
+    if (rx_ready() && rx_squelch_open() != squelch_open) {
+        squelch_open = rx_squelch_open();
+
+        g_SquelchLost = squelch_open;
+        if (!tx_active())
+            led_set(squelch_open ? LED_GREEN : LED_OFF);
+        gUpdateDisplay = true;
+        gUpdateStatus  = true;
+    }
 }

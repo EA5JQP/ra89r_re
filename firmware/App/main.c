@@ -37,7 +37,6 @@
 #include "app/scanner.h"
 #include "helper/boot.h"
 #include "misc.h"
-#include "port_gui.h"
 #include "driver/py25q16.h"
 #include "port_state.h"
 #include "radio.h"
@@ -45,9 +44,18 @@
 #include "ui/menu.h"
 #include "ui/status.h"
 #include "ui/ui.h"
+#include "ui/welcome.h"
 #include "ui.h"
 
 #define VERSION_STRING "ra89r_fw 0.2 (uart debug)"
+
+/* Ask for a screen: the K1 application repaints when gUpdateDisplay is set
+ * (app/app.c calls GUI_DisplayScreen). */
+static void show_screen(GUI_DisplayType_t screen)
+{
+    gScreenToDisplay = screen;
+    gUpdateDisplay = true;
+}
 
 /* 0x0805FFF0 is the bootloader's **update-mode request**, not an application
  * validity flag: 0xFF (the normal state) makes the bootloader start this
@@ -1089,7 +1097,7 @@ int main(void)
                 (unsigned)BACKLIGHT_GetBrightness(),
                 (unsigned)gEeprom.BACKLIGHT_MAX,
                 BACKLIGHT_DutyOnCount());
-    port_gui_init();
+    show_screen(DISPLAY_MAIN);
 
     /* Apply the boot mode read earlier.  The K1 sets gF_LOCK *before* building
      * the view, so the hidden items are in it, then lets BOOT_ProcessMode() pick
@@ -1120,7 +1128,7 @@ int main(void)
         gEeprom.POWER_ON_DISPLAY_MODE != POWER_ON_DISPLAY_MODE_SOUND) {
         unsigned t;
 
-        port_gui_welcome();
+        UI_DisplayWelcome();
         for (t = 0; t < 250u; t++) {
             if (keypad_poll() != KEY_INVALID)
                 break;
@@ -1259,7 +1267,7 @@ int main(void)
                     draw_test_card();
                     uart_puts("\npanel: bring-up screens\n");
                 } else {
-                    port_gui_screen(gScreenToDisplay);
+                    show_screen(gScreenToDisplay);
                     uart_puts("\npanel: K1 GUI\n");
                 }
                 break;
@@ -1415,37 +1423,37 @@ int main(void)
                 /* The K1 GUI has the panel and the keys; this re-selects it
                  * after the bench screens were used ('0'). */
                 bench_panel = 0;
-                port_gui_screen(DISPLAY_MAIN);
+                show_screen(DISPLAY_MAIN);
                 uart_puts("\nK1 GUI: the radio's keys drive the ported screens\n");
                 break;
             case '4':
                 /* The K1's boot screen (shown once at boot). */
                 bench_panel = 0;
-                port_gui_welcome();
+                UI_DisplayWelcome();
                 uart_puts("\nK1 boot screen\n");
                 break;
             case '2':
                 bench_panel = 0;
-                port_gui_screen(DISPLAY_MAIN);
+                show_screen(DISPLAY_MAIN);
                 uart_puts("\nK1 VFO screen\n");
                 break;
             case '3':
                 bench_panel = 0;
                 UI_MENU_BuildView();
-                port_gui_screen(DISPLAY_MENU);
+                show_screen(DISPLAY_MENU);
                 uart_puts("\nK1 menu screen\n");
                 break;
             case 'M':
                 bench_panel = 0;
                 UI_MENU_BuildView();
-                port_gui_screen(DISPLAY_MENU);
+                show_screen(DISPLAY_MENU);
                 uart_puts("\nK1 UI_DisplayMenu() drawn\n");
                 break;
             case 'G':
                 bench_panel = 0;
                 gRxVfo->freq_config_RX.Frequency = BENCH_FREQ_HZ;
                 gRxVfo->freq_config_TX.Frequency = BENCH_FREQ_HZ;
-                port_gui_screen(DISPLAY_MAIN);
+                show_screen(DISPLAY_MAIN);
                 uart_puts("\nK1 UI_DisplayMain() drawn\n");
                 break;
             case 'C':
@@ -1505,7 +1513,7 @@ int main(void)
             /* The ported K1 application owns the panel and the keys.  Keys go
              * through the K1's own app/app.c CheckKeys() (press/hold/repeat, and
              * MAIN_/MENU_/SCANNER_ProcessKeys per screen), the app's periodic
-             * duties run on their slices, and port_gui handles PTT (measured
+             * duties run on their slices, and driver/tx.c handles PTT (measured
              * transmit chain) plus the repaint.  The console stays a debugging
              * channel throughout. */
             static uint32_t slice10, slice500;
@@ -1517,7 +1525,7 @@ int main(void)
              *
              * The port's two calls belong on the same 10 ms slice, not on every
              * pass of the loop.  PTT is read by the K1's CheckKeys() on this
-             * slice too, and port_gui_tick's squelch read is one BK4819_GetRSSI()
+             * slice too, and driver/rx.c’s squelch read is one BK4819_GetRSSI()
              * -- about 0.6 ms of bit-banged RF bus, so running it thousands of
              * times a second leaves the application almost no CPU at all. */
             APP_Update();
@@ -1526,8 +1534,8 @@ int main(void)
                 slice10 = now;
                 APP_TimeSlice10ms();
 
-                port_gui_poll();
-                port_gui_tick(now);
+                tx_poll_ptt();
+                rx_service();
             }
             if ((uint32_t)(now - slice500) >= 500u) {
                 slice500 = now;
