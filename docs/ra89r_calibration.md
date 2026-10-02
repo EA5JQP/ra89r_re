@@ -24,6 +24,73 @@ The port's own state lives in the erased tail at `0x1FF000` (see
 back the whole chip up and put it back (`backup` / `restore`, on branch
 `driver/eeprom`), which is the recovery path if a write ever goes wrong.
 
+The radio side of the CPS's hidden alignment window is also reachable: power the
+radio on **holding `3`** and `tools/ra89r_calib.py` can read the window (and
+attempt the whole chip) over that serial link -- see "Entering the mode from the
+radio" below.
+
+## Entering the mode from the radio (the `3` key)
+
+The radio side of the hidden alignment window is the stock's **mode 3**: power
+the radio on **holding `3`**.  The boot key detector `FUN_08021AF8` (called from
+`FUN_080167F0` before the key state is cleared) enables the ADC key scan, waits
+~80 ms for the per-key counters, and, when the `3` counter (`0x20009F8C`) is
+held while the `6` counter is not, sets the calibration flag
+**`0x20009FA4 = 1`** (`0x20009F9C + 8`).  That flag is what the calibration
+value providers read -- `FUN_0801887C` (RSSI), `FUN_08020054` (TxCtcss),
+`FUN_080201CC` (Pow), `FUN_0802015C`/`FUN_08020190`, `FUN_0801D568` -- to use the
+stored alignment values instead of computed defaults, and the main loop's serial
+handler (`FUN_08020D14` -> `FUN_08020C68`) routes commands to `FUN_0801E1E0`
+while it is set.
+
+The same function holds the other factory boot keys, for the record: the key
+whose codes are 7/8/9 held with `5`/`7`/`9` opens the power/band selection
+(`FUN_08017988`), `SIDE1` runs `FUN_0800C478`, and `5`+`8` toggles a flag.
+
+## Reading it over UART (the CPS's protocol)
+
+The CPS's `AdjWin.cs` talks to a radio already in mode 3 at **57600 8N1** with:
+
+| step | frame |
+|---|---|
+| enter test mode (optional; the CPS defines it but never sends it) | `FE FE EE EF F0 26 98 00 00 00 00 00 00 FD` |
+| read | `57 FF FF 06` + `addr` (4 bytes big-endian) + `len` (2 bytes big-endian) |
+| reply | `52 00 FF xx xx` (5-byte header) + `len` data bytes |
+| write | `57 FF 00 10` + `addr` + `len` + data |
+| exit test mode | `FE FE EE EF F1 26 98 00 00 00 00 00 00 FD` |
+
+The CPS reads `0x3000`-`0x3880` in 512-byte chunks and then 48 bytes at
+`0x3880`.  The read command carries an address and length, but **the stock only
+addresses the first 64 KB correctly**: measured on the radio, a read at `A`
+returns the content at `(A >> 16) + (A & 0xFFFF)` -- the high address byte is
+*added* instead of shifted into bit 16.  The calibration (`0x3000`-`0x38A0`) and
+the codeplug (`0x0`-`0x3FFF`) are below `0x10000` and dump byte-exact (verified
+against `work/ra89r_eeprom.bin`); a read above `0xFFFF` is garbage, so the whole
+2 MB chip cannot be dumped over this link.  Use the custom firmware's
+`tools/ra89r_eeprom.py` for that.
+
+`tools/ra89r_calib.py` speaks both directions:
+
+```sh
+python3 tools/ra89r_calib.py probe  --port /dev/ttyUSB0            # one 16-byte read
+python3 tools/ra89r_calib.py calib  --port /dev/ttyUSB0 calib.bin  # dump the window
+python3 tools/ra89r_calib.py full   --port /dev/ttyUSB0 eeprom.bin # first 64 KB
+python3 tools/ra89r_calib.py write  --port /dev/ttyUSB0 calib.bin --yes --verify
+python3 tools/ra89r_calib.py self-test                             # offline protocol check
+```
+
+`calib` (alias `dump`) writes the `0x3000`-`0x38A0` window -- decode it later
+with `--base 0`; `full` reads the trustworthy first 64 KB; `write` restores the
+window with `57 FF 00 0A <addr:4 BE> <len:2 BE> <data>` (ACK `52 00 41 00`,
+through the stock's journal).  `write` changes factory alignment, so it requires
+`--yes`, stays inside the window unless `--force`, and `--verify` reads it back
+and compares.  The frame builders, parsers and chunking are covered by
+`self-test` against a fake radio.  Run on the radio, `calib` is byte-identical
+to the known EEPROM dump and `full`'s first 64 KB is too; the two bytes after
+the `52 00 FF` header are the reply length, big-endian (`00 10` for a 16-byte
+read).  The **write path is validated on the radio**: writing the captured
+window back with `--yes --verify` reads back byte-identical.
+
 ## The stock's own address table
 
 The stock firmware keeps the logical EEPROM address of every table in a table of
@@ -121,7 +188,9 @@ alignment window against a radio and diffing the dump.
 
 ## Preserving it
 
-* Never write `0x3000`-`0x38AF`, and never the whole `0x0`-`0x38FF` codeplug.
+* Never write `0x3000`-`0x38AF` casually, and never the whole `0x0`-`0x38FF`
+  codeplug.  `tools/ra89r_calib.py calib` captures the window over the mode-3
+  link and `write ... --yes` puts it back; keep a copy before changing anything.
 * Back up the whole 2 MB chip before any experiment:
   `tools/ra89r_eeprom.py backup eeprom.bin`, and restore with
   `tools/ra89r_eeprom.py restore eeprom.bin --yes --verify` (branch
@@ -135,3 +204,7 @@ alignment window against a radio and diffing the dump.
 3. Which calibration byte the noise-reduction enable bit lives in
    (`ra89r_noisereduction.md`).
 4. The 48-byte block at `0x3880` and what the stock does with it.
+5. **Resolved:** the mode-3 read addresses only the first 64 KB correctly (the
+   high byte is added, not shifted -- see above), and the two bytes after
+   `52 00 FF` are the reply length, big-endian.  The rest of the chip needs the
+   custom firmware's SPI reader (`tools/ra89r_eeprom.py`).
