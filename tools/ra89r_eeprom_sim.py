@@ -9,7 +9,8 @@ calls the EEPROM) over the UART console:
     E                 stream the whole chip:  "EEPROM DUMP <size>\\n" <raw bytes>
                                           then "\\nEEPROM END <sum>\\n"
     W <size> <sum>    restore:               "EEPROM RESTORE <size>\\n", then
-                      exactly <size> raw bytes, then
+                      <size> raw bytes in 4 KB sectors, each answered with a
+                      '.' ack after the sector is erased and programmed, then
                       "\\nEEPROM RESTORE OK <sum>\\n" (or FAIL)
 
 This speaks that protocol on a pseudo terminal with a byte-array chip, so
@@ -105,36 +106,46 @@ class Sim(object):
                     self.cmd_dump(out)
                     continue
 
-                # A restore header is line-based, then switches to raw bytes.
+                # A restore header is line-based, then switches to raw bytes,
+                # 4 KB at a time with a '.' ack after each sector.
                 if buf.startswith(b"W ") and b"\n" in buf:
                     line, _, rest = buf.partition(b"\n")
                     buf = bytearray(rest)
                     if not self._begin_restore(line, out):
                         continue
-                    need = self.size
-                    got = bytearray()
+                    received_sum = 0
                     deadline = 0
-                    while len(got) < need:
-                        if self.drop_after and len(got) >= self.drop_after:
-                            self.log("dropping the rest of the transfer")
-                            return
-                        if buf:
-                            take = min(len(buf), need - len(got))
-                            got += buf[:take]
-                            del buf[:take]
-                            continue
-                        try:
-                            more = os.read(fd, 65536)
-                        except OSError:
-                            return
-                        if not more:
-                            deadline += 1
-                            if deadline > 2000:
-                                self.log("timed out mid-restore")
+                    for base in range(0, self.size, 4096):
+                        need = min(4096, self.size - base)
+                        got = bytearray()
+                        while len(got) < need:
+                            if self.drop_after and \
+                                    base + len(got) >= self.drop_after:
+                                self.log("dropping the rest of the transfer")
                                 return
-                            continue
-                        buf += more
-                    self._finish_restore(got, out)
+                            if buf:
+                                take = min(len(buf), need - len(got))
+                                got += buf[:take]
+                                del buf[:take]
+                                continue
+                            try:
+                                more = os.read(fd, 65536)
+                            except OSError:
+                                return
+                            if not more:
+                                deadline += 1
+                                if deadline > 2000:
+                                    self.log("timed out mid-restore")
+                                    return
+                                continue
+                            buf += more
+                        if self.corrupt:
+                            for i in range(0, len(got), self.corrupt):
+                                got[i] ^= 0xFF
+                        self.chip[base:base + need] = got
+                        received_sum = (received_sum + sum(got)) & 0xFFFFFFFF
+                        out.write(b".")
+                    self._finish_restore(received_sum, out)
                     continue
 
                 if b"\n" in buf:
@@ -161,16 +172,8 @@ class Sim(object):
         self.log("restore started, %d bytes" % size)
         return True
 
-    def _finish_restore(self, data, out):
+    def _finish_restore(self, sum_received, out):
         self.restores += 1
-        received = bytearray(data)
-        if self.corrupt:
-            # Damage what the firmware sees, so the checksum it reports will
-            # not match the host's (a bad link).
-            for i in range(0, len(received), self.corrupt):
-                received[i] ^= 0xFF
-        self.chip[:] = received
-        sum_received = self.checksum(received)
         verdict = b"OK" if sum_received == self._declared else b"FAIL"
         out.write(("\n" + RESTORE.decode() + verdict.decode() + " %08X\n"
                    % sum_received).encode())

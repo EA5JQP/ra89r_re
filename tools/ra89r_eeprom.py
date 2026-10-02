@@ -9,7 +9,8 @@ tools/ra89r_eeprom_sim.py for the exact framing):
                     JEDEC id) and report its size
     E               stream the whole chip as raw binary, wrapped in
                         EEPROM DUMP <size>\\n ...<size bytes>... \\nEEPROM END <sum>\\n
-    W <size> <sum>  restore the whole chip from raw binary, wrapped in
+    W <size> <sum>  restore the whole chip from raw binary (4 KB sectors, each
+                    acked with '.'), wrapped in
                         EEPROM RESTORE <size>\\n ...<size bytes>... \\nEEPROM RESTORE OK|FAIL <sum>\\n
 
 This tool drives them over the console, so the chip's content can be saved
@@ -206,8 +207,15 @@ def cmd_restore(ser, args):
     if int(reply) != size:
         sys.exit(f"firmware accepted {reply.decode()} bytes, not {size}")
 
-    # The chip is written as the bytes arrive.
-    ser.write(data)
+    # One 4 KB sector at a time; the firmware acks each with '.' after erasing
+    # and programming it.  That ack is the flow control: the UART has none, and
+    # an erase takes tens of milliseconds, so without it the firmware would lose
+    # the bytes the host sends while it is busy with the flash.
+    for off in range(0, size, 4096):
+        ser.write(data[off:off + 4096])
+        ack = ser.read(1)
+        if ack != b".":
+            sys.exit(f"no sector ack at {off:#x}: {ack!r}")
 
     tail, match = read_match(ser, rb"EEPROM RESTORE (OK|FAIL) ([0-9A-Fa-f]{8})\n",
                              max(args.timeout, 30.0))

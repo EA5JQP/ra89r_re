@@ -321,11 +321,11 @@ static uint32_t parse_hex(const char **p)
  * touches the MCU's own flash. */
 static void eeprom_restore(void)
 {
-    static uint8_t buf[256];
+    static uint8_t buf[4096];
     char line[40];
     unsigned n = 0;
     int c;
-    uint32_t size, declared, addr, off, sum = 0;
+    uint32_t size, declared, addr, i, sum = 0;
     const char *p;
 
     for (;;) {
@@ -367,23 +367,25 @@ static void eeprom_restore(void)
 
     uart_printf("\nEEPROM RESTORE %u\n", (unsigned)size);
 
+    /* One sector at a time, with a '.' after each.  The ack is not cosmetic:
+     * the UART has no flow control and an erase takes tens of milliseconds, so
+     * without it the host's next bytes would be lost while this core is busy
+     * with the flash.  The 4 KB buffer is filled first (no flash access, so the
+     * receive can keep up), then the sector is erased and programmed. */
     for (addr = 0; addr < size; addr += 4096u) {
-        spi_flash_sector_erase(addr);
-        for (off = 0; off < 4096u; off += 256u) {
-            uint32_t i;
-
-            for (i = 0; i < 256u; i++) {
-                c = uart_getc_timeout(5000);
-                if (c < 0) {
-                    uart_printf("\nEEPROM RESTORE FAIL %08X (timed out at %u)\n",
-                                (unsigned)sum, (unsigned)(addr + off + i));
-                    return;
-                }
-                buf[i] = (uint8_t)c;
-                sum += (uint8_t)c;
+        for (i = 0; i < 4096u; i++) {
+            c = uart_getc_timeout(5000);
+            if (c < 0) {
+                uart_printf("\nEEPROM RESTORE FAIL %08X (timed out at %u)\n",
+                            (unsigned)sum, (unsigned)(addr + i));
+                return;
             }
-            spi_flash_program(addr + off, buf, 256u);
+            buf[i] = (uint8_t)c;
+            sum += (uint8_t)c;
         }
+        spi_flash_sector_erase(addr);
+        spi_flash_program(addr, buf, 4096u);
+        uart_putc('.');
     }
 
     uart_printf("\nEEPROM RESTORE %s %08X\n",
