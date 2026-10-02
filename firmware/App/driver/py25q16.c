@@ -24,7 +24,7 @@
 #include "frequencies.h"
 #include "misc.h"
 #include "port_state.h"
-#include "port_storage.h"
+#include "driver/py25q16.h"
 #include "settings.h"
 
 #define PORT_BLOB_ADDR      0x1FF000u

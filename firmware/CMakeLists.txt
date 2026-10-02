@@ -84,14 +84,13 @@ set(APP_SOURCES
     App/app/chFrScanner.c
     App/app/dtmf.c
     App/app/scanner.c
-    App/port_board.c
+    App/board.c
     App/radio.c
     App/functions.c
     App/audio.c
     App/misc.c
     App/port_state.c
-    App/port_storage.c
-    App/port_codeplug.c
+    App/driver/py25q16.c
     App/driver/spi_flash.c
     App/driver/eeprom_console.c
     # --- end of imported sources ---------------------------------------------

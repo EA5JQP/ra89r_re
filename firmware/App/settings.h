@@ -18,6 +18,7 @@
 #define SETTINGS_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "frequencies.h"
@@ -328,6 +329,12 @@ uint32_t SETTINGS_FetchChannelFrequency(const uint16_t channel);
 bool     SETTINGS_FetchChannelScanInfo(const uint16_t channel, uint32_t *frequency, ModulationMode_t *modulation);
 bool     SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDisplayInfo_t *info);
 void     SETTINGS_FetchChannelName(char *s, const uint16_t channel);
+/* The K1's ChannelAttributes_t as a plain u16, decoded from the stock codeplug
+ * (whose format now lives in settings.c).  0xFFFF = no such channel. */
+uint16_t port_codeplug_attributes(uint16_t channel);
+bool     port_codeplug_scan_info(uint16_t channel, ChannelScanDisplayInfo_t *info);
+bool     port_codeplug_excluded(uint16_t channel);
+void     port_codeplug_name(char *out, size_t size, uint16_t channel);
 void     SETTINGS_FactoryReset(bool bIsAll);
 #ifdef ENABLE_FMRADIO
     void SETTINGS_SaveFM(void);

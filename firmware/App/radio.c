@@ -342,7 +342,7 @@ void RADIO_ConfigureChannel(const unsigned int VFO, const unsigned int configure
          * (channel*16, or 0x009000 for a frequency channel).  This radio's
          * codeplug is a different format on a different chip, so the read --
          * and every bit of layout knowledge with it -- lives behind
-         * SETTINGS_FetchChannelScanDisplayInfo() in settings.c/port_codeplug.c,
+         * SETTINGS_FetchChannelScanDisplayInfo() in settings.c,
          * including where a frequency channel's own frequency is kept. */
         ChannelScanDisplayInfo_t info;
 

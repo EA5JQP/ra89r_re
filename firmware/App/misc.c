@@ -17,7 +17,6 @@
 #include <string.h>
 
 #include "misc.h"
-#include "port_codeplug.h"
 #include "settings.h"
 #include "driver/py25q16.h"
 
@@ -457,7 +456,7 @@ static uint32_t GetCurrentTime(void)
 // Port adaptation: the K1 keeps a 2-byte attribute per channel at 0x8000; on
 // this chip 0x8000 is the middle of the stock's channel records, so the mapping
 // is the port's instead -- the stock's own "channel used" and "scan allow"
-// bitmaps, decoded in port_codeplug.c.  The cache around this function, and
+// bitmaps, decoded in settings.c.  The cache around this function, and
 // every caller of MR_GetChannelAttributes(), are the K1's, unchanged.
 void MR_LoadChannelAttributesFromFlash(uint16_t channel_id, ChannelAttributes_t* attributes)
 {

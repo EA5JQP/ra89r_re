@@ -2,13 +2,12 @@
  *
  * Everything the imported K1 screens read: the VFO objects their pointers point
  * at, the runtime flags, and the boot order the K1's own main() performs.
- * The settings and the codeplug live in settings.c / port_codeplug.c; this file
+ * The settings and the codeplug live in settings.c; this file
  * only puts them together and keeps the VFO self-pointers valid.
  */
 #include <string.h>
 
 #include "misc.h"
-#include "port_codeplug.h"
 #include "radio.h"
 #include "settings.h"
 

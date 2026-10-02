@@ -20,13 +20,13 @@
 #include "host_hw.h"
 #include "py32f4xx.h"      /* TIM7/DMA/SYSCFG scratch, for the backlight checks */
 #include "misc.h"
-#include "port_codeplug.h"
+#include "settings.h"
 #include "port_state.h"
 #include "radio.h"
 #include "settings.h"
 #include "ui/main.h"
 #include "port_gui.h"
-#include "port_storage.h"
+#include "driver/py25q16.h"
 #include "ui/menu.h"
 
 /* State assertions this preview checks (the panel rendering is eyeballed). */
