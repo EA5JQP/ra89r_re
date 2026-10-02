@@ -248,9 +248,9 @@ driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR fl
                                          ("EEPROM") reads and dumps; the write test has
                                          not run yet, see docs/ra89r_eeprom.md
 driver/beeper             beeper      -- OPEN, unmerged: the DAC tone (driver/beeper.c,
-                                         PA4/DAC_OUT1, TIM4 as the sample clock),
-                                         host-tested; the pin and that it is audible
-                                         still have to be heard on the radio, see
+                                         PA4/DAC_OUT1, TIM4 + DMA1 channel 3), heard
+                                         on the radio as an ISR version; the DMA
+                                         rewrite needs re-hearing before merge, see
                                          docs/ra89r_beeper.md
 driver/audiocontrol       audio       -- MERGED.  It receives and transmits: the K1
                                          bring-up plus the audio path are audible on
@@ -351,7 +351,7 @@ The open features have their own write-ups, and they are the places to start:
 | backlight | `docs/ra89r_led.md` | done: GPIOA pin 5, confirmed on the radio |
 | status LED | `docs/ra89r_led.md` | done: `PA13` red, `PA14` green, active high (measured); `driver/led.c`, 'L' |
 | battery gauge | `docs/ra89r_battery.md` | protocol decoded and implemented; the chip never answers |
-| beeper | `docs/ra89r_beeper.md` | driver written (`driver/beeper.c`: a DAC tone on PA4/`DAC_OUT1`, TIM4); host-tested, not yet heard on the radio |
+| beeper | `docs/ra89r_beeper.md` | working: `driver/beeper.c`, DAC tone on PA4/`DAC_OUT1` via TIM4 + DMA1 ch3; heard on the radio (ISR version; the DMA rewrite is pending a re-hear) |
 | EEPROM (SPI NOR) | `docs/ra89r_eeprom.md` | read + full dump validated on the radio; write test pending |
 | RF transceivers | `docs/ra89r_bk4829.md`, `docs/ra89r_bk4815.md`, `docs/ra89r_rfpath.md` | done for the BK4829: ids, all writes, tuning and an RSSI response to a carrier validated on the radio; the BK4815's RF role is still open |
 | transmit / PA | `docs/ra89r_rfpath.md` | done: voice heard on a second radio; `driver/pa.c` + `driver/tx.c`, with the register table in the doc |
@@ -384,11 +384,11 @@ on the radio (`docs/ra89r_led.md`).  **Transmit works**: the `driver/audiocontro
 is merged, and the transmit chain it measured -- the `0x36` PA-CTL and bias, the
 `0x50` unmute, the `0x33` GPIO state, the band pins, the PB14/TIM1 bias PWM and the
 microphone gain -- is now `driver/pa.c` and `driver/tx.c`, with voice heard on a
-second receiver.  The **beeper** has a driver now too (`driver/beeper.c`): the
-stock's DAC tone on PA4 = `DAC_OUT1`, stepped by TIM4, with the K1's
-`AUDIO_PlayBeep` routed through it instead of the RF chip's tone generator.  It
-is host-tested but not yet heard on the radio, so the PA4-vs-PA5 pin question
-and the amp-enable are still open (`docs/ra89r_beeper.md`).
+second receiver.  The **beeper** works too (`driver/beeper.c`): the stock's DAC
+tone on PA4 = `DAC_OUT1`, played by TIM4 + DMA1 channel 3, with the K1's
+`AUDIO_PlayBeep` routed through it instead of the RF chip's tone generator and
+the amplifier raised around the beep.  Heard on the radio; the DMA rewrite is the
+version to re-hear before merging (`docs/ra89r_beeper.md`).
 
 ## Firmware / flashing
 

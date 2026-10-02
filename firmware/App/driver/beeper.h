@@ -4,9 +4,9 @@
  * MCU synthesises and puts out of the DAC, which is why it can beep without
  * disturbing the RF chip.  `docs/ra89r_beeper.md` has the stock's own path
  * (TIM4 plus a waveform generator); this driver keeps the same shape -- TIM4
- * steps a phase accumulator through a sine table, and the update ISR writes the
- * next sample to the DAC -- but with a plain sine at a 16 kHz sample rate
- * rather than the stock's note-length table.
+ * clocks the samples and a sine table is the waveform -- but the samples reach
+ * the DAC through DMA (no ISR) and the tone is set by TIM4's reload rather than
+ * the stock's note-length table.
  *
  * This header is deliberately free of any MCU include: the tone math is the
  * part a wrong shift turns into a wrong note, and it is host-tested in
@@ -17,10 +17,9 @@
 
 #include <stdint.h>
 
-/* A 64-entry sine, +/-2000 about the DAC's 12-bit midpoint (2048). */
+/* A 64-entry sine, +/-2000 about the DAC's 12-bit midpoint (2048).  This is the
+ * DMA source; the tone comes from the timer reload (beeper_arr()). */
 #define BEEPER_SINE_LEN    64u
-#define BEEPER_PHASE_FRAC  8u
-#define BEEPER_PHASE_MASK  (((uint32_t)BEEPER_SINE_LEN << BEEPER_PHASE_FRAC) - 1u)
 
 static const int16_t beeper_sine[BEEPER_SINE_LEN] = {
         0,   196,   390,   581,   765,   943,  1111,  1269,
@@ -33,19 +32,13 @@ static const int16_t beeper_sine[BEEPER_SINE_LEN] = {
     -1414, -1269, -1111,  -943,  -765,  -581,  -390,  -196,
 };
 
-/* Per-sample phase increment, in table-index * 2^BEEPER_PHASE_FRAC units, so a
- * cycle takes `beeper_osc_step() * (BEEPER_SINE_LEN << FRAC)` samples and the
- * tone is `freq_hz` at `sample_hz`. */
-static inline uint32_t beeper_osc_step(uint16_t freq_hz, uint32_t sample_hz)
+/* The TIM4 reload that makes the DMA play the table at `freq_hz`: the timer's
+ * update rate is `timer_hz / (ARR + 1)` and one cycle is BEEPER_SINE_LEN
+ * samples, so
+ *     ARR = timer_hz / (freq_hz * BEEPER_SINE_LEN) - 1. */
+static inline uint32_t beeper_arr(uint16_t freq_hz, uint32_t timer_hz)
 {
-    return (((uint32_t)freq_hz * BEEPER_SINE_LEN) << BEEPER_PHASE_FRAC) / sample_hz;
-}
-
-/* Advance the accumulator and return the sample at the new phase. */
-static inline int16_t beeper_osc_next(uint32_t *phase, uint32_t step)
-{
-    *phase = (*phase + step) & BEEPER_PHASE_MASK;
-    return beeper_sine[*phase >> BEEPER_PHASE_FRAC];
+    return timer_hz / ((uint32_t)freq_hz * BEEPER_SINE_LEN) - 1u;
 }
 
 /* Bring up the DAC and TIM4; safe to call twice. */

@@ -1,18 +1,18 @@
 # RA89R beeper
 
-**Status: the driver is written (`driver/beeper.c`), host-tested, and has not yet
-been heard on the radio.**  The beep is a synthesised tone on the DAC, not a
-square wave on a GPIO, and the stock's whole path from the key dispatcher to the
-DAC is mapped below.  The port's driver keeps that shape -- TIM4 steps a phase
-accumulator through a sine table and the update ISR writes the DAC -- with a
-plain sine rather than the stock's note-length table.  See "The port's driver"
-at the end.
+**Status: working on the radio.**  The power-on sound and the key beeps are
+audible, so `PA4` (`DAC_OUT1`) and the amplifier enable are confirmed.  The beep
+is a synthesised tone on the DAC, not a square wave on a GPIO, and the stock's
+whole path from the key dispatcher to the DAC is mapped below.  The port's driver
+keeps that shape -- TIM4 clocks the samples and a sine table is the waveform --
+but plays them through DMA rather than a per-sample interrupt, with a plain sine
+rather than the stock's note-length table.  See "The port's driver" at the end.
 
-Its pin is taken to be `PA4` (`DAC_OUT1`) -- `PA5` is the panel backlight, so the
-two do not conflict (see `ra89r_led.md`).  Two things the radio still has to
-settle: **which of PA4/PA5 the beep is really on**, and whether the amplifier's
-enable (the `PC13` candidate) must be raised for it to be audible.  Console `Z`
-plays 500/1000/2000 Hz so it can be heard and scoped.
+Its pin is `PA4` (`DAC_OUT1`) -- `PA5` is the panel backlight, so the two do not
+conflict (see `ra89r_led.md`) -- and the tone only reaches the speaker through
+the amplifier enable (the `PC13` candidate), which `AUDIO_PlayBeep` now raises
+around the beep.  Console `Z` plays 500/1000/2000 Hz so it can be heard and
+scoped.
 
 ### Beeper -- the beep is the DAC, not a GPIO
 
@@ -55,20 +55,31 @@ any change there has to be re-heard on the radio rather than assumed.
 
 `driver/beeper.h` / `driver/beeper.c`:
 
-- `beeper_init()` enables the DAC and TIM4 clocks, sets `PA4` to analog, points
-  TIM4 at `BOARD_BEEPER_SAMPLE_HZ` (16 kHz) and enables its update interrupt.
-  The DAC clock is `RCC_APB1ENR_DACEN` in the vendor header; the note above says
+- `beeper_init()` enables the DAC, TIM4, DMA1 and SYSCFG clocks, sets `PA4` to
+  analog, maps DMA1 channel 3 to the DAC1 request (`SYSCFG->CFGR[2]` bits
+  [22:16]; channel 1 is the keypad's ADC and channel 2 the backlight's TIM7, so
+  the crossbar gives the DAC its own), points TIM4's TRGO at its update event,
+  and configures the DAC for the TIM4 TRGO trigger with its DMA request.  The DAC
+  clock is `RCC_APB1ENR_DACEN` in the vendor header; the note above says
   `RCC_AHB2ENR` bit 2, which the header does not agree with, so the header wins.
-- `beeper_play(freq_hz, ms)` seeds the phase increment, starts TIM4, waits `ms`
-  and stops.  `beeper_stop()` parks the DAC at its midpoint, so a beep has no DC
-  step at either end.
-- `TIM4_IRQHandler()` writes one sample per update:
-  `DAC1->DHR12R1 = 2048 + sine`.
+- `beeper_play(freq_hz, ms)` sets `TIM4->ARR` from `beeper_arr()` -- the tone is
+  the update rate divided by the 64-entry table -- restarts the DMA at the top of
+  the table, starts TIM4, waits `ms` and stops.  `beeper_stop()` parks the DAC at
+  its midpoint, so a beep has no DC step at either end.
+- There is no interrupt: TIM4's update triggers the DAC, the DAC raises the DMA
+  request, and DMA1 channel 3 feeds `DAC1->DHR12R1` from the table in circular
+  mode.  The CPU only sleeps (`WFI`) for the beep's duration.
 
-The tone math (the phase step, the 64-entry sine) is in the header, deliberately
-free of any MCU include, and is tested on a PC by `tools/test_beeper.c`.  The
-`App/audio.c` beep keeps its policy and its `BEEP_Classic_array` table but calls
-`beeper_play()` per repeat; the RF chip's `0x70`/`0x71` tone sequence, the
-mute/unmute and the audio-path dance are gone, so a beep no longer disturbs the
-receiver -- which is the point of the stock's DAC beeper.  The host previews link
+The pieces are the vendor's own DAC+DMA example
+(`Projects/PY32F403-STK/Example/DAC/DAC_TIMTrigger_DMA`), which is where
+`DAC_TRIGGER_T4_TRGO` and the `DAC_CHANNEL_MAP_DAC1` request number come from.
+The tone math (the reload `beeper_arr()` and the 64-entry sine) is in the header,
+deliberately free of any MCU include, and is tested on a PC by
+`tools/test_beeper.c`.  The `App/audio.c` beep keeps its policy and its
+`BEEP_Classic_array` table but calls `beeper_play()` per repeat; the RF chip's
+`0x70`/`0x71` tone sequence, the mute/unmute and the chip's audio-path dance are
+gone.  It does still raise the *amplifier* around the beep (`AUDIO_AudioPathOn()`,
+restored to `gEnableSpeaker`), because the DAC tone reaches the speaker only
+through that amp and the idle receive path leaves it off -- a rewrite that dropped
+it made every key beep silent.  The host previews link
 `tools/host/host_beeper.c` in the driver's place.

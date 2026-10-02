@@ -1,10 +1,11 @@
 /* Host test for the beeper's tone math, without a radio.
  *
- * The DAC/TIM4 layer can only be proven on the radio (does it make a sound,
- * and on which pin).  What *can* be pinned here is the oscillator the ISR
- * steps: the phase increment that turns a frequency in Hz into a sine-table
- * step, and the period it produces.  That is the part where a wrong shift or an
- * off-by-one becomes a wrong note, and it costs a second to check.
+ * The DMA/DAC layer can only be proven on the radio (does it sound, and on
+ * which pin).  What *can* be pinned here is the timer reload that sets the
+ * tone: DMA plays the 64-entry sine at TIM4's update rate, so the frequency is
+ * timer_hz / (ARR + 1) / BEEPER_SINE_LEN and `beeper_arr()` is its inverse.  A
+ * wrong divide or an off-by-one there is a wrong note, and it costs a second to
+ * check.
  *
  *   gcc -std=c11 -I App -I App/driver tools/test_beeper.c -o /tmp/test_beeper
  *   /tmp/test_beeper
@@ -16,6 +17,9 @@
 #include <stdio.h>
 
 #include "driver/beeper.h"
+
+/* The timer's clock: APB1, the prescaler is 1 (board_pins.h). */
+#define TIMER_HZ 48000000u
 
 static unsigned checks, failed;
 
@@ -30,57 +34,45 @@ static void check(int ok, const char *what)
     }
 }
 
-/* Steps until the phase comes back to 0: one full cycle, counted in samples. */
-static unsigned cycle_samples(uint16_t freq_hz, uint32_t sample_hz)
+/* The tone a reload actually produces. */
+static uint32_t tone_hz(uint16_t freq_hz)
 {
-    uint32_t phase = 0;
-    const uint32_t step = beeper_osc_step(freq_hz, sample_hz);
-    unsigned n;
-
-    for (n = 1; n <= 100000u; n++) {
-        (void)beeper_osc_next(&phase, step);
-        if (phase == 0u)
-            return n;
-    }
-    return 0u;
+    return TIMER_HZ / (beeper_arr(freq_hz, TIMER_HZ) + 1u) / BEEPER_SINE_LEN;
 }
 
 int main(void)
 {
-    /* The step is the per-sample phase increment, in table-index*2^FRAC units:
-     *   freq * table_len * 2^FRAC / sample_hz. */
-    check(beeper_osc_step(1000u, 16000u) == 1024u, "1 kHz at 16 kHz -> step 1024");
-    check(beeper_osc_step(2000u, 16000u) == 2048u, "2 kHz -> step 2048");
-    check(beeper_osc_step(500u, 16000u) == 512u, "500 Hz -> step 512");
+    /* The reload is timer_hz / (freq * table_len) - 1. */
+    check(beeper_arr(1000u, TIMER_HZ) == 749u,  "1 kHz -> ARR 749");
+    check(beeper_arr(2000u, TIMER_HZ) == 374u,  "2 kHz -> ARR 374");
+    check(beeper_arr(500u,  TIMER_HZ) == 1499u, "500 Hz -> ARR 1499");
+    check(beeper_arr(400u,  TIMER_HZ) == 1874u, "400 Hz -> ARR 1874");
+    check(beeper_arr(600u,  TIMER_HZ) == 1249u, "600 Hz -> ARR 1249");
 
-    /* The period follows from the step: 16 kHz / freq samples per cycle. */
-    check(cycle_samples(1000u, 16000u) == 16u, "1 kHz -> 16-sample cycle");
-    check(cycle_samples(2000u, 16000u) == 8u, "2 kHz -> 8-sample cycle");
-    check(cycle_samples(500u, 16000u) == 32u, "500 Hz -> 32-sample cycle");
+    /* The K1's beep table, and the tone each reload produces. */
+    check(tone_hz(1000u) == 1000u, "1 kHz round-trips exactly");
+    check(tone_hz(500u)  == 500u,  "500 Hz round-trips exactly");
+    check(tone_hz(400u)  == 400u,  "400 Hz round-trips exactly");
+    check(tone_hz(880u) >= 878u && tone_hz(880u) <= 882u,
+          "880 Hz lands within 0.3% (the reload is not an integer)");
 
-    /* A real sine, not a square or a sign error: one cycle rises above the
-     * midpoint, falls below it, and is symmetric about it. */
+    /* A real sine, not a square or a sign error: the DMA source swings both
+     * ways about the DAC's midpoint and is symmetric. */
     {
-        uint16_t freq;
         int min = 32767, max = -32768;
         long sum = 0;
-        unsigned n;
-        uint32_t phase = 0;
-        const uint32_t step = beeper_osc_step(1000u, 16000u);
+        unsigned i;
 
-        for (n = 0; n < 16u; n++) {
-            const int v = beeper_osc_next(&phase, step);
-            if (v < min)
-                min = v;
-            if (v > max)
-                max = v;
+        for (i = 0; i < BEEPER_SINE_LEN; i++) {
+            const int v = beeper_sine[i];
+            if (v < min) min = v;
+            if (v > max) max = v;
             sum += v;
         }
 
-        check(min < -1000 && max > 1000, "a cycle swings both ways");
+        check(min < -1000 && max > 1000, "the table swings both ways");
         check(max - min >= 3800 && max - min <= 4096, "peak-to-peak is the table's span");
-        check(sum > -4000 && sum < 4000, "a whole cycle is symmetric about the midpoint");
-        (void)freq;
+        check(sum > -4000 && sum < 4000, "a whole table is symmetric about the midpoint");
     }
 
     printf("\n%u checks, %u failed\n", checks, failed);
