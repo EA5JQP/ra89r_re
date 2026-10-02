@@ -312,8 +312,15 @@ void     BK4819_WriteRegister(BK4819_REGISTER_t Register, uint16_t Data)
 uint16_t BK4819_ReadRegister(BK4819_REGISTER_t Register) { (void)Register; return 0; }
 void     BK4819_PickRXFilterPathBasedOnFrequency(uint32_t Frequency) { (void)Frequency; }
 
-void GPIO_EnableAudioPath(void) { }
-void GPIO_DisableAudioPath(void) { }
+/* The amplifier enable (PC13).  The beeper's DAC tone only reaches the speaker
+ * through it, and the idle receive path leaves it off, so a beep has to turn it
+ * on.  The previews track it so that can be asserted (see tools/preview_k1.c). */
+static int s_host_audio_path;
+
+void GPIO_EnableAudioPath(void) { s_host_audio_path = 1; }
+void GPIO_DisableAudioPath(void) { s_host_audio_path = 0; }
+
+bool host_audio_path_is_on(void) { return s_host_audio_path != 0; }
 
 void systick_delay_ms(uint32_t ms) { (void)ms; }
 

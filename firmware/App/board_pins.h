@@ -55,6 +55,17 @@
 #define BACKLIGHT_PIN       (1u << 5)
 #define BACKLIGHT_ON_LEVEL  1
 
+/* Beeper: the key beep is a synthesised tone on the DAC, not a square wave on a
+ * spare pin (docs/ra89r_beeper.md).  The stock configures PA4 and PA5 as DAC
+ * outputs; PA5 is the validated backlight (and stays a plain GPIO here), so the
+ * beep is taken to be PA4 = DAC_OUT1.  TIM4's update steps the sample.
+ *
+ * The vendor header puts the DAC clock on APB1 (RCC_APB1ENR_DACEN); the stock
+ * note in the doc said AHB2ENR bit 2, which the SDK's own definition does not
+ * agree with -- see driver/beeper.c. */
+#define BEEPER_DAC_PIN       (1u << 4)   /* PA4 = DAC_OUT1 */
+#define BOARD_BEEPER_SAMPLE_HZ 16000u    /* TIM4 update rate = the DAC sample rate */
+
 /* The status LED: a red/green pair on GPIOA 13 and 14, **both active high**.
  * Measured on the radio by stepping the pair through all four combinations and
  * reading the colour after each:

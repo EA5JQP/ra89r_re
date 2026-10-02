@@ -13,7 +13,9 @@
 #include <stdio.h>
 
 #include "app/app.h"
+#include "audio.h"
 #include "driver/backlight.h"
+#include "driver/gpio.h"
 #include "driver/keyboard.h"
 #include "driver/st7565.h"
 #include "helper/boot.h"
@@ -467,6 +469,34 @@ int main(void)
         printf("\n[freq] %s an entered frequency survives the reconfigure "
                "(145.5000 -> %u.%05u MHz)\n", ok ? "ok  " : "FAIL",
                (unsigned)(kept / 100000u), (unsigned)(kept % 100000u));
+        if (!ok) failures++;
+    }
+
+    /* ---- a beep must drive the amplifier enable -------------------------
+     *
+     * The DAC tone reaches the speaker only through the amp (PC13), and the
+     * idle receive path leaves it off (RADIO_SetupRegisters -> AudioPathOff).
+     * AUDIO_PlayBeep therefore has to turn it on for the beep, the way the K1
+     * did around the chip's tone.  Regression: a rewrite that dropped the path
+     * handling made every key beep silent -- only the boot sound, played while
+     * the path was still on, was audible. */
+    {
+        bool ok;
+
+        gCurrentFunction     = FUNCTION_FOREGROUND;
+        gEeprom.BEEP_CONTROL = true;
+        gEnableSpeaker       = false;
+        GPIO_DisableAudioPath();
+        host_beeper_reset_counts();
+
+        AUDIO_PlayBeep(BEEP_1KHZ_60MS_OPTIONAL);
+
+        ok = host_beeper_play_count() > 0u &&
+             host_beeper_plays_path_on() == host_beeper_play_count();
+
+        printf("\n[beep] %s the beep drives the amp on (%u/%u plays with the path on)\n",
+               ok ? "ok  " : "FAIL",
+               host_beeper_plays_path_on(), host_beeper_play_count());
         if (!ok) failures++;
     }
 

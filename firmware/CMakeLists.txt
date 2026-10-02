@@ -36,6 +36,7 @@ set(APP_SOURCES
     App/ui.c
     App/driver/backlight.c
     App/driver/led.c
+    App/driver/beeper.c
     App/driver/clock.c
     App/driver/early.c
     App/driver/fault.c
