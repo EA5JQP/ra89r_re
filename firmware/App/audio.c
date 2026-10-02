@@ -71,15 +71,21 @@ void AUDIO_PlayBeep(BEEP_Type_t Beep)
     if (Beep >= ARRAY_SIZE(BEEP_Classic_array))
         return;
 
-    /* The beep is the MCU's own DAC tone (driver/beeper.c), not the RF chip's.
-     * It therefore needs none of the audio-path/mute dance the chip path did,
-     * and it leaves the receiver untouched -- which is the point of the stock's
-     * DAC beeper. */
+    /* The beep is the MCU's own DAC tone (driver/beeper.c), not the RF chip's,
+     * so it needs none of the chip's mute/restore dance -- but the tone reaches
+     * the speaker through the same amplifier as the receiver (PC13), which the
+     * idle receive path leaves off.  Turn it on for the beep and put it back,
+     * which is what the K1's own AUDIO_PlayBeep did around the chip's tone. */
+    AUDIO_AudioPathOn();
+
     for (uint8_t i = 0; i < BEEP_Classic_array[Beep][BEEP_REPEATS]; i++) {
         beeper_play(BEEP_Classic_array[Beep][BEEP_TONE],
                     BEEP_Classic_array[Beep][BEEP_DURATION]);
         SYSTEM_DelayMs(20);
     }
+
+    if (!gEnableSpeaker)
+        AUDIO_AudioPathOff();
 
 #ifdef ENABLE_VOX
     gVoxResumeCountdown = 80;

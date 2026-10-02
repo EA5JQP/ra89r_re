@@ -15,4 +15,13 @@ void host_set_ptt2(bool pressed);
  * on every 10 ms slice. */
 unsigned host_flash_erase_count(void);
 
+/* The host's model of the amplifier enable (PC13): the beeper's DAC tone only
+ * reaches the speaker through it, so a beep must drive it on.  `host_beeper_*`
+ * count beeper_play() calls and how many of them saw the path on (see
+ * tools/host/host_beeper.c). */
+bool host_audio_path_is_on(void);
+unsigned host_beeper_play_count(void);
+unsigned host_beeper_plays_path_on(void);
+void host_beeper_reset_counts(void);
+
 #endif /* HOST_HW_H */
