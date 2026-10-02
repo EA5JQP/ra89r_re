@@ -15,6 +15,7 @@ notes and quoted addresses use a shifted coordinate system.
 | [`ra89r_findings.md`](ra89r_findings.md) | hardware identification, flash/RAM address map, RF and band data, UI strings, open points. Addresses are for the **current** decode |
 | [`ra89r_bootloader.md`](ra89r_bootloader.md) | the stock bootloader's flashing protocol, the frame format, the record validator, baud rates, and the `0x0805FFF0` update-mode request |
 | [`ra89r_codeplug.md`](ra89r_codeplug.md) | the *contents* of the external flash's first 16 KB: 21-byte channel records, the two channel bitmaps, tone encoding, band ranges, the 32-byte settings block, calibration |
+| [`ra89r_calibration.md`](ra89r_calibration.md) | the factory RF calibration window at `0x3000`: the stock's own address table, the pages, how the stock reads it into the RF chips, and why it must be preserved |
 | [`ra89r_eeprom.md`](ra89r_eeprom.md) | the external SPI NOR flash ("EEPROM"): part and pins, SPI command set, what is actually on the chip, the write-validation test |
 | [`ra89r_lcd.md`](ra89r_lcd.md) | the 128x64 panel: pin map, init sequence, addressing, fonts, port notes |
 | [`ra89r_keypad.md`](ra89r_keypad.md) | the 20-button key matrix / ADC decode and the F4HWN `KEY_Code_e` mapping |
