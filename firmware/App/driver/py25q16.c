@@ -278,9 +278,15 @@ bool storage_write_test(uint32_t *bad_offset)
 #define STOCK_POWER_STEP_MHZ  2u
 #define STOCK_POWER_ROWS      401u
 
-/* A marker just before the calibration block, in the same erased sector. */
+/* The layout marker, just before the calibration block in the same erased
+ * sector: "RKT" plus a version digit.  The digit is deliberately part of the
+ * value -- when the image's layout grows, a radio that carries the old marker
+ * would otherwise skip the import (driver/py25q16.c) and read an empty image,
+ * which looks exactly like a radio with no channels.  The channels, names and
+ * attributes were added after the calibration, so the version went to 2.
+ * Bump it whenever the layout changes. */
 #define K1_IMAGE_MAGIC_ADDR 0x100B8u
-#define K1_IMAGE_MAGIC      0x31544B52u
+#define K1_IMAGE_MAGIC      0x32544B52u   /* "RKT2": calibration + channel image */
 #define K1_IMAGE_SECTOR     0x10000u
 
 /* Calibration field offsets from K1_IMAGE_CAL_BASE. */
@@ -407,7 +413,7 @@ void storage_import_k1(void)
             ChannelScanDisplayInfo_t info;
             uint8_t  raw[16];
             char     name[16];
-            char     nraw[16];
+            uint8_t  nraw[16];
             uint16_t attr;
             unsigned i;
 

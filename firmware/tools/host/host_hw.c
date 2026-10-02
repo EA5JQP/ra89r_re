@@ -109,12 +109,13 @@ void BK4819_ToggleGpioOut(BK4819_GPIO_PIN_t pin, bool enable) { (void)pin; (void
 
 
 /* ---------------------------------------------------------------------------
- * A tiny in-RAM stand-in for the external SPI NOR flash, covering the codeplug
- * (0x0000..0x1FFF, which the preview preloads with a factory-shaped image) and
- * the two sectors the port's storage uses (0x1FE000..0x1FFFFF, both empty on
- * this radio).  Program ANDs bits and erase sets 0xFF, like the real part, so
- * the host can exercise the channel decoder, the settings blob round-trip and
- * the write test.
+ * A tiny in-RAM stand-in for the external SPI NOR flash, covering three
+ * regions: the codeplug (0x0000..0x1FFF, which the preview preloads with a
+ * factory-shaped image), the K1 image (0x4000..0x13FFF, empty until the port's
+ * import writes it) and the two sectors the port's storage uses
+ * (0x1FE000..0x1FFFFF, both empty on this radio).  Program ANDs bits and erase
+ * sets 0xFF, like the real part, so the host can exercise the import, the
+ * channel decoder, the settings blob round-trip and the write test.
  * ------------------------------------------------------------------------- */
 #define HOST_FLASH_BASE 0x1FE000u
 #define HOST_FLASH_SIZE 0x2000u
@@ -124,11 +125,23 @@ static uint8_t s_host_flash[HOST_FLASH_SIZE];
 #define HOST_CP_SIZE 0x2000u
 static uint8_t s_host_codeplug[HOST_CP_SIZE];
 
+/* The K1 application's own EEPROM image: names 0x4000, attributes 0x8000,
+ * channel records 0x9000, calibration 0x100C0.  This is the region the port's
+ * one-time import writes (driver/py25q16.c) and the K1 runtime then reads; the
+ * host must model it or the preview would exercise a runtime nobody runs. */
+#define HOST_IMG_BASE 0x04000u
+#define HOST_IMG_SIZE 0x10000u
+static uint8_t s_host_image[HOST_IMG_SIZE];
+
 static int host_flash_at(uint32_t addr, uint32_t *off)
 {
     if (addr >= HOST_CP_BASE && addr < HOST_CP_BASE + HOST_CP_SIZE) {
         *off = addr - HOST_CP_BASE;
         return 1;
+    }
+    if (addr >= HOST_IMG_BASE && addr < HOST_IMG_BASE + HOST_IMG_SIZE) {
+        *off = addr - HOST_IMG_BASE;
+        return 3;
     }
     if (addr < HOST_FLASH_BASE || addr >= HOST_FLASH_BASE + HOST_FLASH_SIZE)
         return 0;
@@ -145,6 +158,8 @@ static uint8_t *host_flash_ptr(uint32_t addr)
         return &s_host_codeplug[off];
     if (which == 2)
         return &s_host_flash[off];
+    if (which == 3)
+        return &s_host_image[off];
     return 0;
 }
 
@@ -202,6 +217,7 @@ void spi_flash_init(void)
 
     if (!initialised) {
         memset(s_host_flash, 0xFF, sizeof s_host_flash);
+        memset(s_host_image, 0xFF, sizeof s_host_image);
         host_codeplug_defaults();
         initialised = true;
     }

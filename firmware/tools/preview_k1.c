@@ -90,6 +90,28 @@ int main(void)
     ST7565_Init();
     SETTINGS_InitEEPROM(); SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
 
+    /* ---- the image: the import must have given the K1 real channels -------
+     *
+     * The radio boots onto the codeplug's first channel, and the runtime now
+     * reads the records the one-time import wrote (0x9000).  If the image is
+     * empty, RADIO_ConfigureChannel falls back to gEeprom.FreqChannel (a
+     * frequency channel, band default frequency) and COMMON_SwitchVFOMode then
+     * has nothing to switch to -- the "stuck on F3, no new frequency" fault.
+     * This check is why the host models the image region (tools/host/host_hw.c). */
+    {
+        bool ok = IS_MR_CHANNEL(gEeprom.ScreenChannel[0]) &&
+                  gEeprom.ScreenChannel[0] == 0u;
+
+        printf("\n[image] %s boot lands on %s channel %u, RX %u.%05u MHz "
+               "(the import's record, read back through the K1 runtime)\n",
+               ok ? "ok  " : "FAIL",
+               IS_MR_CHANNEL(gEeprom.ScreenChannel[0]) ? "memory" : "frequency",
+               (unsigned)gEeprom.ScreenChannel[0],
+               (unsigned)(gRxVfo->freq_config_RX.Frequency / 100000u),
+               (unsigned)(gRxVfo->freq_config_RX.Frequency % 100000u));
+        if (!ok) failures++;
+    }
+
     /* ---- the codeplug: what the stock's records decode to ---------------- */
     {
         unsigned int channel;

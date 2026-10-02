@@ -271,10 +271,24 @@ here are the port's todo list:
   re-establishes them, and `port_storage_load_settings()` calls it after loading;
   the host preview crashed on exactly this before the fix.
 
-  Not done yet, and the reason this is not "storage finished": the *stock
-  codeplug* is a different format and is not mapped into `gEeprom` yet, so the
-  channels and names the menus show are still the compiled-in defaults rather
-  than the radio's own data (ra89r_eeprom.md has the layout).
+  The stock's *channel* data is mapped now: the one-time import in
+  `driver/py25q16.c` (`storage_import_k1()`) also writes the K1's channel
+  records (`0x9000`), names (`0x4000`) and attributes (`0x8000`) from the stock's
+  codeplug, so `settings.c`'s `SETTINGS_Fetch*`/`SaveChannel*` and `misc.c`'s
+  attribute table are the K1's own code reading the K1's own image -- the stock
+  decoder is reached only by the import (`ra89r_codeplug.md` has its format).
+
+  The import is gated by a layout marker at `0x100B8` ("RKT" plus a version
+  digit), and **the version is part of the value on purpose.**  It was `...1`
+  when the import carried only the calibration, so a radio that had already
+  imported under the older build skipped the channel import and booted with an
+  empty image -- which `RADIO_ConfigureChannel` turns into a fallback to a
+  frequency channel (the "stuck on F3 / 18 MHz" fault, and
+  `COMMON_SwitchVFOMode` then has no channel to switch to).  Bumping it to
+  `...2` makes this build re-import on first boot; bump it again whenever the
+  image's layout changes.  The host fake in `tools/host/host_hw.c` now models
+  the image region and `preview_k1.c` asserts the boot lands on a memory
+  channel, so a skipped import fails offline instead of on the radio.
 
 * **Stage 3a -- the app core is in and the radio works from the K1 UI
   (unvalidated on the radio).**  `radio.c`, `functions.c`, `audio.c`, `misc.c`
