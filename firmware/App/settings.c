@@ -492,6 +492,15 @@ void SETTINGS_SaveChannel(uint16_t Channel, uint8_t VFO, const VFO_Info_t *pVFO,
             PY25Q16_WriteBuffer(K1_IMAGE_CH_BASE + (uint32_t)Channel * 16u,
                                 raw, sizeof raw, false);
         }
+
+        /* The K1 writes the channel's attributes alongside the record.  For a
+         * frequency channel this is what makes the channel valid:
+         * RADIO_ConfigureChannel only reloads the channel's own frequency when
+         * MR_GetChannelAttributes() finds a real entry, and an absent one
+         * (0xFFFF) makes it reset to the band's lower frequency.  Without this,
+         * a frequency typed in the VFO reverts as soon as the save-triggered
+         * reconfigure runs. */
+        SETTINGS_UpdateChannel(Channel, pVFO, true);
     }
 
     (void)settings_save_all();
@@ -513,7 +522,30 @@ void SETTINGS_SaveChannelName(uint16_t channel, const char *name)
 
 void SETTINGS_UpdateChannel(uint16_t channel, const VFO_Info_t *pVFO, bool keep)
 {
-    SETTINGS_SaveChannel(channel, gEeprom.TX_VFO, pVFO, keep ? 1u : 0u);
+    /* The K1's own implementation: this writes the *attributes*, not the
+     * record (the port used to send this through SETTINGS_SaveChannel, which is
+     * both circular and the wrong table).  A frequency channel's attributes make
+     * it valid for RADIO_ConfigureChannel(); the MR clear-name branch is the
+     * K1's too.  pVFO may be NULL when keep is false. */
+    ChannelAttributes_t att = {
+        .band      = 0x7,
+        .compander = 0,
+        .unused_1  = 0,
+        .unused_2  = 0,
+        .exclude   = 0,
+        .scanlist  = 0,
+    };
+
+    if (keep && pVFO != 0) {
+        att.band      = pVFO->Band;
+        att.compander = pVFO->Compander;
+        att.scanlist  = pVFO->SCANLIST_PARTICIPATION;
+    }
+
+    MR_SetChannelAttributes(channel, &att);
+
+    if (IS_MR_CHANNEL(channel) && !keep)
+        SETTINGS_SaveChannelName(channel, "");
 }
 
 void SETTINGS_FactoryReset(bool bIsAll)

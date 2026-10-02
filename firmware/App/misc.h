@@ -44,8 +44,10 @@
 #define MR_CHANNELS_CACHE_SIZE 10
 
 
-#define IS_MR_CHANNEL(x)       ((x) >= MR_CHANNEL_FIRST && (x) <= MR_CHANNEL_LAST)
-#define IS_FREQ_CHANNEL(x)     ((x) >= FREQ_CHANNEL_FIRST && (x) <= FREQ_CHANNEL_LAST)
+/* The casts keep the comparison from warning when the argument is an unsigned
+ * type (the enum operands are ints, so `x >= 0` is otherwise "always true"). */
+#define IS_MR_CHANNEL(x)       ((uint32_t)(x) >= (uint32_t)MR_CHANNEL_FIRST && (uint32_t)(x) <= (uint32_t)MR_CHANNEL_LAST)
+#define IS_FREQ_CHANNEL(x)     ((uint32_t)(x) >= (uint32_t)FREQ_CHANNEL_FIRST && (uint32_t)(x) <= (uint32_t)FREQ_CHANNEL_LAST)
 #define IS_VALID_CHANNEL(x)    ((x) < LAST_CHANNEL)
 #define IS_NOAA_CHANNEL(x)     ((x) >= NOAA_CHANNEL_FIRST && (x) <= NOAA_CHANNEL_LAST)
 

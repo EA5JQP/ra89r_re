@@ -434,6 +434,42 @@ int main(void)
         if (!ok) failures++;
     }
 
+    /* ---- a frequency entered in a VFO must stick -------------------------
+     *
+     * Typing a frequency in a frequency channel makes the K1 set the VFO's
+     * frequency, request a channel save and then reconfigure.  The reconfigure
+     * reloads a frequency channel through MR_GetChannelAttributes(); if the
+     * channel has no attribute entry (0xFFFF) RADIO_ConfigureChannel treats it
+     * as invalid and resets it to the band's lower frequency -- which is what
+     * made a typed frequency snap back to 137.000.  SETTINGS_SaveChannel now
+     * writes the attributes, so the entered value must survive. */
+    {
+        const uint16_t freqChannel = (uint16_t)(FREQ_CHANNEL_FIRST + BAND3_137MHz);
+        VFO_Info_t *vfo = &gEeprom.VfoInfo[0];
+        uint32_t kept;
+        bool ok;
+
+        gEeprom.TX_VFO = 0;
+        gEeprom.RX_VFO = 0;
+        RADIO_SelectVfos();
+        SETTINGS_FixupVfoPointers();
+
+        gEeprom.ScreenChannel[0] = freqChannel;
+        gEeprom.FreqChannel[0]   = freqChannel;
+        RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD);
+
+        vfo->freq_config_RX.Frequency = 14550000u;
+        SETTINGS_SaveChannel(freqChannel, 0, vfo, 1);
+        RADIO_ConfigureChannel(0, VFO_CONFIGURE);
+        kept = vfo->freq_config_RX.Frequency;
+
+        ok = (kept == 14550000u);
+        printf("\n[freq] %s an entered frequency survives the reconfigure "
+               "(145.5000 -> %u.%05u MHz)\n", ok ? "ok  " : "FAIL",
+               (unsigned)(kept / 100000u), (unsigned)(kept % 100000u));
+        if (!ok) failures++;
+    }
+
     printf("\n%d failures\n", failures);
     return failures ? 1 : 0;
 }
