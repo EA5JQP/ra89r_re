@@ -90,6 +90,8 @@ def main():
             open(img, "wb").write(new)
             r = run(tool(port, "restore", img, "--yes"))
             check("restore exits 0", r.returncode == 0, r.stderr.strip())
+            check("restore reports progress", "restore" in r.stderr.lower(),
+                  r.stderr.strip())
             back = os.path.join(tmp, "back.bin")
             r2 = run(tool(port, "backup", back))
             check("readback exits 0", r2.returncode == 0, r2.stderr.strip())

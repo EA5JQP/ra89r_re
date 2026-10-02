@@ -229,7 +229,17 @@ def cmd_restore(ser, args):
         ser.write(data[off:off + 4096])
         ack = ser.read(1)
         if ack != b".":
+            if args.progress:
+                sys.stderr.write("\n")
             sys.exit(f"no sector ack at {off:#x}: {ack!r}")
+        if args.progress:
+            done = off + 4096
+            if done % (256 * 1024) == 0 or done == size:
+                sys.stderr.write(f"\r  restore {done * 100 // size:3d}%  "
+                                 f"{done}/{size}")
+                sys.stderr.flush()
+    if args.progress:
+        sys.stderr.write("\r  100%  done            \n")
 
     tail, match = read_match(ser, rb"EEPROM RESTORE (OK|FAIL) ([0-9A-Fa-f]{8})\n",
                              max(args.timeout, 30.0))
@@ -275,7 +285,7 @@ def main():
     ap.add_argument("--timeout", type=float, default=3.0,
                     help="seconds to wait for a reply (default 3)")
     ap.add_argument("--no-progress", dest="progress", action="store_false",
-                    help="do not print dump progress on stderr")
+                    help="do not print dump/restore progress on stderr")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p_id = sub.add_parser("id", help="identify the chip")
