@@ -32,16 +32,18 @@ it from source rather than trusting a stale copy.
 
 ## 2. Flash it
 
-Enter update mode and flash it.  The full procedure (hardware, entering update
-mode, going back to stock) is `firmware/FLASHING.md`; the short version:
+Put the radio in update mode (see `firmware/FLASHING.md`), then one line flashes
+the prepared backup firmware:
 
 ```sh
-python3 tools/ra89r_flash.py --port /dev/ttyUSB0 probe
-python3 tools/ra89r_flash.py --port /dev/ttyUSB0 flash firmware/build/Release/ra89r_fw.icf
+python3 tools/ra89r_flash.py --port /dev/ttyUSB0 flash work/ra89r_eeprom_backup.icf
 ```
 
-The radio reboots into the backup firmware and its console answers at 115200 on
-the same Kenwood jack.
+That file is the `driver/eeprom` build wrapped as an `.icf` (rebuild it with
+step 1 if it is stale; the rebuilt file is
+`firmware/build/Release/ra89r_fw.icf`).  Add `probe` in place of `flash` to
+check the radio is in update mode first.  The radio reboots into the backup
+firmware and its console answers at 115200 on the same Kenwood jack.
 
 ## 3. Back up the whole chip
 
