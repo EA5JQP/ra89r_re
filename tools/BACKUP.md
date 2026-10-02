@@ -81,6 +81,16 @@ It prints `EEPROM WRITETEST PASS` (or `FAIL` with the address that differed).
 On the console the same thing is the `Z` key.  If it fails, do not restore —
 the write path is not working yet.
 
+The same firmware logic can be exercised on a PC before touching the radio:
+`firmware/tools/test_eeprom_console.c` compiles `App/driver/eeprom_console.c`
+against fake UART and SPI, and checks the restore round-trip, the size guard,
+the checksum verdict and the empty-sector validation:
+
+```sh
+cd firmware && gcc -std=c11 -I App -I App/driver tools/test_eeprom_console.c \
+    App/driver/eeprom_console.c -o /tmp/test_eeprom_console && /tmp/test_eeprom_console
+```
+
 ## 5. Restore
 
 ```sh

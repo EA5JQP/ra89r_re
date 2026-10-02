@@ -44,6 +44,7 @@ set(APP_SOURCES
     App/driver/systick.c
     App/driver/lcd_st7565.c
     App/driver/spi_flash.c
+    App/driver/eeprom_console.c
     App/driver/keypad.c
     App/driver/font_8x16.c
     App/driver/font_5x7.c)
