@@ -223,6 +223,7 @@ int main(void)
      * missing: the K1's path is F (the # key) and then 3. */
     {
         const uint16_t before = gEeprom.ScreenChannel[0];
+        bool           ok;
 
         gWasFKeyPressed    = true;
         gKeyInputCountdown = key_input_timeout_500ms;
@@ -233,6 +234,14 @@ int main(void)
                IS_MR_CHANNEL(gEeprom.ScreenChannel[0]) ? "channel" : "frequency",
                (unsigned)(gRxVfo->freq_config_RX.Frequency / 100000u),
                (unsigned)(gRxVfo->freq_config_RX.Frequency % 100000u));
+
+        /* The F modifier is one-shot: the F+key combination releases it (the
+         * K1's HideFKeyIcon).  A stub here left it latched until F was pressed
+         * again. */
+        ok = !gWasFKeyPressed;
+        printf("[keys] %s F released after the F+key combination\n", ok ? "ok  " : "FAIL");
+        if (!ok)
+            failures++;
     }
 
     press(KEY_MENU);                   /* ... then open the menu ... */

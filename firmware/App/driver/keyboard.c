@@ -9,6 +9,7 @@
 #include "driver/keyboard.h"
 
 #include "driver/keypad.h"
+#include "misc.h"
 
 /* The K1's keyboard state; the application reads the two readings and the
  * debounce counter, so they are kept, but the port's debounce lives in the
@@ -38,4 +39,10 @@ KEY_Code_t KEYBOARD_GetKey(void)
 
 void HideFKeyIcon(void)
 {
+    /* The K1 clears the F modifier here, and every F+key combination and the
+     * input-box timeout call it.  The port's stub did nothing, so F stayed
+     * latched after an F+key press until it was pressed again (the reported
+     * "I need to press it again to unlock it"). */
+    gWasFKeyPressed = false;
+    gUpdateStatus   = true;
 }
