@@ -25,10 +25,26 @@
 #include "driver/gpio.h"
 #include "driver/keypad.h"
 #include "driver/pa.h"
+#include "driver/rf_bus.h"
 #include "driver/tx.h"
 #include "driver/lcd_st7565.h"
+#include "driver/st7565.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
+#include "driver/py25q16.h"
+#include "app/app.h"
+#include "app/common.h"
+#include "app/scanner.h"
+#include "helper/boot.h"
+#include "misc.h"
+#include "port_gui.h"
+#include "port_storage.h"
+#include "port_state.h"
+#include "radio.h"
+#include "ui/main.h"
+#include "ui/menu.h"
+#include "ui/status.h"
+#include "ui/ui.h"
 #include "ui.h"
 
 #define VERSION_STRING "ra89r_fw 0.2 (uart debug)"
@@ -42,6 +58,7 @@
 #define UPDATE_REQUEST  ((volatile uint8_t *)0x0805FFF0)
 
 static uint8_t contrast = 0x19u;
+static int     bench_panel;   /* '0': hand the panel back to the bring-up screens */
 static int show_border;
 static int animate;
 static int heartbeat = 1;
@@ -118,7 +135,8 @@ static const char *reset_cause(void)
 
 static void print_diagnostics(void)
 {
-    uart_printf("  sysclk      %u Hz (HSI)\n", (unsigned)SystemCoreClock);
+    uart_printf("  sysclk      %u Hz (HSI x %u through the PLL)\n",
+                (unsigned)SystemCoreClock, (unsigned)BOARD_PLL_MUL);
     uart_printf("  vtor        %08X\n", (unsigned)SCB->VTOR);
     uart_printf("  msp         %08X\n", (unsigned)__get_MSP());
     uart_printf("  reset cause %s (CSR=%08X)\n", reset_cause(),
@@ -134,8 +152,17 @@ static void print_diagnostics(void)
                 (unsigned)LCD_COLUMN_OFFSET);
     uart_printf("  uart        USART1 PB6/PB7 AF%u @ %u 8N1\n",
                 (unsigned)BOARD_UART_AF, (unsigned)BOARD_UART_BAUD);
-    uart_printf("  backlight   GPIOA pin 5, now %s\n",
-                BACKLIGHT_IsOn() ? "on" : "off");
+    uart_printf("  backlight   GPIOA pin 5, now %s; BLTime %u, BLMin %u, BLMax %u, "
+                "index %u, duty %u/32, pin %u\n",
+                BACKLIGHT_IsOn() ? "on" : "off",
+                (unsigned)gEeprom.BACKLIGHT_TIME, (unsigned)gEeprom.BACKLIGHT_MIN,
+                (unsigned)gEeprom.BACKLIGHT_MAX, (unsigned)BACKLIGHT_GetBrightness(),
+                BACKLIGHT_DutyOnCount(), gpio_read(GPIOA, BACKLIGHT_PIN) ? 1u : 0u);
+    uart_printf("  backlight hw TIM7 CR1=%04X ARR=%u DIER=%04X; DMA1 ch2 CCR=%04X "
+                "CNDTR=%u; SYSCFG CFGR2=%08X\n",
+                (unsigned)TIM7->CR1, (unsigned)TIM7->ARR, (unsigned)TIM7->DIER,
+                (unsigned)DMA1_Channel2->CCR, (unsigned)DMA1_Channel2->CNDTR,
+                (unsigned)SYSCFG->CFGR[2]);
 }
 
 static void lcd_set_contrast(uint8_t value)
@@ -185,18 +212,148 @@ static void print_info(void)
 
 static void print_help(void)
 {
-    uart_puts("\ncommands: h help   i diagnostics   d dump screen as ASCII\n"
-              "          c clear  t test card   b border   f fill   p animation\n"
-              "          v/V contrast up/down  l backlight on/off  q heartbeat\n"
-              "          L status led cycle (PA13 red / PA14 green)\n"
-              "          r re-init panel (standard, bootloader-proven)\n"
-              "          s re-init panel (stock app variant, 8 extra bytes)\n"
-              "          k keypad monitor (raw ADC per line + decoded key)\n"
-              "          R probe both RF chips (ids)   W configure both\n"
-              "          X verify config   K K1-compatible bring-up + tune 145.7500\n"
-              "          S sample reg 0x67 for 4 s   C toggle PC13\n"
-              "          T transmit (DTMF tone)   Y step the PA power\n"
-              "          T transmit on/off (also: hold PTT on the radio)\n");
+    uart_puts("\nthe K1 GUI owns the panel; these are console diagnostics\n"
+              "          h help   i diagnostics   d dump screen as ASCII\n"
+              "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
+              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n"
+              "          D step the RF bus delay (find what still gives audio)\n"
+              "          P time the loop's hot paths on this radio\n"
+              "          q heartbeat   k keypad monitor   l backlight\n"
+              "          v/V contrast   L status led cycle (PA13/PA14)\n"
+              "          R probe RF ids   W configure both   X verify config\n"
+              "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
+              "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
+              "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
+              "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
+              "          1 back to the K1 GUI\n"
+              "          5 save settings   6 flash write test   e flash dump\n"
+              "          0 hand the panel to the bring-up screens (again: back)\n"
+              "          t test card   b border   f fill   p animation   c clear\n"
+              "          r/s panel re-init (standard / stock-app variant)\n");
+}
+
+/* What the two VFOs are actually on, and the state the VFO/channel switch
+ * depends on.  `m` prints this before and after the switch. */
+static void print_mode(void)
+{
+    const uint16_t a = gEeprom.ScreenChannel[0];
+    const uint16_t b = gEeprom.ScreenChannel[1];
+
+    uart_printf("  TX_VFO %u  screen A %u %s  screen B %u %s\n",
+                (unsigned)gEeprom.TX_VFO,
+                (unsigned)a, IS_MR_CHANNEL(a) ? "(channel)" :
+                              (IS_FREQ_CHANNEL(a) ? "(frequency)" : "(?)"),
+                (unsigned)b, IS_MR_CHANNEL(b) ? "(channel)" :
+                              (IS_FREQ_CHANNEL(b) ? "(frequency)" : "(?)"));
+    uart_printf("  FreqChannel A %u B %u  MrChannel A %u B %u  VFO_OPEN %u\n",
+                (unsigned)gEeprom.FreqChannel[0], (unsigned)gEeprom.FreqChannel[1],
+                (unsigned)gEeprom.MrChannel[0], (unsigned)gEeprom.MrChannel[1],
+                (unsigned)gEeprom.VFO_OPEN);
+    uart_printf("  front end %s (%s, PA0 %s, reg 0x33 0x%04X)\n",
+                pa_band_is_uhf() ? "UHF" : "VHF",
+                pa_band_is_main() ? ">134 MHz" : "<=134 MHz",
+                pa_band_pa0_high() ? "high" : "low",
+                (unsigned)pa_chip_path_reg());
+    uart_printf("  A %u.%05u MHz  B %u.%05u MHz  CHANNEL_SAVE %u  band %u  RX_VFO %u\n",
+                (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency / 100000u),
+                (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency % 100000u),
+                (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency / 100000u),
+                (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency % 100000u),
+                (unsigned)gTxVfo->CHANNEL_SAVE, (unsigned)gTxVfo->Band,
+                (unsigned)gEeprom.RX_VFO);
+}
+
+/* Where does the time go on this radio?  Every line is wall-clock milliseconds
+ * for N calls, so the numbers can be compared with the loop's 10 ms slice. */
+static void print_profile(void)
+{
+    volatile uint32_t sink = 0;
+    uint32_t t0, t1, i;
+
+    uart_puts("\nprofile (systick milliseconds for the count shown):\n");
+
+    t0 = systick_millis();
+    for (i = 0; i < 100u; i++)
+        sink += BK4819_GetRSSI();
+    t1 = systick_millis();
+    uart_printf("  100 x BK4819_GetRSSI               %5u ms\n", (unsigned)(t1 - t0));
+
+    /* One tune, i.e. what every UP/DOWN and channel change pays: the K1's
+     * RADIO_SetupRegisters, which is ~30 RF register accesses.  With the bus
+     * delay as it is, this is the number that makes tuning feel slow. */
+    t0 = systick_millis();
+    RADIO_SetupRegisters(true);
+    t1 = systick_millis();
+    uart_printf("  1 x RADIO_SetupRegisters (a tune)  %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 20u; i++)
+        CheckKeys();
+    t1 = systick_millis();
+    uart_printf("  20 x CheckKeys (the keys, no press) %3u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 20u; i++)
+        SCANNER_TimeSlice10ms();
+    t1 = systick_millis();
+    uart_printf("  20 x SCANNER_TimeSlice10ms        %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 20u; i++)
+        UI_MAIN_TimeSlice10ms();
+    t1 = systick_millis();
+    uart_printf("  20 x UI_MAIN_TimeSlice10ms        %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 100u; i++) {
+        uint8_t buf[21];
+        PY25Q16_ReadBuffer(0, buf, sizeof buf);
+        sink += buf[0];
+    }
+    t1 = systick_millis();
+    uart_printf("  100 x 21-byte codeplug read       %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 20u; i++) {
+        ChannelScanDisplayInfo_t info;
+        if (SETTINGS_FetchChannelScanDisplayInfo(0, &info))
+            sink += info.rx.Frequency;
+    }
+    t1 = systick_millis();
+    uart_printf("  20 x channel decode (CH-01)       %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 20u; i++) {
+        char name[16];
+        SETTINGS_FetchChannelName(name, 0);
+        sink += (uint8_t)name[0];
+    }
+    t1 = systick_millis();
+    uart_printf("  20 x channel name (CH-01)         %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 20u; i++)
+        APP_Update();
+    t1 = systick_millis();
+    uart_printf("  20 x APP_Update                   %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    for (i = 0; i < 20u; i++)
+        APP_TimeSlice10ms();
+    t1 = systick_millis();
+    uart_printf("  20 x APP_TimeSlice10ms            %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    UI_DisplayMain();
+    t1 = systick_millis();
+    uart_printf("  1 x UI_DisplayMain (full screen)  %5u ms\n", (unsigned)(t1 - t0));
+
+    t0 = systick_millis();
+    UI_DisplayStatus();
+    t1 = systick_millis();
+    uart_printf("  1 x UI_DisplayStatus (top line)   %5u ms\n", (unsigned)(t1 - t0));
+
+    (void)sink;
 }
 
 /* --------------------------------------------------------------- animation */
@@ -382,18 +539,36 @@ static void bench_led(void)
         led_set(LED_OFF);
 }
 
-static void audio_bench_arm(void)
+/* The radio up, once, at boot: the K1 screens read this state (the VFO's
+ * frequency, the squelch for the status line), so it stays even though the
+ * bench UI does not. */
+static void radio_boot(void)
 {
-    uart_puts("\naudio bench: running 'K' at boot and asserting PC13, so the test\n"
-              "  needs no console -- unplug the cable and listen.  LED: GREEN =\n"
-              "  squelch open, OFF = quiet, RED = PC13 low.  PTT flips PC13.\n");
-    rx_init(BENCH_FREQ_HZ);
+    const uint32_t frequency = (gRxVfo != 0 && gRxVfo->freq_config_RX.Frequency != 0u)
+                                   ? gRxVfo->freq_config_RX.Frequency : BENCH_FREQ_HZ;
+
+    uart_puts("\nradio: bring-up (the GUI's radio init lands with the RF layer)\n");
+    uart_printf("radio: %s %u, %u.%05u MHz  (F then 3 switches VFO/channel mode)\n",
+                IS_MR_CHANNEL(gEeprom.ScreenChannel[gEeprom.RX_VFO]) ? "channel" : "frequency",
+                (unsigned)gEeprom.ScreenChannel[gEeprom.RX_VFO],
+                (unsigned)(frequency / 100000u),
+                (unsigned)(frequency % 100000u));
+    rx_init(frequency);
     uart_printf("RF: up -- BK4829 id 0x%04X, BK4815 configured (%u writes, "
                 "0x0C = 0x%04X), PA PWM ARR %u, audio path %s\n",
                 (unsigned)bk4829_read_reg(BK4829_REG_ID), bk4815_config_writes(),
                 (unsigned)bk4815_read_reg(0x0C), (unsigned)PA_PWM_ARR,
                 audio_path_is_on() ? "asserted" : "low");
     bench_led();
+}
+
+/* The bring-up bench loop, only while it owns the panel ('0'). */
+static void audio_bench_arm(void)
+{
+    uart_puts("\naudio bench: the bring-up screens have the panel.  'K' brings the\n"
+              "  radio up, PC13 is asserted, PTT flips it.  LED: GREEN = squelch\n"
+              "  open, OFF = quiet, RED = PC13 low.  '0' gives the panel back to\n"
+              "  the K1 GUI.\n");
     audio_bench_on = true;
 }
 
@@ -435,6 +610,10 @@ static bool tx_on;
 
 static tx_source_t bench_source;
 static unsigned pa_duty = TX_POWER_COMPARE;    /* 'Y' steps it */
+
+/* The bench TX power setting (the K1's TXP_CalculatedSetting shape); 'Y' still
+ * steps the raw PB14 compare on top of it. */
+#define BENCH_TX_POWER 0x88u
 
 
 
@@ -480,7 +659,7 @@ static void bench_screen(unsigned duty, uint16_t r50, uint16_t r36, uint16_t r7d
 static void radio_tx(int on, tx_source_t source)
 {
     if (on) {
-        tx_start(BENCH_FREQ_HZ, source);
+        tx_start(BENCH_FREQ_HZ, BENCH_TX_POWER, source);
         pa_power((uint16_t)pa_duty);        /* the console can step this */
     } else {
         tx_stop();
@@ -557,8 +736,13 @@ static void rf_watch(void)
     uint16_t min = 0xFFFFu, max = 0, last = 0;
     unsigned i;
 
-    uart_puts("\nRF: reg 0x67 every 200 ms for 4 s "
-              "(0xB4 / 0xCF are the stock's squelch marks)\n");
+    uart_printf("\nRF: BK4829 reg 0x67 every 200 ms for 4 s "
+                "(0xB4 / 0xCF are the stock's squelch marks)\n"
+                "  RX %u.%05u MHz, %s, %s (>134 MHz split)\n",
+                (unsigned)(rx_rx_frequency() / 100000u),
+                (unsigned)(rx_rx_frequency() % 100000u),
+                pa_band_is_uhf() ? "UHF" : "VHF",
+                pa_band_is_main() ? "main" : "sub");
     if (!rx_ready())
         uart_puts("  note: 'K' has not run this boot, so the part is not tuned or\n"
                   "  in RX and these readings will not follow a carrier.\n");
@@ -579,6 +763,85 @@ static void rf_watch(void)
 
     uart_printf("  min 0x%03X  max 0x%03X  last 0x%03X\n",
                 (unsigned)min, (unsigned)max, (unsigned)last);
+}
+
+/* Console 'Q': characterise the squelch on the two bench frequencies, VHF then
+ * UHF.  For each one it measures the noise floor (tinySA output off) and the
+ * carrier (output on) and reports the open/close mark that falls between them,
+ * so the marks can be set from the radio instead of by eye.  Each phase waits
+ * for a key, with a timeout, so the tinySA can be moved between bands. */
+static void rf_squelch_autodetect(void)
+{
+    /* 145.5000 then 446.00625 MHz, in the codec's 10 Hz units. */
+    static const uint32_t freqs[] = { 14550000u, 44600625u };
+    static const char *const names[] = { "VHF", "UHF" };
+    uint32_t saved = (gRxVfo != 0) ? gRxVfo->pRX->Frequency : 0u;
+    unsigned f;
+
+    uart_puts("\nsquelch auto-detect (BK4829 reg 0x67) -- "
+              "VHF (145.5000) first, then UHF (446.00625)\n");
+
+    for (f = 0; f < sizeof freqs / sizeof freqs[0]; f++) {
+        uint16_t floor_lo = 0xFFFFu, floor_hi = 0;
+        uint16_t sig_lo = 0xFFFFu, sig_hi = 0;
+        uint32_t floor_sum = 0, sig_sum = 0;
+        unsigned i;
+
+        uart_printf("\n--- %s %u.%05u MHz ---\n"
+                    "  set the tinySA to this frequency with its output OFF,\n"
+                    "  then press any key (or wait 15 s)\n",
+                    names[f], (unsigned)(freqs[f] / 100000u),
+                    (unsigned)(freqs[f] % 100000u));
+        (void)uart_getc_timeout(15000);
+
+        rx_set_frequency(freqs[f]);
+        systick_delay_ms(100);              /* let the PLL settle */
+
+        for (i = 0; i < 10u; i++) {
+            uint16_t v = BK4819_GetRSSI();
+            if (v < floor_lo) floor_lo = v;
+            if (v > floor_hi) floor_hi = v;
+            floor_sum += v;
+            systick_delay_ms(100);
+        }
+        uart_printf("  floor  : min 0x%03X max 0x%03X mean 0x%03X\n",
+                    (unsigned)floor_lo, (unsigned)floor_hi,
+                    (unsigned)(floor_sum / 10u));
+
+        uart_puts("  now turn the tinySA output ON, then press any key (or wait 15 s)\n");
+        (void)uart_getc_timeout(15000);
+
+        for (i = 0; i < 10u; i++) {
+            uint16_t v = BK4819_GetRSSI();
+            if (v < sig_lo) sig_lo = v;
+            if (v > sig_hi) sig_hi = v;
+            sig_sum += v;
+            systick_delay_ms(100);
+        }
+        uart_printf("  carrier: min 0x%03X max 0x%03X mean 0x%03X\n",
+                    (unsigned)sig_lo, (unsigned)sig_hi,
+                    (unsigned)(sig_sum / 10u));
+
+        if ((int)sig_lo - (int)floor_hi >= 0x10) {
+            /* Midpoint between the floor and the carrier, keeping the stock's
+             * 0x1B (0xCF-0xB4) hysteresis between open and close. */
+            uint16_t open_mark = (uint16_t)(floor_hi + ((int)sig_lo - (int)floor_hi) / 2);
+
+            uart_printf("  detected: open 0x%03X, close 0x%03X "
+                        "(between floor and carrier; stock 0x%03X / 0x%03X)\n",
+                        (unsigned)open_mark, (unsigned)(open_mark - 0x1Bu),
+                        (unsigned)RX_SQUELCH_OPEN_MARK,
+                        (unsigned)RX_SQUELCH_CLOSE_MARK);
+        } else {
+            uart_puts("  detected: floor and carrier overlap -- no carrier seen\n");
+        }
+    }
+
+    if (saved) {
+        rx_set_frequency(saved);
+        uart_printf("\nback on %u.%05u MHz\n", (unsigned)(saved / 100000u),
+                    (unsigned)(saved % 100000u));
+    }
 }
 
 static void rf_configure(void)
@@ -738,8 +1001,13 @@ int main(void)
         left_cr = RCC->CR;
         uart_init(BOARD_UART_BAUD);
         uart_printf("\n\n=== " VERSION_STRING " ===\n");
-        uart_printf("clock: forced HSI; bootloader had left CFGR=%08X CR=%08X "
-                    "FLASH_ACR=%08X\n", (unsigned)left_cfgr, (unsigned)left_cr,
+        uart_printf("clock: HSI 8 MHz x %u through the PLL = %u Hz, %u flash "
+                    "wait state(s), PLL %s; the bootloader had left CFGR=%08X "
+                    "CR=%08X FLASH_ACR=%08X\n",
+                    (unsigned)BOARD_PLL_MUL, (unsigned)BOARD_SYSCLK_HZ,
+                    (unsigned)BOARD_FLASH_WS,
+                    gClockPllRunning ? "locked" : "DID NOT LOCK -- running on HSI",
+                    (unsigned)left_cfgr, (unsigned)left_cr,
                     (unsigned)left_flash_acr);
         uart_printf("usart1 as left by the bootloader: CR1=%04X CR2=%04X CR3=%04X "
                     "(now 8N1, no flow control, no DMA)\n",
@@ -776,17 +1044,95 @@ int main(void)
         uart_puts("keypad: WARNING -- the ADC/DMA scan is NOT running; the key "
                   "monitor would report zeros for every line\n");
 
+    /* The K1's boot-time key mode (helper/boot.c): PTT + SIDE1 held at power-on
+     * opens the hidden menu.  Read it *now*, while the keys are still held: the
+     * K1 reads it right after its settings load, but the port's panel lights and
+     * backlight fade run later in the boot, and a user who releases the keys when
+     * the screen appears would miss a check placed at the end. */
+    const bool       boot_ptt  = !keypad_ptt2_level();
+    const KEY_Code_t boot_key  = keypad_poll();
+    const BOOT_Mode_t boot_mode = BOOT_GetMode();
+
+    uart_printf("boot: PTT %d, key %s -> mode %u\n",
+                boot_ptt ? 1 : 0, keypad_name(boot_key), (unsigned)boot_mode);
+
     uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");    lcd_init();
     uart_puts("lcd: init done\n");
 
-    BACKLIGHT_Init();
-    uart_puts("backlight: on (GPIOA pin 5 -- confirmed on the radio)\n");
+    /* Clear the panel RAM and the K1 buffers, as the K1's BOARD_Init does with
+     * ST7565_Init(); without it the controller keeps its power-on RAM, which is
+     * the noise the un-drawn pages show. */
+    ST7565_Init();
+
+    BACKLIGHT_InitHardware();
+    uart_printf("backlight: K1 driver up (GPIOA pin 5, TIM7+DMA PWM), now %s\n",
+                BACKLIGHT_IsOn() ? "on" : "off");
     led_init();
     uart_puts("led: PA13 red / PA14 green, both active high (measured); "
               "'L' cycles off/red/green/both\n");
-    draw_test_card();
-    uart_puts("lcd: test card drawn\n");
-    audio_bench_arm();
+    /* The radio's interface is the ported K1 application from here on.  The
+     * bring-up test card and its bench loop are console diagnostics ('0' hands
+     * the panel back to them); at boot the K1 shows its own screen instead.
+     * The settings and the codeplug come first, so radio_boot() tunes the
+     * measured receive chain to the channel the codeplug put the radio on. */
+    port_state_init();
+    /* The RF/audio chain first: radio_boot() -> rx_init() -> BK4819_Init() brings
+     * the shared RF bus up.  BACKLIGHT_TurnOn() both lights the panel and plays
+     * the startup beep through the chip, so it must come after -- the K1 orders
+     * it the same way (BK4819_Init(), then SETTINGS, then BACKLIGHT_TurnOn at the
+     * welcome).  Before the settings load BACKLIGHT_TIME is 0 and the K1 driver
+     * reads that as "off"; before radio_boot the beep is silent. */
+    radio_boot();
+    BACKLIGHT_TurnOn();
+    uart_printf("backlight: %s, brightness index %u of %u, %u/32 duty\n",
+                BACKLIGHT_IsOn() ? "on" : "off",
+                (unsigned)BACKLIGHT_GetBrightness(),
+                (unsigned)gEeprom.BACKLIGHT_MAX,
+                BACKLIGHT_DutyOnCount());
+    port_gui_init();
+
+    /* Apply the boot mode read earlier.  The K1 sets gF_LOCK *before* building
+     * the view, so the hidden items are in it, then lets BOOT_ProcessMode() pick
+     * the screen (the menu for F-lock, the VFO otherwise). */
+    {
+        if (boot_mode == BOOT_MODE_F_LOCK) {
+            gF_LOCK = true;
+            gEeprom.KEY_LOCK = 0;
+            SETTINGS_SaveSettings();
+            gMenuCursor = UI_MENU_GetMenuIdx(FIRST_HIDDEN_MENU_ITEM);
+            gSubMenuSelection = gSetting_F_LOCK;
+            uart_puts("boot: PTT+SIDE1 held -- the hidden menu is open\n");
+        }
+
+        /* The K1's main() builds the menu view once, before its loop: the menu
+         * key only asks for DISPLAY_MENU, so without this the menu screen would
+         * have an empty list. */
+        UI_MENU_BuildView();
+        BOOT_ProcessMode(boot_mode); /* F-lock -> the menu, else straight into
+                                      * the VFO (console '4' has the K1 boot
+                                      * screen if it is wanted) */
+    }
+
+    /* The K1's power-on display (PonMSG).  When the mode calls for a message the
+     * K1 shows the welcome screen for ~2.5 s, or until a key; the port used to
+     * skip it entirely, so the PonMSG setting did nothing. */
+    if (gEeprom.POWER_ON_DISPLAY_MODE != POWER_ON_DISPLAY_MODE_NONE &&
+        gEeprom.POWER_ON_DISPLAY_MODE != POWER_ON_DISPLAY_MODE_SOUND) {
+        unsigned t;
+
+        port_gui_welcome();
+        for (t = 0; t < 250u; t++) {
+            if (keypad_poll() != KEY_INVALID)
+                break;
+            systick_delay_ms(10);
+        }
+        gUpdateDisplay = true;
+    }
+
+    /* Paint the status line once at boot, as the K1's Main() does with
+     * gUpdateStatus = true: gUpdateDisplay only draws pages 1..7, so without
+     * this the top bar keeps whatever the panel powered up with. */
+    gUpdateStatus = true;
     uart_puts("boot complete. 'h' for commands, 'd' dumps the screen over this\n"
               "console, 'i' shows diagnostics.\n");
     print_help();
@@ -813,12 +1159,118 @@ int main(void)
                 print_info();
                 print_diagnostics();
                 break;
+            case 'm':
+                /* The K1 switches between channel and frequency mode with F
+                 * then 3 (MAIN_ProcessKeys -> processFKeyFunction -> KEY_3).
+                 * This is the same call plus the reconfigure it asks for, so
+                 * the mechanism can be exercised without the key sequence --
+                 * and it prints the state the switch depends on either way. */
+                uart_puts("\nmode: before\n");
+                print_mode();
+                COMMON_SwitchVFOMode();
+                gRequestSaveVFO   = true;
+                gVfoConfigureMode = VFO_CONFIGURE_RELOAD;
+                gFlagResetVfos    = true;
+                APP_Update();              /* apply it now, not on the next slice */
+                uart_puts("mode: after COMMON_SwitchVFOMode()\n");
+                print_mode();
+                break;
+            case 'D': {
+                /* Step the RF bus delay down towards the fastest value that still
+                 * works: the clock went up 6x and the delay was cut 5x, and a
+                 * marginal write shows up as 'the squelch opens, no audio'. */
+                static const uint8_t steps[] = { 40, 24, 16, 12, 8, 4, 1 };
+                uint8_t cur = rf_bus_delay_setting();
+                unsigned i, next = 0;
+
+                for (i = 0; i < sizeof steps; i++) {
+                    if (steps[i] == cur) {
+                        next = (i + 1u) % (unsigned)sizeof steps;
+                        break;
+                    }
+                }
+                rf_bus_set_delay(steps[next]);
+                uart_printf("\nRF bus delay: %u iterations (was %u).\n",
+                            (unsigned)steps[next], (unsigned)cur);
+                uart_puts("  'K' re-tunes and opens the squelch; listen, and note"
+                          " the value that still gives audio.\n");
+                break;
+            }
+            case 'P':
+                print_profile();
+                break;
+            case 'F': {
+                /* The chip-side receive path.  AUTO is the K1 application's
+                 * rule (VHF LNA pin 4 below 280 MHz, UHF LNA pin 3 at or above
+                 * it); the other modes walk the individual LNA bits so the
+                 * radio can settle the stock's own pin-4 activity.  Cycle and
+                 * listen (or watch 'S'). */
+                static const char *const names[] = {
+                    "leave the register as BK4819_Init() left it",
+                    "VHF bit: 0x33 |= 0x04, 0x08 clear",
+                    "UHF bit: 0x33 |= 0x08, 0x04 clear",
+                    "both cleared",
+                    "the K1/app rule: VHF pin 4 below 280 MHz, UHF pin 3 (default)",
+                };
+                uint8_t mode = (uint8_t)((pa_chip_path_mode() + 1u) % 5u);
+                uint32_t freq = gRxVfo ? gRxVfo->pRX->Frequency : 0u;
+
+                pa_set_chip_path_mode(mode);
+                if (freq)
+                    pa_select_band(freq);
+                uart_printf("\nfront end: mode %u -- %s\n", (unsigned)mode, names[mode]);
+                uart_printf("  PA0 %s, reg 0x33 = 0x%04X\n",
+                            pa_band_pa0_high() ? "high" : "low",
+                            (unsigned)pa_chip_path_reg());
+                uart_puts("  listen (or 'S' with a carrier) and press 'F' for the next;"
+                          " note which mode receives\n");
+                break;
+            }
+            case 'B': {
+                /* The MCU band pin PA0.  The stock takes PA0 from its config,
+                 * not the frequency (pa.h); on this codeplug that is PA0 = 0,
+                 * so the default is the stock's value and this experiment is
+                 * what settles it on the radio. */
+                static const char *const names[] = {
+                    "PA0 low whatever the band (the stock's value, default)",
+                    "PA0 high whatever the band",
+                    "auto: PA0 high for UHF, low for VHF (an inference)",
+                };
+                uint8_t mode = (uint8_t)((pa_band_pin_mode() + 1u) % PA_BAND_PIN_MODES);
+                uint32_t freq = gRxVfo ? gRxVfo->pRX->Frequency : 0u;
+
+                pa_set_band_pin_mode(mode);
+                if (freq)
+                    pa_select_band(freq);
+                uart_printf("\nMCU band pin: mode %u -- %s\n", (unsigned)mode, names[mode]);
+                uart_printf("  PA1 high, PA0 %s (%s)\n",
+                            pa_band_pa0_high() ? "high" : "low",
+                            pa_band_is_uhf() ? "UHF" : "VHF");
+                uart_puts("  retune UHF, press 'S' with a carrier and listen;"
+                          " note the level that works\n");
+                break;
+            }
+            case '0':
+                /* Hand the panel back to the bring-up screens (and to the
+                 * GUI again on the next press). */
+                bench_panel = !bench_panel;
+                if (bench_panel) {
+                    audio_bench_arm();
+                    draw_test_card();
+                    uart_puts("\npanel: bring-up screens\n");
+                } else {
+                    port_gui_screen(gScreenToDisplay);
+                    uart_puts("\npanel: K1 GUI\n");
+                }
+                break;
             case 'c':
+                bench_panel = 1;
                 ui_clear();
                 lcd_refresh();
                 uart_puts("\nscreen cleared\n");
                 break;
             case 't':
+                bench_panel = 1;
                 draw_test_card();
                 uart_puts("\ntest card\n");
                 break;
@@ -826,16 +1278,19 @@ int main(void)
                 dump_screen_ascii();
                 break;
             case 'b':
+                bench_panel = 1;
                 show_border = !show_border;
                 ui_border(show_border);
                 lcd_refresh();
                 break;
             case 'f':
+                bench_panel = 1;
                 ui_pattern(0x55);
                 lcd_refresh();
                 uart_puts("\ncheckerboard\n");
                 break;
             case 'p':
+                bench_panel = 1;
                 animate = !animate;
                 uart_printf("\nanimation %s\n", animate ? "on" : "off");
                 break;
@@ -848,12 +1303,14 @@ int main(void)
                 uart_printf("\ncontrast 0x%02X\n", contrast);
                 break;
             case 'r':
+                bench_panel = 1;
                 uart_printf("\npanel re-init (standard, bootloader-proven): %d\n",
                             lcd_reinit(LCD_INIT_STANDARD));
                 lcd_set_contrast(contrast);
                 draw_test_card();
                 break;
             case 's':
+                bench_panel = 1;
                 uart_printf("\npanel re-init (stock app variant): %d\n",
                             lcd_reinit(LCD_INIT_STOCK_APP));
                 lcd_set_contrast(contrast);
@@ -902,6 +1359,95 @@ int main(void)
             case 'S':
                 rf_watch();
                 break;
+            case 'Q':
+                rf_squelch_autodetect();
+                break;
+            case 'e': {
+                /* The external SPI NOR flash: identity, then a hexdump. */
+                uint16_t man_dev = 0;
+                uint32_t jedec = 0;
+                uint32_t addr;
+                const uint32_t at = 0x00000000u;   /* the codeplug area */
+
+                if (!port_storage_id(&man_dev, &jedec)) {
+                    uart_puts("\nstorage: no answer (MISO idle high -- absent or "
+                              "unpowered chip?)\n");
+                    break;
+                }
+                uart_printf("\nstorage: 0x90 -> 0x%04X, JEDEC 0x%06X, size %u KB\n",
+                            (unsigned)man_dev, (unsigned)jedec,
+                            (unsigned)(port_storage_size() / 1024u));
+
+                for (addr = at; addr < at + 64u; addr += 16u) {
+                    uint8_t buf[16];
+                    unsigned i;
+
+                    PY25Q16_ReadBuffer(addr, buf, sizeof buf);
+                    uart_printf("  %06X:", (unsigned)addr);
+                    for (i = 0; i < sizeof buf; i++)
+                        uart_printf(" %02X", buf[i]);
+                    uart_puts("\n");
+                }
+                break;
+            }
+            case '5':
+                /* Save the port's settings to the external flash (blob in the
+                 * empty tail of the part -- see port_storage.c). */
+                uart_printf("\nstorage: settings save %s\n",
+                            port_storage_save_settings() ? "PASS (read back)"
+                                                         : "FAILED");
+                break;
+            case '6': {
+                /* The write test docs/ra89r_eeprom.md has been carrying as pending:
+                 * erase + program + read back on a scratch sector. */
+                uint32_t bad = 0;
+
+                if (port_storage_write_test(&bad)) {
+                    uart_puts("\nstorage: write test PASS (erase, program and "
+                              "read back of 256 bytes)\n");
+                } else {
+                    uart_printf("\nstorage: write test FAILED at 0x%06X\n",
+                                (unsigned)bad);
+                }
+                break;
+            }
+            case '1':
+                /* The K1 GUI has the panel and the keys; this re-selects it
+                 * after the bench screens were used ('0'). */
+                bench_panel = 0;
+                port_gui_screen(DISPLAY_MAIN);
+                uart_puts("\nK1 GUI: the radio's keys drive the ported screens\n");
+                break;
+            case '4':
+                /* The K1's boot screen (shown once at boot). */
+                bench_panel = 0;
+                port_gui_welcome();
+                uart_puts("\nK1 boot screen\n");
+                break;
+            case '2':
+                bench_panel = 0;
+                port_gui_screen(DISPLAY_MAIN);
+                uart_puts("\nK1 VFO screen\n");
+                break;
+            case '3':
+                bench_panel = 0;
+                UI_MENU_BuildView();
+                port_gui_screen(DISPLAY_MENU);
+                uart_puts("\nK1 menu screen\n");
+                break;
+            case 'M':
+                bench_panel = 0;
+                UI_MENU_BuildView();
+                port_gui_screen(DISPLAY_MENU);
+                uart_puts("\nK1 UI_DisplayMenu() drawn\n");
+                break;
+            case 'G':
+                bench_panel = 0;
+                gRxVfo->freq_config_RX.Frequency = BENCH_FREQ_HZ;
+                gRxVfo->freq_config_TX.Frequency = BENCH_FREQ_HZ;
+                port_gui_screen(DISPLAY_MAIN);
+                uart_puts("\nK1 UI_DisplayMain() drawn\n");
+                break;
             case 'C':
                 audio_path_toggle();
                 break;
@@ -935,25 +1481,60 @@ int main(void)
                 }
                 echo[echo_len++] = ch;
                 echo[echo_len] = '\0';
-                ui_echo(echo);
-                lcd_refresh();
+                if (bench_panel) {
+                    ui_echo(echo);
+                    lcd_refresh();
+                }
             }
         } else {
             systick_delay_ms(1);
         }
 
-        if ((uint32_t)(now - last_tick) >= 1000u) {
-            last_tick = now;
-            ui_status(now / 1000u);
-            lcd_refresh();
-            if (heartbeat && (now / 1000u) % 5u == 0u)
-                uart_printf("[hb] uptime %us, panel variant %d, contrast 0x%02X\n",
-                            (unsigned)(now / 1000u), lcd_variant(), contrast);
+        if (bench_panel) {
+            if ((uint32_t)(now - last_tick) >= 1000u) {
+                last_tick = now;
+                ui_status(now / 1000u);
+                lcd_refresh();
+                if (heartbeat && (now / 1000u) % 5u == 0u)
+                    uart_printf("[hb] uptime %us, panel variant %d, contrast 0x%02X\n",
+                                (unsigned)(now / 1000u), lcd_variant(), contrast);
+            }
+            audio_bench_step(now);
+            animate_step(now);
+        } else {
+            /* The ported K1 application owns the panel and the keys.  Keys go
+             * through the K1's own app/app.c CheckKeys() (press/hold/repeat, and
+             * MAIN_/MENU_/SCANNER_ProcessKeys per screen), the app's periodic
+             * duties run on their slices, and port_gui handles PTT (measured
+             * transmit chain) plus the repaint.  The console stays a debugging
+             * channel throughout. */
+            static uint32_t slice10, slice500;
+
+            /* The K1's own loop: APP_Update() runs the state machine and
+             * repaints when it sets gUpdateDisplay; APP_TimeSlice10ms() ends
+             * with CheckKeys(), so the keys are handled there and must not be
+             * polled again here.
+             *
+             * The port's two calls belong on the same 10 ms slice, not on every
+             * pass of the loop.  PTT is read by the K1's CheckKeys() on this
+             * slice too, and port_gui_tick's squelch read is one BK4819_GetRSSI()
+             * -- about 0.6 ms of bit-banged RF bus, so running it thousands of
+             * times a second leaves the application almost no CPU at all. */
+            APP_Update();
+
+            if ((uint32_t)(now - slice10) >= 10u) {
+                slice10 = now;
+                APP_TimeSlice10ms();
+
+                port_gui_poll();
+                port_gui_tick(now);
+            }
+            if ((uint32_t)(now - slice500) >= 500u) {
+                slice500 = now;
+                APP_TimeSlice500ms();
+            }
         }
 
         keypad_monitor_step();
-        audio_bench_step(now);
-
-        animate_step(now);
     }
 }

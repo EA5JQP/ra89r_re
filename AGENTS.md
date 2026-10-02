@@ -29,6 +29,9 @@ project, the CPS sources) lives outside the workspace (see "Reference inputs").
 - `docs/ra89r_battery.md` — the companion gauge chip: the bus, the protocol, the voltage
   arithmetic, the configuration block, and the full troubleshooting log (what has
   been eliminated and how, so it is not re-derived).
+- `docs/ra89r_keypad.md` — the 20-button ADC-ladder key matrix and its F4HWN
+  `KEY_Code_e` mapping.
+- `docs/ra89r_beeper.md` — the beeper: TIM4 plus a tone generator, its pin `PA4`.
 - `docs/ra89r_led.md` — the status LED (a transmit/receive indicator on MCU `PA13`/`PA14`,
   confirmed on the radio) and the backlight (GPIOA pin 5), with the pin searches
   that came up empty -- including the earlier "it is the RF chip's" reading -- and
@@ -77,7 +80,9 @@ detail lives once it has one, including its dead ends.
   literal-pool resolution, string scan, peripheral/data reference annotation.
   Needs `capstone` (installed) and the `.meta` sidecar from `tools/ra89r.py decode`.
 - `firmware/` — the RA89R custom firmware project (K1/F4HWN port in progress),
-  documented in `docs/firmware.md` and `docs/ra89r_port.md`; build with
+  documented in `docs/ra89r_port.md` (current) and `docs/firmware.md` (the
+  original screen+UART bring-up, which the port has outgrown -- it still says
+  8 MHz and screen-only, so trust the code and `ra89r_port.md`); build with
   `tools/BUILDING.md`, flash with `tools/FLASHING.md` (the concrete
   flash procedure, including how to enter update mode and how to go back to
   stock).  The build emits `build/<preset>/ra89r_fw.icf` (wrapped by a POST_BUILD
@@ -142,12 +147,15 @@ Offline checks that need no radio (the flash and layout regressions):
 python3 tools/ra89r_bootloader_sim.py --pty /tmp/ra89r-pty &
 python3 tools/ra89r_flash.py --port "$(cat /tmp/ra89r-pty)" flash firmware/build/Debug/ra89r_fw.icf
 
-# the RF register layers and the K1-compatible one on a PC (53 checks).
-# `driver/bk4819.c` mirrors the status LED onto `driver/led.c`, which needs the
-# target's GPIO registers, so the host LED stand-in goes in its place.
+# the RF register layers, the K1-compatible one and the PA/RX path on a PC
+# (56 checks).  `driver/bk4819.c` mirrors the status LED onto `driver/led.c`,
+# which needs the target's GPIO registers, so the host LED stand-in goes in its
+# place; `driver/pa.c` is linked for the `0x33` regression, with its two
+# `pa_init()` GPIO calls stubbed in the test (so `driver/gpio.c` is not pulled
+# in).
 cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver tools/test_rf.c \
     App/driver/bk4829.c App/driver/bk4815.c App/driver/bk4819.c \
-    tools/host/host_led.c -o /tmp/test_rf && /tmp/test_rf
+    App/driver/pa.c tools/host/host_led.c -o /tmp/test_rf && /tmp/test_rf
 
 # screen layout on a PC, then eyeball the ASCII art (see docs/firmware.md)
 cd firmware && gcc -std=c11 -I App -I App/driver -DLCD_HOST_TEST \
@@ -169,7 +177,7 @@ cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver \
     App/app/scanner.c App/radio.c App/functions.c App/audio.c App/misc.c \
     App/port_state.c App/port_storage.c App/port_codeplug.c App/port_gui.c \
     App/port_board.c App/settings.c App/version.c App/dcs.c App/frequencies.c \
-    App/helper/battery.c App/driver/system.c App/font.c App/bitmaps.c \
+    App/helper/battery.c App/helper/boot.c App/driver/system.c App/font.c App/bitmaps.c \
     App/driver/st7565.c App/driver/keyboard.c App/driver/backlight.c \
     -o /tmp/preview_k1 && /tmp/preview_k1
 # (tools/host is a test double for the device header: CMSIS's __DSB() is ARM
@@ -248,7 +256,9 @@ driver/audiocontrol       audio       -- MERGED.  It receives and transmits: the
                                          unmute the import was not sending, the mic
                                          gain in `0x40`).  See docs/ra89r_rfpath.md
 port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
-                                         develop, awaiting radio validation.  The
+                                         develop and not end-to-end validated,
+                                         though it runs on the radio and its
+                                         recent fixes came from those runs.  The
                                          K1's own ui/main.c (VFO), ui/menu.c (menu +
                                          MenuList[]), ui/status.c, ui/welcome.c,
                                          ui/ui.c, ui/helper.c, ui/inputbox.c and its
@@ -268,7 +278,11 @@ port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
                                          the external SPI NOR flash.  The K1 GUI is
                                          what the radio boots into, straight into the
                                          VFO, in its double-channel layout
-                                         (gEeprom.DUAL_WATCH = DUAL_WATCH_CHAN_A);
+                                         (`PORT_TWO_ROW_UI` in port_features.h
+                                         forces `ui/main.c`'s `isMainOnly()`
+                                         false; `gEeprom.DUAL_WATCH` stays OFF so
+                                         the receiver follows the selected VFO --
+                                         dual-watch would toggle it);
                                          the two VFOs land on the first two channels
                                          the codeplug has, because port_codeplug.c
                                          decodes the stock's own 21-byte records,
@@ -290,7 +304,7 @@ port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
                                          receiver, PTT keys the transmitter, the
                                          squelch sets FUNCTION_INCOMING/RECEIVE.
                                          radio.c's own chip sequences stay unused
-                                         until they are compared with the stock.  See
+                                         until they are compared with the stock.
                                          The K1's app loop and key layer are in too
                                          (app/app.c CheckKeys + APP_Update, app/main.c
                                          MAIN_ProcessKeys, generic/common/chFrScanner/
@@ -347,13 +361,13 @@ backlight (GPIOA pin 5), and the keypad reader decodes all 20 buttons and return
 K5V3/F4HWN `KEY_Code_e` the port needs, with its ADC running free-running through DMA
 like the stock application and a `k` console monitor to re-check any button.
 
-Three features are unfinished and parked on their own branches, each with a doc:
-the **battery gauge** (protocol decoded, chip silent -- `docs/ra89r_battery.md`), the
-**EEPROM** (read and dumped, write test pending -- `docs/ra89r_eeprom.md`) and the
-**RF transceivers** (merged: the bus, both parts and the K1-compatible interface
-are validated on the radio -- ids, all writes, tuning and an RSSI response to a
-carrier -- with the BK4815's RF role still open, see `docs/ra89r_bk4829.md` and
-`docs/ra89r_bk4815.md`).
+The **battery gauge** and the **EEPROM** are the unfinished features, each parked
+on its own branch with a doc: the gauge's protocol is decoded but the chip never
+answers (`docs/ra89r_battery.md`), and the SPI NOR ("EEPROM") reads and dumps but
+its write test has not run (`docs/ra89r_eeprom.md`).  The **RF transceivers** are
+merged and validated on the radio: the bus, both parts and the K1-compatible
+interface -- ids, all writes, tuning and an RSSI response to a carrier -- with the
+BK4815's RF role still open, see `docs/ra89r_bk4829.md` and `docs/ra89r_bk4815.md`.
 The **status LED** turned out to be MCU lines after all -- `PA13`/`PA14`, measured
 on the radio (`docs/ra89r_led.md`).  **Transmit works**: the `driver/audiocontrol` work
 is merged, and the transmit chain it measured -- the `0x36` PA-CTL and bias, the
@@ -390,8 +404,7 @@ generator, its pin is PA4 = `DAC_OUT1`).
 - **The bring-up firmware runs on the radio** (see the branch table above), so a
   bring-up or flashing change can be checked against real behaviour, not only the
   simulator.  Still missing: the documented **key combination for update mode**
-  (`tools/FLASHING.md` §6, `docs/ra89r_bootloader.md` §8 point 1), and the
-  backlight's on-level.
+  (`tools/FLASHING.md` §6, `docs/ra89r_bootloader.md` §8 point 1).
 - Board facts come from the stock firmware, not from a board photo or schematic:
   the numeric values live in `firmware/App/board_pins.h` (which must stay free of
   SDK includes so the PC preview can use it), the peripheral instances in
@@ -526,7 +539,9 @@ reasons that have nothing to do with the code):
   diagnostics, `d` framebuffer dump as ASCII, `r`/`s` panel re-init variants
   (`r` = standard sequence, i.e. the bootloader-proven one **and the default**;
   `s` = the stock application's variant, 8 extra bytes), `v`/`V` contrast,
-  `l` backlight on/off, `q` heartbeat on/off, plus `h`/`c`/`t`/`b`/`f`/`p`.
+  `l` backlight on/off, `q` heartbeat on/off, plus `h`/`c`/`t`/`b`/`f`/`p` and
+  the RF commands `R`/`W`/`X`/`K` (probe both parts, replay their boot config,
+  read every configured register back, K1 bring-up).
 - Console: USART1, PB6/PB7, **115200 8N1** — the same Kenwood jack the
   bootloader uses at 9600.  If the console is silent too, the application is not
   running; run `probe` (still in the bootloader at 9600?) and check the
@@ -572,6 +587,14 @@ GIT_SSH_COMMAND="ssh -F /dev/null -o BatchMode=yes" git push origin --all
 - Keep scratch output in `/tmp`.  Generated artifacts live under `work/` and
   `firmware/build/`; both are listed in the root `.gitignore` and are regenerable
   from the stock `.icf` (or from the sources) at any time.
+- The port runs the MCU at **48 MHz** (HSI x6, 1 flash wait; `BOARD_PLL_MUL` /
+  `BOARD_FLASH_WS` in `firmware/App/board_pins.h`).  It once stayed at the 8 MHz
+  reset default, which made every bit-banged bus ~6x slower than the K1 it was
+  compared against -- suspect clock/bus timing before the algorithm when the
+  port is slow.
+- In the K1 app loop, nothing on the 10 ms slice may touch the external SPI NOR
+  flash, and a timeout does not belong in a backlight fade; both mistakes
+  shipped once and made the radio unusable.
 - Hardware claims (which filter is active at a given frequency, what the panel
   controller really is) come from the radio, not from static analysis alone; don't
   state a hardware behaviour as verified unless it was observed on the device.

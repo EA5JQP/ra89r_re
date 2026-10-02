@@ -70,3 +70,66 @@ void gpio_config_analog(GPIO_TypeDef *port, uint32_t mask)
 {
     configure(port, mask, 3u /* analog */, 0u, 0u, 0u, 0u);
 }
+
+/* ---------------------------------------------------------------------------
+ * The K1 application's hardware surface (see driver/gpio.h).  The logical pins
+ * are this board's, and the two "path" lines go through this repo's drivers so
+ * there is one owner per pin.
+ * ------------------------------------------------------------------------- */
+#include "driver/audio_path.h"
+#include "driver/backlight.h"
+#include "driver/keypad.h"
+
+void GPIO_SetOutputPin(uint32_t Pin)
+{
+    GPIO_PORT(Pin)->BSRR = GPIO_PIN_MASK(Pin);
+}
+
+void GPIO_ResetOutputPin(uint32_t Pin)
+{
+    GPIO_PORT(Pin)->BRR = GPIO_PIN_MASK(Pin);
+}
+
+void GPIO_TogglePin(uint32_t Pin)
+{
+    GPIO_PORT(Pin)->ODR ^= GPIO_PIN_MASK(Pin);
+}
+
+bool GPIO_IsInputPinSet(uint32_t Pin)
+{
+    return (GPIO_PORT(Pin)->IDR & GPIO_PIN_MASK(Pin)) != 0u;
+}
+
+void GPIO_EnableAudioPath(void)
+{
+    audio_path_drive(1);
+}
+
+void GPIO_DisableAudioPath(void)
+{
+    audio_path_drive(0);
+}
+
+void GPIO_TurnOnBacklight(void)
+{
+    BACKLIGHT_TurnOn();
+}
+
+void GPIO_TurnOffBacklight(void)
+{
+    BACKLIGHT_TurnOff();
+}
+
+/* The port owns PTT: port_gui.c reads the keypad and drives the *measured*
+ * transmit chain (driver/tx.c).  The K1's own PTT path -- CheckKeys() ->
+ * GENERIC_Key_PTT -> FUNCTION_Transmit -> RADIO_SetTxParameters -- is the K1's
+ * chip sequence, which on this radio still needs comparing against the stock
+ * (docs/ra89r_rfpath.md), so this stays false and CheckKeys() does not see PTT.
+ * When that comparison lands, this returns the keypad read below. */
+bool GPIO_IsPttPressed(void)
+{
+    return false;
+
+    /* KEY_Code_t key = keypad_poll();
+     * return key == KEY_PTT || key == KEY_PTT2; */
+}

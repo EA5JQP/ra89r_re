@@ -10,13 +10,39 @@
 #define SDA_PIN  BK_SDA_PIN
 #define CS_PORT  BK4829_CS_PORT     /* both selects live on GPIOB */
 
-/* The stock's delay helper (FUN_0802422A) is a (n + 1) x 21 cycle loop; the
- * K1's SHORT_DELAY() is 40 NOPs.  The part is good for far faster than either,
- * so this only keeps the edges clean rather than meeting a timing requirement. */
+/* The stock's delay helper (FUN_0802422A) is a (n + 1) x 21 cycle loop, and the
+ * stock brackets each clock edge with n = 2..8 of those -- tens of cycles -- at
+ * its own full clock speed.  This port used 40 volatile iterations, which at
+ * 48 MHz is ~5 us of half-period: about twenty times the stock's edge time on
+ * the same board and the same bus, and the reason one RSSI read cost a
+ * millisecond (console 'P' shows it).  Eight iterations is ~1 us here, still
+ * several times what the stock does, so the edges stay clean. */
+uint8_t gRfBusDelay = RF_BUS_DELAY_VALIDATED;
+
+void rf_bus_set_delay(uint8_t iterations)
+{
+    if (iterations > 0u)
+        gRfBusDelay = iterations;
+}
+
+uint8_t rf_bus_delay_setting(void)
+{
+    return gRfBusDelay;
+}
+
 static void rf_delay(void)
 {
-    for (volatile unsigned i = 0; i < 40u; i++)
-        ;
+    /* The runtime value read once, then a plain loop.  The old `volatile
+     * unsigned i` forced a memory load and store every iteration, so one call
+     * cost ~3.2 us at 48 MHz (console 'P': 100 x BK4819_GetRSSI = 23 ms) rather
+     * than the ~1 us the iteration count suggests -- and that was the port's
+     * dominant RF cost, about five times the K1's own 1 us SYSTICK_DelayUs
+     * edges.  A few cycles per iteration now, so the default 8 is ~0.6 us, still
+     * above the stock's own edge (docs/ra89r_rfpath.md). */
+    unsigned n = gRfBusDelay;
+
+    while (n-- != 0u)
+        __NOP();
 }
 
 static void scl(int level) { gpio_write(SCL_PORT, SCL_PIN, level); }

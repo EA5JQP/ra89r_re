@@ -44,6 +44,8 @@
 
 #include "board_pins.h"
 #include "driver/bk4819.h"
+
+#include "driver/led.h"
 #include "driver/rf_bus.h"
 
 /* The K1 keeps these in misc.h; unsigned so the loops below stay warning-free. */
@@ -87,11 +89,13 @@ void BK4819_SetRogerMode(uint8_t mode)
 
 /* The K1's SYSTEM_DelayMs.  This firmware has no system module; a busy loop is
  * enough for the tone and DTMF timings this driver uses, and it keeps the file
- * self-contained. */
+ * self-contained.  The count is per millisecond at the clock this firmware
+ * runs, rather than the fixed 2000 it was written with: that number assumed
+ * 8 MHz, and would have made every settle delay here six times too short. */
 static void bk4919_delay_ms(unsigned ms)
 {
     while (ms--)
-        for (volatile unsigned i = 0; i < 2000u; i++)
+        for (volatile unsigned i = 0; i < (BOARD_SYSCLK_HZ / 4000u); i++)
             ;
 }
 
@@ -372,6 +376,15 @@ void BK4819_ToggleGpioOut(BK4819_GPIO_PIN_t Pin, bool bSet)
         gBK4819_GpioOutState &= ~(0x40u >> Pin);
 
     BK4819_WriteRegister(BK4819_REG_33, gBK4819_GpioOutState);
+
+    /* Port addition (see NOTICE): the K1 firmware lights its status LED through
+     * these two chip outputs.  On the RA89R the LED is on the MCU (PA13 red /
+     * PA14 green, measured -- docs/ra89r_led.md), so the two are mirrored here and
+     * the chip write above stays as it was. */
+    if (Pin == BK4819_GPIO5_PIN1_RED)
+        led_set(bSet ? LED_RED : LED_OFF);
+    else if (Pin == BK4819_GPIO6_PIN2_GREEN)
+        led_set(bSet ? LED_GREEN : LED_OFF);
 }
 
 bool BK4819_IsGpioOutSet(BK4819_GPIO_PIN_t Pin)
@@ -822,22 +835,16 @@ void BK4819_RX_TurnOn(void)
 
 void BK4819_PickRXFilterPathBasedOnFrequency(uint32_t Frequency)
 {
-    if (Frequency < 28000000)
-    {   // VHF
-        BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, true);
-        BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, false);
-    }
-    else
-    if (Frequency == 0xFFFFFFFF)
-    {   // OFF
-        BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, false);
-        BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, false);
-    }
-    else
-    {   // UHF
-        BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, false);
-        BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, true);
-    }
+    /* Port adaptation (see NOTICE, docs/ra89r_rfpath.md): on this board the RX
+     * LNA pins belong to the BK4815 receive branch.  The BK4829's own receive
+     * state clears both (stock FUN_08016DE8 -> FUN_080137D4(0x10, 0)), and the
+     * radio confirms it -- the K1's pin-4 rule costs ~16 dB on the BK4829 at VHF
+     * (console 'F': pin 4 gave 0x67 = 199, cleared gave 232).  So this K1 rule
+     * is neutralised to the board's BK4829 state. */
+    (void)Frequency;
+
+    BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, false);
+    BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, false);
 }
 
 void BK4819_DisableScramble(void)
@@ -1040,7 +1047,12 @@ void BK4819_EnterTxMute(void)
 
 void BK4819_ExitTxMute(void)
 {
-    BK4819_WriteRegister(BK4819_REG_50, 0x3B18);
+    /* 0x3B20, not the 0x3B18 this port imported from the K1's bk4829.c: the
+     * stock's own transmit path writes 0x3B20 in three places, the K1's
+     * bk4819.c agrees, and a muted TX audio path is a carrier that carries
+     * nothing.  Measured -- with it the microphone and the tone are audible on
+     * a second receiver; see docs/ra89r_rfpath.md. */
+    BK4819_WriteRegister(BK4819_REG_50, 0x3B20);
 }
 
 void BK4819_Sleep(void)

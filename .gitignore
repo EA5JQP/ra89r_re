@@ -16,5 +16,8 @@ firmware/build/
 # host/tooling state
 .reasonix/
 
+# agent plan/spec workspace (kept local; the write-ups index is docs/README.md)
+docs/superpowers/
+
 # editor settings
 .vscode/

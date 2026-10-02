@@ -53,7 +53,49 @@ set(APP_SOURCES
     App/driver/rx.c
     App/driver/tx.c
     App/driver/font_8x16.c
-    App/driver/font_5x7.c)
+    App/driver/font_5x7.c
+    # --- imported from the UV-K1/K5V3 project (see NOTICE) -------------------
+    App/driver/st7565.c
+    App/font.c
+    App/bitmaps.c
+    App/ui/helper.c
+    App/ui/inputbox.c
+    App/ui/main.c
+    App/ui/menu.c
+    App/ui/ui.c
+    App/ui/status.c
+    App/ui/battery.c
+    App/ui/scanner.c
+    App/ui/welcome.c
+    App/driver/keyboard.c
+    App/port_gui.c
+    App/app/menu.c
+    App/app/action.c
+    App/version.c
+    App/dcs.c
+    App/frequencies.c
+    App/helper/battery.c
+    App/helper/boot.c
+    App/driver/system.c
+    App/app/app.c
+    App/app/main.c
+    App/app/generic.c
+    App/app/common.c
+    App/app/chFrScanner.c
+    App/app/dtmf.c
+    App/app/scanner.c
+    App/port_board.c
+    App/radio.c
+    App/functions.c
+    App/audio.c
+    App/misc.c
+    App/port_state.c
+    App/port_storage.c
+    App/port_codeplug.c
+    App/driver/spi_flash.c
+    # --- end of imported sources ---------------------------------------------
+    App/settings.c
+    App/syscalls.c)
 
 add_executable(${PROJECT_NAME} ${CORE_SOURCES} ${ASM_SOURCES} ${APP_SOURCES})
 
@@ -65,6 +107,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${PY32_SDK}/Drivers/CMSIS/Include")
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE PY32F403xD)
+
+# Feature macros for the imported K1 sources live in one header and are forced
+# into every translation unit, so the imported files stay untouched.
+target_compile_options(${PROJECT_NAME} PRIVATE
+    -include ${CMAKE_CURRENT_SOURCE_DIR}/App/port_features.h)
 
 target_compile_options(${PROJECT_NAME} PRIVATE
     ${MCU_FLAGS} -Wall -Wextra -fdata-sections -ffunction-sections)

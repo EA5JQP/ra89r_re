@@ -19,7 +19,26 @@
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
 #include "driver/bk4815.h"
+#include "driver/gpio.h"
+#include "driver/pa.h"
 #include "driver/rf_bus.h"
+
+/* The GPIO/timer scratch the host device-header double points at.  This test
+ * does not link tools/host/host_hw.c, so it supplies its own.  `pa_init()` is
+ * never called, so `RCC`'s null pointer is never dereferenced. */
+GPIO_TypeDef host_gpio_scratch[6];
+TIM_TypeDef  host_tim_scratch;
+RCC_TypeDef  host_rcc_scratch;   /* pa_init() references RCC; not called here */
+
+/* `pa.c` calls these two in `pa_init()` only; the register test never brings
+ * the timer up, so they are no-ops.  Stubbing them keeps the K1 hardware
+ * surface out of this link (see `driver/gpio.c`). */
+void gpio_port_clock(GPIO_TypeDef *port) { (void)port; }
+void gpio_config_output(GPIO_TypeDef *port, uint32_t mask)
+{
+    (void)port;
+    (void)mask;
+}
 
 /* ------------------------------------------------------------- bus stub --- */
 
@@ -362,6 +381,75 @@ static void test_k1_interface(void)
           "with the driver's gains packed in ((11<<12)|(5<<4)|3)");
 }
 
+/* The RX path must not clobber register 0x33.  BK4819_Init() leaves the
+ * driver's output shadow at 0x9000; a receive select is a read-modify-write on
+ * top of it (the stock's FUN_080137D4 reads 0x33 back before masking), not a
+ * fresh 0x04/0x00.  This is the regression that stopped 0x67 following a
+ * carrier. */
+static uint16_t last_reg33(void)
+{
+    unsigned i;
+
+    for (i = log_len; i-- > 0; )
+        if (xfer_is(&log_[i], BK4829_CS_PIN, 0x33))
+            return (uint16_t)((log_[i].data[0] << 8) | log_[i].data[1]);
+    return 0xFFFFu;
+}
+
+static void test_pa_rx_path(void)
+{
+    printf("pa receive path (reg 0x33)\n");
+
+    /* The BK4829's own receive state clears both LNA pins (the stock's BK4829
+     * branch, FUN_08016DE8 -> FUN_080137D4(0x10, 0)); pin 4 is the BK4815
+     * branch's.  The 0x9000 bits BK4819_Init() set must survive. */
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    pa_select_band(14550000u);
+    check_hex(last_reg33(), 0x9000, "VHF receive clears both LNA pins, keeps 0x9000");
+
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    pa_select_band(44600625u);
+    check_hex(last_reg33(), 0x9000, "UHF receive clears both LNA pins, keeps 0x9000");
+
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    pa_select_band(11800000u);      /* 118.0 MHz */
+    check_hex(last_reg33(), 0x9000, "118 MHz receive clears both LNA pins, keeps 0x9000");
+}
+
+/* The K1's power ladder reaches 0x36 (its SetupPowerAmplifier) and, with the
+ * stock's arithmetic, the PB14 bias PWM compare. */
+static void test_pa_tx_path(void)
+{
+    printf("pa transmit path (0x33/0x36/PWM)\n");
+
+    /* 145.5000 MHz: VHF, so the K1's VHF PA gain (0x08), not the UHF one. */
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    pa_select_band(14550000u);
+    pa_tx_enable(0x40u);
+    check_hex(pa_last_reg33(), 0x0042u, "VHF TX: band pin 0x40 + T/R 0x02");
+    check_hex(pa_last_reg36(), 0x4088u, "VHF TX: 0x36 = (0x40<<8) | PA-CTL | gain 0x08");
+    check_hex(pa_last_compare(), (0x40u * PA_PWM_ARR) / 255u,
+              "VHF TX: PWM compare = power*ARR/255");
+
+    /* 446.00625 MHz: UHF, the K1's UHF gain (0x22). */
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    pa_select_band(44600625u);
+    pa_tx_enable(0xFFu);
+    check_hex(pa_last_reg33(), 0x0022u, "UHF TX: band pin 0x20 + T/R 0x02");
+    check_hex(pa_last_reg36(), 0xFFA2u, "UHF TX: 0x36 = (0xFF<<8) | PA-CTL | gain 0x22");
+    check_hex(pa_last_compare(), PA_PWM_MAX_DUTY, "UHF TX: full power clamps the compare");
+}
+
 int main(void)
 {
     printf("rf register-layer test (stub bus, no radio)\n\n");
@@ -372,6 +460,8 @@ int main(void)
     test_bk4815_config();
     test_accessors();
     test_k1_interface();
+    test_pa_rx_path();
+    test_pa_tx_path();
 
     printf("\n%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

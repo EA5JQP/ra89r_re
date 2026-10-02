@@ -48,4 +48,7 @@ void rx_poll(void);
 bool rx_squelch_open(void);
 uint16_t rx_rssi(void);
 
+/* The frequency the BK4829 was last tuned to, in 10 Hz units, for diagnostics. */
+uint32_t rx_rx_frequency(void);
+
 #endif /* DRIVER_RX_H */
