@@ -198,7 +198,19 @@ def cmd_restore(ser, args):
                  f"--yes")
 
     ser.reset_input_buffer()
-    ser.write(f"W {size} {checksum:08X}\n".encode())
+
+    # Send "W" on its own and wait for its echo.  The firmware's command loop
+    # sleeps ~1 ms between polls and the USART has no receive FIFO, so "W" and
+    # the header in one burst overrun after the "W" and the header is lost.
+    # Waiting for the echo means the firmware is inside the restore handler,
+    # which reads a burst fine.
+    ser.write(b"W")
+    echo = read_until(ser, b"W", args.timeout)
+    if b"W" not in echo:
+        sys.exit(f"no 'W' echo from the firmware (the backup firmware echoes "
+                 f"it): {echo!r}")
+
+    ser.write(f" {size} {checksum:08X}\n".encode())
 
     header, match = read_match(ser, rb"EEPROM RESTORE ([^\n]*)\n", args.timeout)
     if not match:

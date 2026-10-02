@@ -135,6 +135,12 @@ class Sim(object):
                     self.cmd_writetest(out)
                     continue
 
+                # The firmware echoes the 'W' before it reads the header; the
+                # host waits for that echo to know the handler has started.
+                if buf == b"W":
+                    out.write(b"W")
+                    break
+
                 # A restore header is line-based, then switches to raw bytes,
                 # 4 KB at a time with a '.' ack after each sector.
                 if buf.startswith(b"W ") and b"\n" in buf:

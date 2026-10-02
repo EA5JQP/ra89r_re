@@ -177,13 +177,14 @@ int uart_getc(void)
 
 int uart_getc_timeout(uint32_t ms)
 {
-    int c = uart_getc();
+    uint32_t start = systick_millis();
 
-    while (ms-- > 0u) {
-        if (c >= 0)
-            return c;
-        systick_delay_ms(1u);
-        c = uart_getc();
+    /* Busy-poll: the USART has no receive FIFO, and sleeping between polls
+     * loses bytes to overrun.  A byte returns immediately; otherwise this spins
+     * until the deadline.  The EEPROM restore relies on it catching a burst. */
+    while ((uint32_t)(systick_millis() - start) <= ms) {
+        if (uart_rx_ready())
+            return uart_getc();
     }
-    return c;
+    return -1;
 }
