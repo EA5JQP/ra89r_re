@@ -183,7 +183,8 @@ static void print_help(void)
               "          r re-init panel (standard, bootloader-proven)\n"
               "          s re-init panel (stock app variant, 8 extra bytes)\n"
               "          k keypad monitor (raw ADC per line + decoded key)\n"
-              "          e eeprom id   E dump the whole eeprom as binary (~6 min)\n");
+              "          e eeprom id   E dump the whole eeprom as binary (~6 min)\n"
+              "          W restore the whole eeprom (host: ra89r_eeprom.py restore)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -274,6 +275,119 @@ static void eeprom_dump(void)
         uart_write_raw((const char *)buf, n);       /* no CR/LF rewriting */
     }
     uart_printf("\nEEPROM END %08X\n", (unsigned)sum);
+}
+
+/* Parse the decimal size and hex checksum the host puts after 'W'. */
+static uint32_t parse_u32(const char **p)
+{
+    uint32_t v = 0;
+
+    while (**p == ' ')
+        (*p)++;
+    while (**p >= '0' && **p <= '9') {
+        v = v * 10u + (uint32_t)(**p - '0');
+        (*p)++;
+    }
+    return v;
+}
+
+static uint32_t parse_hex(const char **p)
+{
+    uint32_t v = 0;
+
+    while (**p == ' ')
+        (*p)++;
+    for (;;) {
+        char c = **p;
+
+        if (c >= '0' && c <= '9')
+            v = v * 16u + (uint32_t)(c - '0');
+        else if (c >= 'a' && c <= 'f')
+            v = v * 16u + (uint32_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F')
+            v = v * 16u + (uint32_t)(c - 'A' + 10);
+        else
+            break;
+        (*p)++;
+    }
+    return v;
+}
+
+/* Restore the whole chip: the host sends "W <size> <sum>\n" (the 'W' is already
+ * consumed by the console loop), then exactly <size> raw bytes.  Each 4 KB
+ * sector is erased and programmed as it arrives; the checksum the host declared
+ * is compared with what was received, so a damaged transfer is reported even
+ * though the flash cannot be verified without another read.  Nothing here
+ * touches the MCU's own flash. */
+static void eeprom_restore(void)
+{
+    static uint8_t buf[256];
+    char line[40];
+    unsigned n = 0;
+    int c;
+    uint32_t size, declared, addr, off, sum = 0;
+    const char *p;
+
+    for (;;) {
+        c = uart_getc_timeout(2000);
+        if (c < 0) {
+            uart_puts("\nEEPROM RESTORE ERR no-header\n");
+            return;
+        }
+        if (c == '\n' || c == '\r')
+            break;
+        if (n < sizeof line - 1u)
+            line[n++] = (char)c;
+    }
+    line[n] = '\0';
+
+    p = line;
+    size = parse_u32(&p);
+    declared = parse_hex(&p);
+
+    spi_flash_init();
+    {
+        uint32_t chip = eeprom_size();
+
+        if (chip == 0u) {
+            uart_puts("\nEEPROM RESTORE ERR no-chip\n");
+            return;
+        }
+        if (size != chip) {
+            uart_printf("\nEEPROM RESTORE ERR size %u, chip is %u\n",
+                        (unsigned)size, (unsigned)chip);
+            return;
+        }
+    }
+    if (size == 0u || (size & 0xFFFu) != 0u) {
+        uart_printf("\nEEPROM RESTORE ERR size %u is not whole 4 KB sectors\n",
+                    (unsigned)size);
+        return;
+    }
+
+    uart_printf("\nEEPROM RESTORE %u\n", (unsigned)size);
+
+    for (addr = 0; addr < size; addr += 4096u) {
+        spi_flash_sector_erase(addr);
+        for (off = 0; off < 4096u; off += 256u) {
+            uint32_t i;
+
+            for (i = 0; i < 256u; i++) {
+                c = uart_getc_timeout(5000);
+                if (c < 0) {
+                    uart_printf("\nEEPROM RESTORE FAIL %08X (timed out at %u)\n",
+                                (unsigned)sum, (unsigned)(addr + off + i));
+                    return;
+                }
+                buf[i] = (uint8_t)c;
+                sum += (uint8_t)c;
+            }
+            spi_flash_program(addr + off, buf, 256u);
+        }
+    }
+
+    uart_printf("\nEEPROM RESTORE %s %08X\n",
+                (sum == declared) ? "OK" : "FAIL", (unsigned)sum);
 }
 
 /* ------------------------------------------------------------------- main */
@@ -463,6 +577,9 @@ int main(void)
                 break;
             case 'E':
                 eeprom_dump();
+                break;
+            case 'W':
+                eeprom_restore();
                 break;
             default:
                 break;

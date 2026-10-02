@@ -108,3 +108,98 @@ void spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len)
         *buf++ = xfer(0xFFu);
     cs(1);
 }
+
+/* ---------------------------------------------------------------------------
+ * Writing.
+ *
+ * The read path above is validated on the radio (ra89r_eeprom.md); this half is
+ * what the write test and the restore command exercise, so it stays
+ * conservative: explicit write-enable before every erase or program, and a
+ * status-register poll for WIP after each one.  A program never crosses a page
+ * boundary -- the chip wraps within the page if the host does not split -- and
+ * nothing here erases on its own: the caller erases first.
+ * ------------------------------------------------------------------------- */
+
+#define CMD_WRITE_ENABLE   0x06u
+#define CMD_READ_STATUS    0x05u
+#define CMD_PAGE_PROGRAM   0x02u
+#define CMD_SECTOR_ERASE   0x20u
+#define SPI_FLASH_PAGE_SIZE 256u
+
+static void cmd_only(uint8_t command)
+{
+    cs(0);
+    xfer(command);
+    cs(1);
+}
+
+static void addr_command(uint8_t command, uint32_t addr)
+{
+    cs(0);
+    xfer(command);
+    xfer((uint8_t)(addr >> 16));
+    xfer((uint8_t)(addr >> 8));
+    xfer((uint8_t)addr);
+    cs(1);
+}
+
+static uint8_t status_read(void)
+{
+    uint8_t status;
+
+    cs(0);
+    xfer(CMD_READ_STATUS);
+    status = xfer(0xFFu);
+    cs(1);
+    return status;
+}
+
+/* The chip holds WIP (status bit 0) while an erase or program runs. */
+static void wait_ready(void)
+{
+    while ((status_read() & 0x01u) != 0u)
+        ;
+}
+
+void spi_flash_write_enable(void)
+{
+    cmd_only(CMD_WRITE_ENABLE);
+}
+
+void spi_flash_wait_ready(void)
+{
+    wait_ready();
+}
+
+void spi_flash_program(uint32_t addr, const uint8_t *buf, uint32_t len)
+{
+    while (len > 0u) {
+        uint32_t room = SPI_FLASH_PAGE_SIZE - (addr & (SPI_FLASH_PAGE_SIZE - 1u));
+        uint32_t chunk = (len < room) ? len : room;
+        uint32_t i;
+
+        wait_ready();
+        spi_flash_write_enable();
+        cs(0);
+        xfer(CMD_PAGE_PROGRAM);
+        xfer((uint8_t)(addr >> 16));
+        xfer((uint8_t)(addr >> 8));
+        xfer((uint8_t)addr);
+        for (i = 0; i < chunk; i++)
+            xfer(buf[i]);
+        cs(1);
+
+        addr += chunk;
+        buf += chunk;
+        len -= chunk;
+    }
+    wait_ready();
+}
+
+void spi_flash_sector_erase(uint32_t addr)
+{
+    wait_ready();
+    spi_flash_write_enable();
+    addr_command(CMD_SECTOR_ERASE, addr);
+    wait_ready();
+}

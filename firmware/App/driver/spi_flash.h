@@ -40,4 +40,11 @@ uint32_t spi_flash_size(uint32_t jedec);
 /* Read len bytes from a 24-bit address (command 0x03, no dummy byte). */
 void spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len);
 
+/* Writing.  The caller erases a 4 KB sector first, then programs in chunks that
+ * must not cross a 256-byte page (spi_flash_program splits them itself). */
+void spi_flash_write_enable(void);
+void spi_flash_wait_ready(void);
+void spi_flash_program(uint32_t addr, const uint8_t *buf, uint32_t len);
+void spi_flash_sector_erase(uint32_t addr);
+
 #endif /* DRIVER_SPI_FLASH_H */
