@@ -20,7 +20,7 @@
  * stock's own battery path.  Until one of those lands, the screens show a fixed
  * pack -- which is at least honest about being a placeholder.
  */
-#define PORT_BATTERY_ADC_PLACEHOLDER 1850u
+#define BATTERY_ADC_PLACEHOLDER 1850u
 
 void BOARD_ADC_Init(void)
 {
@@ -29,7 +29,7 @@ void BOARD_ADC_Init(void)
 void BOARD_ADC_GetBatteryInfo(uint16_t *pVoltage, uint16_t *pCurrent)
 {
     if (pVoltage != 0)
-        *pVoltage = PORT_BATTERY_ADC_PLACEHOLDER;
+        *pVoltage = BATTERY_ADC_PLACEHOLDER;
     if (pCurrent != 0)
         *pCurrent = 0;
 }

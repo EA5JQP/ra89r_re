@@ -1383,14 +1383,14 @@ int main(void)
                 uint32_t addr;
                 const uint32_t at = 0x00000000u;   /* the codeplug area */
 
-                if (!port_storage_id(&man_dev, &jedec)) {
+                if (!storage_id(&man_dev, &jedec)) {
                     uart_puts("\nstorage: no answer (MISO idle high -- absent or "
                               "unpowered chip?)\n");
                     break;
                 }
                 uart_printf("\nstorage: 0x90 -> 0x%04X, JEDEC 0x%06X, size %u KB\n",
                             (unsigned)man_dev, (unsigned)jedec,
-                            (unsigned)(port_storage_size() / 1024u));
+                            (unsigned)(storage_size() / 1024u));
 
                 for (addr = at; addr < at + 64u; addr += 16u) {
                     uint8_t buf[16];
@@ -1408,7 +1408,7 @@ int main(void)
                 /* Save the port's settings to the external flash (blob in the
                  * empty tail of the part -- see driver/py25q16.c). */
                 uart_printf("\nstorage: settings save %s\n",
-                            port_storage_save_settings() ? "PASS (read back)"
+                            storage_save_settings() ? "PASS (read back)"
                                                          : "FAILED");
                 break;
             case '6': {
@@ -1416,7 +1416,7 @@ int main(void)
                  * erase + program + read back on a scratch sector. */
                 uint32_t bad = 0;
 
-                if (port_storage_write_test(&bad)) {
+                if (storage_write_test(&bad)) {
                     uart_puts("\nstorage: write test PASS (erase, program and "
                               "read back of 256 bytes)\n");
                 } else {

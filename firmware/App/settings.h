@@ -301,7 +301,7 @@ extern EEPROM_Config_t gEeprom;
 
 /* Port addition (not in the K1 header): fill gEeprom with usable defaults
  * until the external-NOR codeplug is readable.  See App/settings.c. */
-void PORT_SettingsDefaults(void);
+void SettingsDefaults(void);
 
 typedef struct {
     FREQ_Config_t    rx;
@@ -332,10 +332,10 @@ bool     SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelSca
 void     SETTINGS_FetchChannelName(char *s, const uint16_t channel);
 /* The K1's ChannelAttributes_t as a plain u16, decoded from the stock codeplug
  * (whose format now lives in settings.c).  0xFFFF = no such channel. */
-uint16_t port_codeplug_attributes(uint16_t channel);
-bool     port_codeplug_scan_info(uint16_t channel, ChannelScanDisplayInfo_t *info);
-bool     port_codeplug_excluded(uint16_t channel);
-void     port_codeplug_name(char *out, size_t size, uint16_t channel);
+uint16_t codeplug_attributes(uint16_t channel);
+bool     codeplug_scan_info(uint16_t channel, ChannelScanDisplayInfo_t *info);
+bool     codeplug_excluded(uint16_t channel);
+void     codeplug_name(char *out, size_t size, uint16_t channel);
 void     SETTINGS_FactoryReset(bool bIsAll);
 #ifdef ENABLE_FMRADIO
     void SETTINGS_SaveFM(void);

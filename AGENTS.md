@@ -167,7 +167,7 @@ cd firmware && gcc -std=c11 -I App -I App/driver -DLCD_HOST_TEST \
 # and runs the K1's own key path (CheckKeys).  It links the whole app core, not
 # just the screens -- port_state_init() is the K1's boot sequence.
 cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver \
-    -DPY32F403xD -include App/port_features.h -DST7565_HOST_TEST \
+    -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
     -ffunction-sections -fdata-sections -Wl,--gc-sections \
     tools/preview_k1.c tools/host/host_hw.c tools/host/host_bk4819.c \
     App/ui/main.c App/ui/menu.c App/ui/ui.c App/ui/status.c App/ui/welcome.c \
@@ -277,7 +277,7 @@ port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
                                          the erased band.  The K1 GUI is
                                          what the radio boots into, straight into the
                                          VFO, in its double-channel layout
-                                         (`PORT_TWO_ROW_UI` in port_features.h
+                                         (`TWO_ROW_UI` in k1_features.h
                                          forces `ui/main.c`'s `isMainOnly()`
                                          false; `gEeprom.DUAL_WATCH` stays OFF so
                                          the receiver follows the selected VFO --

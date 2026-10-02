@@ -102,12 +102,12 @@ int main(void)
             ChannelScanDisplayInfo_t info;
             char name[16];
 
-            if (!port_codeplug_scan_info(channel, &info)) {
+            if (!codeplug_scan_info(channel, &info)) {
                 printf("  CH %2u  -- not used\n", channel);
                 continue;
             }
 
-            port_codeplug_name(name, sizeof name, channel);
+            codeplug_name(name, sizeof name, channel);
             printf("  CH %2u  %3u.%05u MHz  tx %3u.%05u  %-6s  code rx %u/%u tx %u/%u  "
                    "step %u  power %u  bw %u  txlock %u  excl %u\n",
                    channel,
@@ -118,7 +118,7 @@ int main(void)
                    (unsigned)info.tx.CodeType, (unsigned)info.tx.Code,
                    (unsigned)info.stepSetting, (unsigned)info.outputPower,
                    (unsigned)info.channelBandwidth, (unsigned)info.txLock,
-                   (unsigned)port_codeplug_excluded(channel));
+                   (unsigned)codeplug_excluded(channel));
         }
 
         printf("  VFO A: %3u.%05u MHz, bandwidth %u, power %u, TX_LOCK %u\n",
@@ -159,19 +159,19 @@ int main(void)
 
         gEeprom.SQUELCH_LEVEL = 7;
         gEeprom.CHANNEL_DISPLAY_MODE = 2;
-        saved = port_storage_save_settings();
+        saved = storage_save_settings();
 
         gEeprom.SQUELCH_LEVEL = 0;
         gEeprom.CHANNEL_DISPLAY_MODE = 0;
-        loaded = port_storage_load_settings();
+        loaded = storage_load_settings();
 
         printf("\n[storage] save=%d load=%d -> squelch=%u chdisp=%u (expected 7/2)\n",
                saved, loaded, (unsigned)gEeprom.SQUELCH_LEVEL,
                (unsigned)gEeprom.CHANNEL_DISPLAY_MODE);
-        printf("[storage] write test=%d\n", port_storage_write_test(&bad));
+        printf("[storage] write test=%d\n", storage_write_test(&bad));
 
         /* Put the state back so the screens below render as before (a plain
-         * PORT_SettingsDefaults() would clear the VFO pointers those screens
+         * SettingsDefaults() would clear the VFO pointers those screens
          * dereference -- port_state_init() re-establishes them). */
         SETTINGS_InitEEPROM(); SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
     }

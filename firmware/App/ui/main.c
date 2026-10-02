@@ -62,8 +62,8 @@ center_line_t center_line = CENTER_LINE_NONE;
 
     static bool isMainOnly()
     {
-#if PORT_TWO_ROW_UI
-        /* Port adaptation (see port_features.h): draw the double-channel layout
+#if TWO_ROW_UI
+        /* Port adaptation (see k1_features.h): draw the double-channel layout
          * without turning on the K1's dual-watch RF engine. */
         return false;
 #else

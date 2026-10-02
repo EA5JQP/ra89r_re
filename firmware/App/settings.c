@@ -75,19 +75,19 @@ typedef struct {
 #define RA89R_CP_FLAGB_SQL_MASK   0x60u
 #define RA89R_CP_FLAGC_STEP_MASK  0x0Fu
 
-void     port_codeplug_init(void);
-bool     port_codeplug_read(uint16_t channel, ra89r_codeplug_record_t *record);
-bool     port_codeplug_used(uint16_t channel);
-bool     port_codeplug_excluded(uint16_t channel);
-bool     port_codeplug_scan_info(uint16_t channel, ChannelScanDisplayInfo_t *info);
-void     port_codeplug_name(char *out, size_t size, uint16_t channel);
-uint16_t port_codeplug_attributes(uint16_t channel);
-void     port_codeplug_save_attributes(uint16_t channel, uint16_t value);
-bool     port_codeplug_freq_get(uint16_t channel, uint8_t vfo, ChannelScanDisplayInfo_t *info);
-void     port_codeplug_freq_set(uint16_t channel, uint8_t vfo, const ChannelScanDisplayInfo_t *info);
-void     port_codeplug_freq_snapshot(uint8_t *dest, size_t size);
-bool     port_codeplug_freq_restore(const uint8_t *src, size_t size);
-void     port_codeplug_shared_settings(void);
+void     codeplug_init(void);
+bool     codeplug_read(uint16_t channel, ra89r_codeplug_record_t *record);
+bool     codeplug_used(uint16_t channel);
+bool     codeplug_excluded(uint16_t channel);
+bool     codeplug_scan_info(uint16_t channel, ChannelScanDisplayInfo_t *info);
+void     codeplug_name(char *out, size_t size, uint16_t channel);
+uint16_t codeplug_attributes(uint16_t channel);
+void     codeplug_save_attributes(uint16_t channel, uint16_t value);
+bool     codeplug_freq_get(uint16_t channel, uint8_t vfo, ChannelScanDisplayInfo_t *info);
+void     codeplug_freq_set(uint16_t channel, uint8_t vfo, const ChannelScanDisplayInfo_t *info);
+void     codeplug_freq_snapshot(uint8_t *dest, size_t size);
+bool     codeplug_freq_restore(const uint8_t *src, size_t size);
+void     codeplug_shared_settings(void);
 
 EEPROM_Config_t gEeprom;
 
@@ -122,13 +122,13 @@ typedef struct {
     uint32_t magic;
     uint16_t version;
     uint16_t reserved;
-    uint8_t  freq_channels[7 * 2 * 16];   /* port_codeplug_freq_snapshot() */
-} port_settings_extra_t;
+    uint8_t  freq_channels[7 * 2 * 16];   /* codeplug_freq_snapshot() */
+} settings_extra_t;
 
-#define PORT_EXTRA_MAGIC   0x58545241u    /* "ARTX" */
-#define PORT_EXTRA_VERSION 1u
+#define EXTRA_MAGIC   0x58545241u    /* "ARTX" */
+#define EXTRA_VERSION 1u
 
-void PORT_SettingsDefaults(void)
+void SettingsDefaults(void)
 {
     memset(&gEeprom, 0, sizeof gEeprom);
 
@@ -155,7 +155,7 @@ void PORT_SettingsDefaults(void)
     gEeprom.TAIL_TONE_ELIMINATION = false;
     gEeprom.VFO_OPEN = true;
     /* The double-channel UI no longer rides on dual-watch: the port forces
-     * ui/main.c's isMainOnly() false (port_features.h) to draw both rows, and
+     * ui/main.c's isMainOnly() false (k1_features.h) to draw both rows, and
      * leaves dual-watch and cross-band OFF.  Both are RF behaviours -- the K1's
      * DualwatchAlternate() toggles the receive VFO between the two channels --
      * and the port has no engine for them. */
@@ -193,9 +193,9 @@ static uint16_t settings_first_channel(uint16_t start)
     for (channel = start; channel < RA89R_CP_RECORD_COUNT; channel++) {
         ra89r_codeplug_record_t record;
 
-        if (!port_codeplug_used(channel))
+        if (!codeplug_used(channel))
             continue;
-        if (!port_codeplug_read(channel, &record))
+        if (!codeplug_read(channel, &record))
             continue;
         if (record.rx_frequency == 0u || record.rx_frequency == 0xFFFFFFFFu)
             continue;
@@ -207,18 +207,18 @@ static uint16_t settings_first_channel(uint16_t start)
 
 void SETTINGS_InitEEPROM(void)
 {
-    PORT_SettingsDefaults();
+    SettingsDefaults();
 
     /* The external NOR driver first: everything below reads the chip, and a
      * read taken before the bus is up caches 0xFF -- a radio with no channels
      * and no stored settings, which is exactly what it is not. */
-    port_storage_init();
-    port_codeplug_init();
+    storage_init();
+    codeplug_init();
 
     /* Give the K1 its own EEPROM image in the erased band (driver/py25q16.c); it
      * imports from the stock on first use.  Do it before the calibration load
      * and the attribute cache, which both read it. */
-    port_storage_import_k1();
+    storage_import_k1();
 
     /* The K1's channel-attribute cache marks an unused slot with
      * channel_id == 0xFFFF, so it has to be initialised before the first lookup
@@ -229,18 +229,18 @@ void SETTINGS_InitEEPROM(void)
 
     /* The stock's shared settings next: they are what a radio configured by
      * the stock firmware or its CPS already carries. */
-    port_codeplug_shared_settings();
+    codeplug_shared_settings();
 
     /* Then the port's own blob, which wins where the two overlap: it is what
      * the user last set with this firmware. */
-    if (port_storage_load_settings()) {
-        port_settings_extra_t extra;
+    if (storage_load_settings()) {
+        settings_extra_t extra;
 
         memset(&extra, 0, sizeof extra);
-        if (port_storage_get_extra(&extra, sizeof extra) &&
-            extra.magic == PORT_EXTRA_MAGIC &&
-            extra.version == PORT_EXTRA_VERSION) {
-            port_codeplug_freq_restore(extra.freq_channels, sizeof extra.freq_channels);
+        if (storage_get_extra(&extra, sizeof extra) &&
+            extra.magic == EXTRA_MAGIC &&
+            extra.version == EXTRA_VERSION) {
+            codeplug_freq_restore(extra.freq_channels, sizeof extra.freq_channels);
         }
     } else {
         /* No blob yet: land the two VFOs on the first two channels the codeplug
@@ -325,7 +325,7 @@ uint32_t SETTINGS_FetchChannelFrequency(const uint16_t channel)
     ra89r_codeplug_record_t record;
 
     if (IS_MR_CHANNEL(channel)) {
-        if (!port_codeplug_read(channel, &record))
+        if (!codeplug_read(channel, &record))
             return 0u;
         if (record.rx_frequency == 0xFFFFFFFFu)
             return 0u;
@@ -335,7 +335,7 @@ uint32_t SETTINGS_FetchChannelFrequency(const uint16_t channel)
     if (IS_FREQ_CHANNEL(channel)) {
         ChannelScanDisplayInfo_t info;
 
-        if (!port_codeplug_freq_get(channel, gEeprom.RX_VFO, &info))
+        if (!codeplug_freq_get(channel, gEeprom.RX_VFO, &info))
             return 0u;
         return info.rx.Frequency;
     }
@@ -368,10 +368,10 @@ bool SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDis
         return false;
 
     if (IS_MR_CHANNEL(channel))
-        return port_codeplug_scan_info(channel, info);
+        return codeplug_scan_info(channel, info);
 
     if (IS_FREQ_CHANNEL(channel))
-        return port_codeplug_freq_get(channel, gEeprom.RX_VFO, info);
+        return codeplug_freq_get(channel, gEeprom.RX_VFO, info);
 
     return false;
 }
@@ -386,7 +386,7 @@ void SETTINGS_FetchChannelName(char *s, const uint16_t channel)
     if (!IS_MR_CHANNEL(channel))
         return;
 
-    port_codeplug_name(s, 16u, channel);
+    codeplug_name(s, 16u, channel);
 }
 
 /* ---------------------------------------------------------------------------
@@ -400,16 +400,16 @@ static bool settings_dirty;
 
 static bool settings_save_all(void)
 {
-    port_settings_extra_t extra;
+    settings_extra_t extra;
     memset(&extra, 0, sizeof extra);
-    extra.magic = PORT_EXTRA_MAGIC;
-    extra.version = PORT_EXTRA_VERSION;
-    port_codeplug_freq_snapshot(extra.freq_channels, sizeof extra.freq_channels);
+    extra.magic = EXTRA_MAGIC;
+    extra.version = EXTRA_VERSION;
+    codeplug_freq_snapshot(extra.freq_channels, sizeof extra.freq_channels);
 
-    if (!port_storage_set_extra(&extra, sizeof extra))
+    if (!storage_set_extra(&extra, sizeof extra))
         return false;
 
-    return port_storage_save_settings();
+    return storage_save_settings();
 }
 
 void SETTINGS_SaveSettings(void)
@@ -463,7 +463,7 @@ void SETTINGS_SaveChannel(uint16_t Channel, uint8_t VFO, const VFO_Info_t *pVFO,
         info.busyChannelLock = pVFO->BUSY_CHANNEL_LOCK;
         info.txLock = pVFO->TX_LOCK;
         info.dtmfPttIdTxMode = pVFO->DTMF_PTT_ID_TX_MODE;
-        port_codeplug_freq_set(Channel, gEeprom.TX_VFO, &info);
+        codeplug_freq_set(Channel, gEeprom.TX_VFO, &info);
     }
 
     (void)settings_save_all();
@@ -516,7 +516,7 @@ void SETTINGS_ResetTxLock(void)
 #define CP_TONE_DCS_MAX          511u     /* at or below: a DCS code */
 
 /* The channel bitmaps are 32 bytes each and are read on every attribute lookup,
- * so they live in RAM once they have been read.  `port_codeplug_init()` is what
+ * so they live in RAM once they have been read.  `codeplug_init()` is what
  * makes that safe: it must run after the external-NOR driver is up, and it drops
  * anything a read before that might have cached (which, on a bus that is not
  * answering yet, is all 0xFF -- i.e. a radio with no channels at all). */
@@ -533,7 +533,7 @@ static uint8_t cp_band[RA89R_CP_RECORD_COUNT];
 
 static void cp_freq_defaults(void);
 
-void port_codeplug_init(void)
+void codeplug_init(void)
 {
     cp_bitmaps_valid = false;
     memset(cp_band, 0, sizeof cp_band);
@@ -548,7 +548,7 @@ void port_codeplug_init(void)
  * Reading
  * ------------------------------------------------------------------------- */
 
-bool port_codeplug_read(uint16_t channel, ra89r_codeplug_record_t *record)
+bool codeplug_read(uint16_t channel, ra89r_codeplug_record_t *record)
 {
     if (record == 0 || channel >= RA89R_CP_RECORD_COUNT)
         return false;
@@ -576,7 +576,7 @@ static bool cp_bitmap_get(const uint8_t *bitmap, uint16_t channel)
     return (bitmap[channel >> 3] & (uint8_t)(1u << (channel & 7u))) != 0u;
 }
 
-bool port_codeplug_used(uint16_t channel)
+bool codeplug_used(uint16_t channel)
 {
     if (channel >= RA89R_CP_RECORD_COUNT)
         return false;
@@ -585,7 +585,7 @@ bool port_codeplug_used(uint16_t channel)
     return cp_bitmap_get(cp_enable, channel);
 }
 
-bool port_codeplug_excluded(uint16_t channel)
+bool codeplug_excluded(uint16_t channel)
 {
     /* The CPS's "scan allow" bit is set for a channel that may be scanned, so
      * the K1's exclude flag is its inverse.  A channel outside the bitmap can
@@ -700,15 +700,15 @@ static void cp_decode_record(const ra89r_codeplug_record_t *record, ChannelScanD
 #endif
 }
 
-bool port_codeplug_scan_info(uint16_t channel, ChannelScanDisplayInfo_t *info)
+bool codeplug_scan_info(uint16_t channel, ChannelScanDisplayInfo_t *info)
 {
     ra89r_codeplug_record_t record;
 
     if (info == 0 || channel >= RA89R_CP_RECORD_COUNT)
         return false;
-    if (!port_codeplug_used(channel))
+    if (!codeplug_used(channel))
         return false;
-    if (!port_codeplug_read(channel, &record))
+    if (!codeplug_read(channel, &record))
         return false;
     if (record.rx_frequency == 0u || record.rx_frequency == 0xFFFFFFFFu)
         return false;
@@ -717,7 +717,7 @@ bool port_codeplug_scan_info(uint16_t channel, ChannelScanDisplayInfo_t *info)
     return true;
 }
 
-void port_codeplug_name(char *out, size_t size, uint16_t channel)
+void codeplug_name(char *out, size_t size, uint16_t channel)
 {
     ra89r_codeplug_record_t record;
     char extended[RA89R_CP_NAME_STRIDE];
@@ -729,12 +729,12 @@ void port_codeplug_name(char *out, size_t size, uint16_t channel)
 
     out[0] = 0;
 
-    if (channel >= RA89R_CP_RECORD_COUNT || !port_codeplug_used(channel) || size < 2u)
+    if (channel >= RA89R_CP_RECORD_COUNT || !codeplug_used(channel) || size < 2u)
         return;
 
     /* The record's own six characters come first; the ten-byte table at 4416 is
      * the extension the CPS appends for names that need more room. */
-    if (port_codeplug_read(channel, &record)) {
+    if (codeplug_read(channel, &record)) {
         for (i = 0; i < sizeof record.name && used + 1u < size; i++) {
             const char c = record.name[i];
 
@@ -768,7 +768,7 @@ void port_codeplug_name(char *out, size_t size, uint16_t channel)
  * The K1's channel attributes
  * ------------------------------------------------------------------------- */
 
-uint16_t port_codeplug_attributes(uint16_t channel)
+uint16_t codeplug_attributes(uint16_t channel)
 {
     uint16_t value;
     uint8_t  band;
@@ -781,11 +781,11 @@ uint16_t port_codeplug_attributes(uint16_t channel)
         band     = (uint8_t)(channel - FREQ_CHANNEL_FIRST);
         scanlist = MR_CHANNELS_LIST + 1;
         exclude  = 0;
-    } else if (channel < RA89R_CP_RECORD_COUNT && port_codeplug_used(channel)) {
+    } else if (channel < RA89R_CP_RECORD_COUNT && codeplug_used(channel)) {
         if (cp_band[channel] == 0u) {
             ra89r_codeplug_record_t record;
 
-            if (!port_codeplug_read(channel, &record) || record.rx_frequency == 0u ||
+            if (!codeplug_read(channel, &record) || record.rx_frequency == 0u ||
                 record.rx_frequency == 0xFFFFFFFFu)
                 return 0xFFFFu;
 
@@ -793,7 +793,7 @@ uint16_t port_codeplug_attributes(uint16_t channel)
         }
         band     = (uint8_t)(cp_band[channel] - 1u);
         scanlist = MR_CHANNELS_LIST + 1;   /* the stock has one set, not lists */
-        exclude  = port_codeplug_excluded(channel) ? 1u : 0u;
+        exclude  = codeplug_excluded(channel) ? 1u : 0u;
     } else {
         return 0xFFFFu;                    /* not a channel this radio has */
     }
@@ -804,7 +804,7 @@ uint16_t port_codeplug_attributes(uint16_t channel)
     return value;
 }
 
-void port_codeplug_save_attributes(uint16_t channel, uint16_t value)
+void codeplug_save_attributes(uint16_t channel, uint16_t value)
 {
     /* The K1 writes its 2-byte attribute table at 0x8000; on this chip that is
      * the middle of the stock's channel records, so writing it would destroy
@@ -931,7 +931,7 @@ static void cp_freq_defaults(void)
             cp_freq_default_one(band, vfo);
 }
 
-bool port_codeplug_freq_get(uint16_t channel, uint8_t vfo, ChannelScanDisplayInfo_t *info)
+bool codeplug_freq_get(uint16_t channel, uint8_t vfo, ChannelScanDisplayInfo_t *info)
 {
     const unsigned band = (unsigned)(channel - FREQ_CHANNEL_FIRST);
 
@@ -942,7 +942,7 @@ bool port_codeplug_freq_get(uint16_t channel, uint8_t vfo, ChannelScanDisplayInf
     return true;
 }
 
-void port_codeplug_freq_set(uint16_t channel, uint8_t vfo, const ChannelScanDisplayInfo_t *info)
+void codeplug_freq_set(uint16_t channel, uint8_t vfo, const ChannelScanDisplayInfo_t *info)
 {
     const unsigned band = (unsigned)(channel - FREQ_CHANNEL_FIRST);
 
@@ -952,7 +952,7 @@ void port_codeplug_freq_set(uint16_t channel, uint8_t vfo, const ChannelScanDisp
     cp_freq_pack(info, cp_freq[band][vfo]);
 }
 
-void port_codeplug_freq_snapshot(uint8_t *dest, size_t size)
+void codeplug_freq_snapshot(uint8_t *dest, size_t size)
 {
     if (dest == 0 || size < sizeof cp_freq)
         return;
@@ -960,7 +960,7 @@ void port_codeplug_freq_snapshot(uint8_t *dest, size_t size)
     memcpy(dest, cp_freq, sizeof cp_freq);
 }
 
-bool port_codeplug_freq_restore(const uint8_t *src, size_t size)
+bool codeplug_freq_restore(const uint8_t *src, size_t size)
 {
     unsigned band;
     unsigned vfo;
@@ -989,7 +989,7 @@ bool port_codeplug_freq_restore(const uint8_t *src, size_t size)
  * The stock's shared settings
  * ------------------------------------------------------------------------- */
 
-void port_codeplug_shared_settings(void)
+void codeplug_shared_settings(void)
 {
     /* Not mapped yet: docs/ra89r_codeplug.md records what the block contains and
      * which of it the K1 has an equivalent for.  Until then the port's own

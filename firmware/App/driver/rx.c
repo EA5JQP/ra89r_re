@@ -95,7 +95,7 @@ uint32_t rx_rx_frequency(void)
     return s_freq_10hz;
 }
 
-/* The app loop's receive service, moved here from the old port_gui shim.
+/* The app loop's receive service, moved here from the old GUI shim.
  *
  * It polls the squelch, retunes when the K1's selected VFO frequency moves
  * (this is the only place that tracks it, so the configured RX frequency stays

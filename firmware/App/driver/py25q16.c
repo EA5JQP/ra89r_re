@@ -26,10 +26,10 @@
 #include "driver/py25q16.h"
 #include "settings.h"
 
-#define PORT_BLOB_ADDR      0x1FF000u
-#define PORT_TEST_ADDR      0x1FE000u
-#define PORT_BLOB_MAGIC     0x52393852u   /* "R89R" */
-#define PORT_BLOB_VERSION   2u
+#define BLOB_ADDR      0x1FF000u
+#define TEST_ADDR      0x1FE000u
+#define BLOB_MAGIC     0x52393852u   /* "R89R" */
+#define BLOB_VERSION   2u
 
 typedef struct {
     uint32_t magic;
@@ -40,12 +40,12 @@ typedef struct {
     uint32_t sum;                           /* additive checksum of settings */
     uint32_t extra_sum;                     /* and of extra[0..extra_size) */
     EEPROM_Config_t settings;
-    uint8_t extra[PORT_STORAGE_EXTRA_MAX];
-} port_blob_t;
+    uint8_t extra[STORAGE_EXTRA_MAX];
+} blob_t;
 
 /* The payload in RAM: what a load produced, and what the next save writes.
  * Kept outside the blob so saving the settings does not have to understand it. */
-static uint8_t blob_extra[PORT_STORAGE_EXTRA_MAX];
+static uint8_t blob_extra[STORAGE_EXTRA_MAX];
 static uint16_t blob_extra_size;
 
 static uint32_t blob_sum(const void *data, uint32_t size)
@@ -59,9 +59,9 @@ static uint32_t blob_sum(const void *data, uint32_t size)
     return sum;
 }
 
-bool port_storage_set_extra(const void *data, uint32_t size)
+bool storage_set_extra(const void *data, uint32_t size)
 {
-    if (data == 0 || size > PORT_STORAGE_EXTRA_MAX)
+    if (data == 0 || size > STORAGE_EXTRA_MAX)
         return false;
 
     memset(blob_extra, 0, sizeof blob_extra);
@@ -70,7 +70,7 @@ bool port_storage_set_extra(const void *data, uint32_t size)
     return true;
 }
 
-bool port_storage_get_extra(void *data, uint32_t size)
+bool storage_get_extra(void *data, uint32_t size)
 {
     if (data == 0 || size > blob_extra_size)
         return false;
@@ -108,7 +108,7 @@ void PY25Q16_WriteBuffer(uint32_t Address, const void *pBuffer, uint32_t Size, b
 
     (void)Append;   /* the port's regions are direct-addressed, not journaled */
 
-    if (src == 0 || Size == 0u || !port_storage_writable(Address, Size))
+    if (src == 0 || Size == 0u || !storage_writable(Address, Size))
         return;     /* the stock's regions are read-only (docs/ra89r_port.md) */
 
     /* Read-modify-write the sector(s): the K1 updates a few bytes at a time and
@@ -148,7 +148,7 @@ void PY25Q16_InvalidateCache(void)
  * The port's settings blob.
  * ------------------------------------------------------------------------- */
 
-uint32_t port_storage_size(void)
+uint32_t storage_size(void)
 {
     uint32_t jedec = 0;
 
@@ -156,29 +156,29 @@ uint32_t port_storage_size(void)
     return spi_flash_size(jedec);
 }
 
-bool port_storage_id(uint16_t *man_dev, uint32_t *jedec)
+bool storage_id(uint16_t *man_dev, uint32_t *jedec)
 {
     return spi_flash_id(man_dev, jedec);
 }
 
-void port_storage_init(void)
+void storage_init(void)
 {
     spi_flash_init();
 }
 
 /* Returns true when the blob was there, valid and loaded into gEeprom; false
  * leaves gEeprom as the caller set it (each screen then shows its default). */
-bool port_storage_load_settings(void)
+bool storage_load_settings(void)
 {
-    port_blob_t blob;
+    blob_t blob;
 
     memset(&blob, 0, sizeof blob);
-    spi_flash_read(PORT_BLOB_ADDR, (uint8_t *)&blob, sizeof blob);
+    spi_flash_read(BLOB_ADDR, (uint8_t *)&blob, sizeof blob);
 
-    if (blob.magic != PORT_BLOB_MAGIC ||
-        blob.version != PORT_BLOB_VERSION ||
+    if (blob.magic != BLOB_MAGIC ||
+        blob.version != BLOB_VERSION ||
         blob.size != (uint16_t)sizeof(EEPROM_Config_t) ||
-        blob.extra_size > PORT_STORAGE_EXTRA_MAX)
+        blob.extra_size > STORAGE_EXTRA_MAX)
         return false;
     if (blob.sum != blob_sum(&blob.settings, sizeof blob.settings))
         return false;
@@ -196,13 +196,13 @@ bool port_storage_load_settings(void)
     return true;
 }
 
-bool port_storage_save_settings(void)
+bool storage_save_settings(void)
 {
-    port_blob_t blob;
+    blob_t blob;
 
     memset(&blob, 0, sizeof blob);
-    blob.magic = PORT_BLOB_MAGIC;
-    blob.version = PORT_BLOB_VERSION;
+    blob.magic = BLOB_MAGIC;
+    blob.version = BLOB_VERSION;
     blob.size = (uint16_t)sizeof(EEPROM_Config_t);
     blob.extra_size = blob_extra_size;
     blob.settings = gEeprom;
@@ -210,17 +210,17 @@ bool port_storage_save_settings(void)
     memcpy(blob.extra, blob_extra, sizeof blob_extra);
     blob.extra_sum = blob_sum(blob.extra, blob.extra_size);
 
-    spi_flash_sector_erase(PORT_BLOB_ADDR);
-    spi_flash_program(PORT_BLOB_ADDR, (const uint8_t *)&blob, sizeof blob);
+    spi_flash_sector_erase(BLOB_ADDR);
+    spi_flash_program(BLOB_ADDR, (const uint8_t *)&blob, sizeof blob);
 
     /* Read it back: a program that did not take is the failure this has to
      * report, not a return code. */
     {
-        port_blob_t check;
+        blob_t check;
 
         memset(&check, 0, sizeof check);
-        spi_flash_read(PORT_BLOB_ADDR, (uint8_t *)&check, sizeof check);
-        return check.magic == PORT_BLOB_MAGIC && check.sum == blob.sum &&
+        spi_flash_read(BLOB_ADDR, (uint8_t *)&check, sizeof check);
+        return check.magic == BLOB_MAGIC && check.sum == blob.sum &&
                check.extra_sum == blob.extra_sum;
     }
 }
@@ -229,7 +229,7 @@ bool port_storage_save_settings(void)
  * scratch sector, program a pattern, read it back.  Returns true when every byte
  * came back, which is the first thing to run on a radio whose write path has
  * never been exercised. */
-bool port_storage_write_test(uint32_t *bad_offset)
+bool storage_write_test(uint32_t *bad_offset)
 {
     uint8_t pattern[256];
     uint8_t readback[256];
@@ -238,15 +238,15 @@ bool port_storage_write_test(uint32_t *bad_offset)
     for (i = 0; i < sizeof pattern; i++)
         pattern[i] = (uint8_t)(0xA5u ^ i);
 
-    spi_flash_sector_erase(PORT_TEST_ADDR);
-    spi_flash_program(PORT_TEST_ADDR, pattern, sizeof pattern);
+    spi_flash_sector_erase(TEST_ADDR);
+    spi_flash_program(TEST_ADDR, pattern, sizeof pattern);
     memset(readback, 0, sizeof readback);
-    spi_flash_read(PORT_TEST_ADDR, readback, sizeof readback);
+    spi_flash_read(TEST_ADDR, readback, sizeof readback);
 
     for (i = 0; i < sizeof pattern; i++) {
         if (readback[i] != pattern[i]) {
             if (bad_offset != 0)
-                *bad_offset = PORT_TEST_ADDR + i;
+                *bad_offset = TEST_ADDR + i;
             return false;
         }
     }
@@ -264,8 +264,8 @@ bool port_storage_write_test(uint32_t *bad_offset)
 
 /* The two writable regions: the K1 image band and the tail the port's own blob
  * and test scratch live in.  Everything else is the stock's, read-only. */
-#define PORT_TAIL_BASE 0x1FE000u
-#define PORT_TAIL_END  0x200000u
+#define TAIL_BASE 0x1FE000u
+#define TAIL_END  0x200000u
 
 /* The stock calibration window the import reads (docs/ra89r_calibration.md). */
 #define STOCK_POWER_BASE 0x3000u        /* 3 bytes/row: Low, Mid, High */
@@ -292,13 +292,13 @@ bool port_storage_write_test(uint32_t *bad_offset)
 #define CAL_VOX0     0xA8u
 #define CAL_MISC     0xC8u
 
-bool port_storage_writable(uint32_t addr, uint32_t size)
+bool storage_writable(uint32_t addr, uint32_t size)
 {
     if (size == 0u)
         return false;
     if (addr >= K1_IMAGE_BASE && addr + size <= K1_IMAGE_END)
         return true;
-    if (addr >= PORT_TAIL_BASE && addr + size <= PORT_TAIL_END)
+    if (addr >= TAIL_BASE && addr + size <= TAIL_END)
         return true;
     return false;
 }
@@ -377,7 +377,7 @@ static void build_k1_calibration(uint8_t cal[K1_IMAGE_CAL_SIZE])
     cal[CAL_MISC + 7u] = 8u;    /* DAC gain */
 }
 
-void port_storage_import_k1(void)
+void storage_import_k1(void)
 {
     static uint8_t cal[K1_IMAGE_CAL_SIZE];
     const uint8_t magic[4] = { (uint8_t)K1_IMAGE_MAGIC,

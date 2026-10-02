@@ -4,7 +4,7 @@
  * `enable_feature()` helper, i.e. `-DENABLE_X`, which the compiler reads as
  * `ENABLE_X 1`) and its sources use both `#ifdef ENABLE_X` and `#if ENABLE_X`.
  * Keeping that switch in one header, force-included by the build
- * (`-include App/port_features.h`), lets the imported files stay byte-for-byte
+ * (`-include App/k1_features.h`), lets the imported files stay byte-for-byte
  * comparable with upstream instead of growing RA89R-specific #ifdefs.
  *
  * Every macro is defined with a value: `#define ENABLE_X` (empty) makes
@@ -15,8 +15,8 @@
  * a macro that pulls in an array nothing references is harmless, but one that
  * pulls in code with unresolved symbols is not.
  */
-#ifndef APP_PORT_FEATURES_H
-#define APP_PORT_FEATURES_H
+#ifndef APP_K1_FEATURES_H
+#define APP_K1_FEATURES_H
 
 /* The application the port targets: the F4HWN variant of the K1 firmware. */
 #define ENABLE_FEAT_F4HWN 1
@@ -44,7 +44,7 @@
  * selected (this radio's A/B key is EXIT), and it diverts CheckForIncoming()
  * away from the port's polled `g_SquelchLost`.  Dual-watch is an RF behaviour
  * the port has no engine for. */
-#define PORT_TWO_ROW_UI 1
+#define TWO_ROW_UI 1
 
 /* Version strings the K1's menus and boot screen print.  The SysInf screen
  * (ui/menu.c, MENU_VOL) shows AUTHOR_STRING_2 + DISPLAY_VERSION_STRING_2 + the
@@ -63,4 +63,4 @@
 #define SQL_TONE 550
 #define BUILD_COMMIT "port"
 
-#endif /* APP_PORT_FEATURES_H */
+#endif /* APP_K1_FEATURES_H */

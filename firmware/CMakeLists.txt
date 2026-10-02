@@ -109,7 +109,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE PY32F403xD)
 # Feature macros for the imported K1 sources live in one header and are forced
 # into every translation unit, so the imported files stay untouched.
 target_compile_options(${PROJECT_NAME} PRIVATE
-    -include ${CMAKE_CURRENT_SOURCE_DIR}/App/port_features.h)
+    -include ${CMAKE_CURRENT_SOURCE_DIR}/App/k1_features.h)
 
 target_compile_options(${PROJECT_NAME} PRIVATE
     ${MCU_FLAGS} -Wall -Wextra -fdata-sections -ffunction-sections)

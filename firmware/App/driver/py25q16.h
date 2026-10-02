@@ -69,18 +69,18 @@ void PY25Q16_SetBankBase(uint32_t Base);
  * calls above are its interface, so the K1 code that uses them is unchanged.
  * ------------------------------------------------------------------------- */
 
-void     port_storage_init(void);
-uint32_t port_storage_size(void);
-bool     port_storage_id(uint16_t *man_dev, uint32_t *jedec);
+void     storage_init(void);
+uint32_t storage_size(void);
+bool     storage_id(uint16_t *man_dev, uint32_t *jedec);
 
 /* The port's own settings blob (no K1 counterpart): gEeprom and the frequency
  * channels the stock codeplug has no place for. */
-#define PORT_STORAGE_EXTRA_MAX 240u
-bool port_storage_load_settings(void);
-bool port_storage_save_settings(void);
-bool port_storage_set_extra(const void *data, uint32_t size);
-bool port_storage_get_extra(void *data, uint32_t size);
-bool port_storage_write_test(uint32_t *bad_offset);
+#define STORAGE_EXTRA_MAX 240u
+bool storage_load_settings(void);
+bool storage_save_settings(void);
+bool storage_set_extra(const void *data, uint32_t size);
+bool storage_get_extra(void *data, uint32_t size);
+bool storage_write_test(uint32_t *bad_offset);
 
 /* The K1 application's EEPROM image, rebuilt in the RA89R's erased band at the
  * addresses the K1 code already uses (only the channel-record base moves off 0,
@@ -92,7 +92,7 @@ bool port_storage_write_test(uint32_t *bad_offset);
 #define K1_IMAGE_CAL_SIZE  0xD0u
 #define K1_IMAGE_BASE      0x04000u
 #define K1_IMAGE_END       0x20000u
-bool port_storage_writable(uint32_t addr, uint32_t size);
-void port_storage_import_k1(void);
+bool storage_writable(uint32_t addr, uint32_t size);
+void storage_import_k1(void);
 
 #endif

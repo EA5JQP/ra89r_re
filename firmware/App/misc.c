@@ -467,7 +467,7 @@ void MR_LoadChannelAttributesFromFlash(uint16_t channel_id, ChannelAttributes_t*
         return;
     }
 
-    attributes->__val = port_codeplug_attributes(channel_id);
+    attributes->__val = codeplug_attributes(channel_id);
 }
 
 // Save channel attributes to Flash
