@@ -31,7 +31,7 @@ project, the CPS sources) lives outside the workspace (see "Reference inputs").
   been eliminated and how, so it is not re-derived).
 - `docs/ra89r_keypad.md` — the 20-button ADC-ladder key matrix and its F4HWN
   `KEY_Code_e` mapping.
-- `docs/ra89r_beeper.md` — the beeper: TIM4 plus a tone generator, its pin `PA4`.
+- `docs/ra89r_beeper.md` — the beeper: a DAC tone on `PA4`, played by TIM4 + DMA.
 - `docs/ra89r_led.md` — the status LED (a transmit/receive indicator on MCU `PA13`/`PA14`,
   confirmed on the radio) and the backlight (GPIOA pin 5), with the pin searches
   that came up empty -- including the earlier "it is the RF chip's" reading -- and
@@ -157,7 +157,7 @@ cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver tools/test_rf.c \
     App/driver/bk4829.c App/driver/bk4815.c App/driver/bk4819.c \
     App/driver/pa.c tools/host/host_led.c -o /tmp/test_rf && /tmp/test_rf
 
-# the beeper's tone math (the phase step and the sine table) on a PC.  It links
+# the beeper's tone math (the timer reload and the sine table) on a PC.  It links
 # nothing else: driver/beeper.h is device-header free on purpose, so the tone
 # the DAC will play can be checked without a radio.
 cd firmware && gcc -std=c11 -I App -I App/driver tools/test_beeper.c \
@@ -247,11 +247,10 @@ driver/battery            gauge       -- OPEN, unmerged: the bus is silent for u
 driver/eeprom             storage     -- OPEN, unmerged: the external SPI NOR flash
                                          ("EEPROM") reads and dumps; the write test has
                                          not run yet, see docs/ra89r_eeprom.md
-driver/beeper             beeper      -- OPEN, unmerged: the DAC tone (driver/beeper.c,
+driver/beeper             beeper      -- MERGED: the DAC tone (driver/beeper.c,
                                          PA4/DAC_OUT1, TIM4 + DMA1 channel 3), heard
-                                         on the radio as an ISR version; the DMA
-                                         rewrite needs re-hearing before merge, see
-                                         docs/ra89r_beeper.md
+                                         on the radio (the power-on sound and the key
+                                         beeps), see docs/ra89r_beeper.md
 driver/audiocontrol       audio       -- MERGED.  It receives and transmits: the K1
                                          bring-up plus the audio path are audible on
                                          a second radio, the squelch mutes the
@@ -351,7 +350,7 @@ The open features have their own write-ups, and they are the places to start:
 | backlight | `docs/ra89r_led.md` | done: GPIOA pin 5, confirmed on the radio |
 | status LED | `docs/ra89r_led.md` | done: `PA13` red, `PA14` green, active high (measured); `driver/led.c`, 'L' |
 | battery gauge | `docs/ra89r_battery.md` | protocol decoded and implemented; the chip never answers |
-| beeper | `docs/ra89r_beeper.md` | working: `driver/beeper.c`, DAC tone on PA4/`DAC_OUT1` via TIM4 + DMA1 ch3; heard on the radio (ISR version; the DMA rewrite is pending a re-hear) |
+| beeper | `docs/ra89r_beeper.md` | done: `driver/beeper.c`, DAC tone on PA4/`DAC_OUT1` via TIM4 + DMA1 ch3; validated on the radio |
 | EEPROM (SPI NOR) | `docs/ra89r_eeprom.md` | read + full dump validated on the radio; write test pending |
 | RF transceivers | `docs/ra89r_bk4829.md`, `docs/ra89r_bk4815.md`, `docs/ra89r_rfpath.md` | done for the BK4829: ids, all writes, tuning and an RSSI response to a carrier validated on the radio; the BK4815's RF role is still open |
 | transmit / PA | `docs/ra89r_rfpath.md` | done: voice heard on a second radio; `driver/pa.c` + `driver/tx.c`, with the register table in the doc |
@@ -387,8 +386,8 @@ microphone gain -- is now `driver/pa.c` and `driver/tx.c`, with voice heard on a
 second receiver.  The **beeper** works too (`driver/beeper.c`): the stock's DAC
 tone on PA4 = `DAC_OUT1`, played by TIM4 + DMA1 channel 3, with the K1's
 `AUDIO_PlayBeep` routed through it instead of the RF chip's tone generator and
-the amplifier raised around the beep.  Heard on the radio; the DMA rewrite is the
-version to re-hear before merging (`docs/ra89r_beeper.md`).
+the amplifier raised around the beep -- validated on the radio
+(`docs/ra89r_beeper.md`).
 
 ## Firmware / flashing
 
