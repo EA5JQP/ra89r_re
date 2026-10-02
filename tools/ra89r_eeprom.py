@@ -73,19 +73,32 @@ def read_until(ser, needle, timeout):
 
 
 def read_match(ser, pattern, timeout):
-    """Read until `pattern` matches the buffer.  Returns (buffer, match)."""
+    """Read until `pattern` matches the buffer, or the deadline passes.
+
+    The deadline is absolute: incoming bytes (heartbeats, stray echoes) must not
+    extend it, or a missed verdict would wait forever."""
     buf = bytearray()
     deadline = time.time() + timeout
     while True:
         match = re.search(pattern, bytes(buf))
         if match:
             return bytes(buf), match
+        if time.time() > deadline:
+            return bytes(buf), None
         chunk = ser.read(4096)
         if chunk:
             buf += chunk
-            deadline = time.time() + timeout
-        elif time.time() > deadline:
-            return bytes(buf), None
+
+
+def read_byte(ser, timeout):
+    """Read one byte, waiting up to `timeout` (the port timeout is only 0.2 s,
+    and a sector erase can take longer than that)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        b = ser.read(1)
+        if b:
+            return b
+    return b""
 
 
 def chip_size(ser, args):
@@ -224,17 +237,19 @@ def cmd_restore(ser, args):
     # One 4 KB sector at a time; the firmware acks each with '.' after erasing
     # and programming it.  That ack is the flow control: the UART has none, and
     # an erase takes tens of milliseconds, so without it the firmware would lose
-    # the bytes the host sends while it is busy with the flash.
+    # the bytes the host sends while it is busy with the flash.  The ack can take
+    # longer than the port's 0.2 s read timeout, hence read_byte().
+    started = time.time()
     for off in range(0, size, 4096):
         ser.write(data[off:off + 4096])
-        ack = ser.read(1)
+        ack = read_byte(ser, 60.0)
         if ack != b".":
             if args.progress:
                 sys.stderr.write("\n")
             sys.exit(f"no sector ack at {off:#x}: {ack!r}")
         if args.progress:
             done = off + 4096
-            if done % (256 * 1024) == 0 or done == size:
+            if done % (64 * 1024) == 0 or done == size:
                 sys.stderr.write(f"\r  restore {done * 100 // size:3d}%  "
                                  f"{done}/{size}")
                 sys.stderr.flush()
@@ -252,7 +267,8 @@ def cmd_restore(ser, args):
         sys.exit(f"restore failed: firmware says {verdict.decode()} "
                  f"0x{got:08X}, host sent 0x{checksum:08X}")
 
-    print(f"wrote {size} bytes (checksum 0x{checksum:08X} ok)")
+    print(f"wrote {size} bytes (checksum 0x{checksum:08X} ok) in "
+          f"{time.time() - started:.0f}s")
 
     if args.verify:
         readback = _read_dump(ser, args)
