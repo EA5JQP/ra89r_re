@@ -410,9 +410,10 @@ void SETTINGS_FetchChannelName(char *s, const uint16_t channel)
 }
 
 /* ---------------------------------------------------------------------------
- * Writing.  The stock's regions stay untouched; the port's own state goes to
- * its blob.  A channel the user edits is a write into the stock's codeplug and
- * is not implemented yet (docs/ra89r_codeplug.md, "Writing").
+ * Writing.  The stock's regions stay untouched: an edited channel, and a
+ * frequency channel, are written into the port's own K1 image (driver/py25q16.c),
+ * and the port's settings state goes to its blob.  The stock's codeplug,
+ * calibration window and signature are read-only.
  * ------------------------------------------------------------------------- */
 
 /* A deferred save has been asked for (see SETTINGS_SaveVfoIndices). */
