@@ -63,16 +63,28 @@ void BK4819_SetRxAudioGain(void) { }
 /* Keypad: the RA89R reads an ADC ladder, so the host stands in with a key the
  * preview sets by hand -- that is how the port's key loop (port_gui.c) is
  * exercised without a radio. */
-static KEY_Code_t s_host_key = KEY_INVALID;
+static KEY_Code_t s_host_key  = KEY_INVALID;
+static bool       s_host_ptt2 = false;
 
 void host_set_key(KEY_Code_t key)
 {
     s_host_key = key;
 }
 
+void host_set_ptt2(bool pressed)
+{
+    s_host_ptt2 = pressed;
+}
+
 KEY_Code_t keypad_poll(void)
 {
     return s_host_key;
+}
+
+/* PB9: the level as read, low = pressed (see driver/keypad.c). */
+bool keypad_ptt2_level(void)
+{
+    return !s_host_ptt2;
 }
 
 void BK4819_DisableDTMF(void) { }

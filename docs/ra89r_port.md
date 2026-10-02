@@ -344,6 +344,13 @@ here are the port's todo list:
   cancel (no digits typed, not scanning) calls `COMMON_SwitchVFOs()`, the K1's
   F + 2 action.  Recorded in NOTICE.
 
+  And the K1's **boot-time key mode** (`helper/boot.c`): holding **PTT + SIDE1**
+  at power-on (then releasing) opens the hidden menu -- `gF_LOCK = true`, the
+  cursor on `FIRST_HIDDEN_MENU_ITEM`.  The K1 reads PTT through
+  `GPIO_IsPttPressed()`, which the port keeps false (its PTT runs through
+  `driver/tx.c`), so the port reads PB9 via `keypad_ptt2_level()` instead; only
+  the F-lock mode is ported (air-copy/rescue-ops/multiboot are not enabled).
+
 * **Stage 3d -- the visible gaps (unvalidated on the radio).**  `ui/battery.c`
   and `ui/scanner.c` come in verbatim (the battery widget and the scanner screen
   were stubs); `BK4819_ToggleGpioOut` mirrors the K1's two status-LED chip

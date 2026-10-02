@@ -75,6 +75,7 @@ set(APP_SOURCES
     App/dcs.c
     App/frequencies.c
     App/helper/battery.c
+    App/helper/boot.c
     App/driver/system.c
     App/app/app.c
     App/app/main.c

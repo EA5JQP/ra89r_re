@@ -177,7 +177,7 @@ cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver \
     App/app/scanner.c App/radio.c App/functions.c App/audio.c App/misc.c \
     App/port_state.c App/port_storage.c App/port_codeplug.c App/port_gui.c \
     App/port_board.c App/settings.c App/version.c App/dcs.c App/frequencies.c \
-    App/helper/battery.c App/driver/system.c App/font.c App/bitmaps.c \
+    App/helper/battery.c App/helper/boot.c App/driver/system.c App/font.c App/bitmaps.c \
     App/driver/st7565.c App/driver/keyboard.c App/driver/backlight.c \
     -o /tmp/preview_k1 && /tmp/preview_k1
 # (tools/host is a test double for the device header: CMSIS's __DSB() is ARM

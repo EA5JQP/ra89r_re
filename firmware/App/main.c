@@ -35,6 +35,7 @@
 #include "app/app.h"
 #include "app/common.h"
 #include "app/scanner.h"
+#include "helper/boot.h"
 #include "misc.h"
 #include "port_gui.h"
 #include "port_storage.h"
@@ -1077,12 +1078,31 @@ int main(void)
                 (unsigned)gEeprom.BACKLIGHT_MAX,
                 BACKLIGHT_DutyOnCount());
     port_gui_init();
-    /* The K1's main() builds the menu view once, before its loop: the menu key
-     * only asks for DISPLAY_MENU, so without this the menu screen would have an
-     * empty list. */
-    UI_MENU_BuildView();
-    port_gui_screen(DISPLAY_MAIN);   /* straight into the VFO (console '4' has the
-                                      * K1 boot screen if it is wanted) */
+
+    /* The K1's boot-time key mode (helper/boot.c): PTT + SIDE1 held at power-on
+     * opens the hidden menu.  The K1 sets gF_LOCK *before* building the view, so
+     * the hidden items are in it, then lets BOOT_ProcessMode() pick the screen
+     * (the menu for F-lock, the VFO otherwise). */
+    {
+        const BOOT_Mode_t mode = BOOT_GetMode();
+
+        if (mode == BOOT_MODE_F_LOCK) {
+            gF_LOCK = true;
+            gEeprom.KEY_LOCK = 0;
+            SETTINGS_SaveSettings();
+            gMenuCursor = UI_MENU_GetMenuIdx(FIRST_HIDDEN_MENU_ITEM);
+            gSubMenuSelection = gSetting_F_LOCK;
+            uart_puts("boot: PTT+SIDE1 held -- the hidden menu is open\n");
+        }
+
+        /* The K1's main() builds the menu view once, before its loop: the menu
+         * key only asks for DISPLAY_MENU, so without this the menu screen would
+         * have an empty list. */
+        UI_MENU_BuildView();
+        BOOT_ProcessMode(mode);      /* F-lock -> the menu, else straight into
+                                      * the VFO (console '4' has the K1 boot
+                                      * screen if it is wanted) */
+    }
     /* Paint the status line once at boot, as the K1's Main() does with
      * gUpdateStatus = true: gUpdateDisplay only draws pages 1..7, so without
      * this the top bar keeps whatever the panel powered up with. */
