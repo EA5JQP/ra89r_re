@@ -69,16 +69,16 @@ class Sim(object):
         return sum(data) & 0xFFFFFFFF
 
     def cmd_report(self, out):
-        out.write(b"\neeprom: 0x90 id 0x8514 (the stock looks for the "
-                  b"Winbond 0xEF16), 0x9F jedec 0x852015\n")
+        out.write(b"\r\neeprom: 0x90 id 0x8514 (the stock looks for the "
+                  b"Winbond 0xEF16), 0x9F jedec 0x852015\r\n")
         out.write(("eeprom: %u bytes (%u KB); 'E' dumps the whole chip as "
-                   "binary\n" % (self.size, self.size // 1024)).encode())
+                   "binary\r\n" % (self.size, self.size // 1024)).encode())
 
     def cmd_dump(self, out):
         self.dumps += 1
-        out.write(("\n" + HEADER.decode() + "%u\n" % self.size).encode())
+        out.write(("\r\n" + HEADER.decode() + "%u\r\n" % self.size).encode())
         out.write(bytes(self.chip))
-        out.write(("\n" + END.decode() + "%08X\n"
+        out.write(("\r\n" + END.decode() + "%08X\r\n"
                    % self.checksum(self.chip)).encode())
         self.log("dumped %d bytes" % self.size)
 
@@ -91,7 +91,7 @@ class Sim(object):
                 sector = base
                 break
         if sector is None:
-            out.write(b"\nEEPROM WRITETEST FAIL no empty sector\n")
+            out.write(b"\r\nEEPROM WRITETEST FAIL no empty sector\r\n")
             return
         # read, write, read back, restore to 0xFF
         pattern = bytes(((i * 7 + 0x11) & 0xFF) for i in range(0x1000))
@@ -99,8 +99,9 @@ class Sim(object):
         ok = bytes(self.chip[sector:sector + 0x1000]) == pattern
         self.chip[sector:sector + 0x1000] = b"\xFF" * 0x1000
         ok = ok and all(b == 0xFF for b in self.chip[sector:sector + 0x1000])
-        out.write(("\neeprom: write test on empty sector %#08x\n" % sector).encode())
-        out.write(b"EEPROM WRITETEST %s\n" % (b"PASS" if ok else b"FAIL"))
+        out.write(("\r\neeprom: write test on empty sector %#08x\r\n"
+                   % sector).encode())
+        out.write(b"EEPROM WRITETEST %s\r\n" % (b"PASS" if ok else b"FAIL"))
         self.log("write test at %#x -> %s" % (sector, "PASS" if ok else "FAIL"))
 
     def run(self, fd):
@@ -196,13 +197,13 @@ class Sim(object):
             size = int(parts[1])
             declared = int(parts[2], 16)
         except (IndexError, ValueError):
-            out.write(b"\nEEPROM RESTORE ERR bad-header\n")
+            out.write(b"\r\nEEPROM RESTORE ERR bad-header\r\n")
             return False
         if size != self.size:
-            out.write(("\nEEPROM RESTORE ERR size %u, chip is %u\n"
+            out.write(("\r\nEEPROM RESTORE ERR size %u, chip is %u\r\n"
                        % (size, self.size)).encode())
             return False
-        out.write(("\n" + RESTORE.decode() + "%u\n" % size).encode())
+        out.write(("\r\n" + RESTORE.decode() + "%u\r\n" % size).encode())
         self._declared = declared
         self.log("restore started, %d bytes" % size)
         return True
@@ -210,7 +211,7 @@ class Sim(object):
     def _finish_restore(self, sum_received, out):
         self.restores += 1
         verdict = b"OK" if sum_received == self._declared else b"FAIL"
-        out.write(("\n" + RESTORE.decode() + verdict.decode() + " %08X\n"
+        out.write(("\r\n" + RESTORE.decode() + verdict.decode() + " %08X\r\n"
                    % sum_received).encode())
         self.log("restore finished: %s (declared %08X, got %08X)"
                  % (verdict.decode(), self._declared, sum_received))

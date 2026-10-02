@@ -225,7 +225,7 @@ def cmd_restore(ser, args):
 
     ser.write(f" {size} {checksum:08X}\n".encode())
 
-    header, match = read_match(ser, rb"EEPROM RESTORE ([^\n]*)\n", args.timeout)
+    header, match = read_match(ser, rb"EEPROM RESTORE ([^\r\n]*)\r?\n", args.timeout)
     if not match:
         sys.exit(f"no restore header from the firmware: {header!r}")
     reply = match.group(1)
@@ -256,7 +256,7 @@ def cmd_restore(ser, args):
     if args.progress:
         sys.stderr.write("\r  100%  done            \n")
 
-    tail, match = read_match(ser, rb"EEPROM RESTORE (OK|FAIL) ([0-9A-Fa-f]{8})\n",
+    tail, match = read_match(ser, rb"EEPROM RESTORE (OK|FAIL) ([0-9A-Fa-f]{8})",
                              max(args.timeout, 30.0))
     if not match:
         sys.exit(f"restore ended without a verdict: {tail!r}")
