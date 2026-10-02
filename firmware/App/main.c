@@ -1044,6 +1044,18 @@ int main(void)
         uart_puts("keypad: WARNING -- the ADC/DMA scan is NOT running; the key "
                   "monitor would report zeros for every line\n");
 
+    /* The K1's boot-time key mode (helper/boot.c): PTT + SIDE1 held at power-on
+     * opens the hidden menu.  Read it *now*, while the keys are still held: the
+     * K1 reads it right after its settings load, but the port's panel lights and
+     * backlight fade run later in the boot, and a user who releases the keys when
+     * the screen appears would miss a check placed at the end. */
+    const bool       boot_ptt  = !keypad_ptt2_level();
+    const KEY_Code_t boot_key  = keypad_poll();
+    const BOOT_Mode_t boot_mode = BOOT_GetMode();
+
+    uart_printf("boot: PTT %d, key %s -> mode %u\n",
+                boot_ptt ? 1 : 0, keypad_name(boot_key), (unsigned)boot_mode);
+
     uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");    lcd_init();
     uart_puts("lcd: init done\n");
 
@@ -1079,14 +1091,11 @@ int main(void)
                 BACKLIGHT_DutyOnCount());
     port_gui_init();
 
-    /* The K1's boot-time key mode (helper/boot.c): PTT + SIDE1 held at power-on
-     * opens the hidden menu.  The K1 sets gF_LOCK *before* building the view, so
-     * the hidden items are in it, then lets BOOT_ProcessMode() pick the screen
-     * (the menu for F-lock, the VFO otherwise). */
+    /* Apply the boot mode read earlier.  The K1 sets gF_LOCK *before* building
+     * the view, so the hidden items are in it, then lets BOOT_ProcessMode() pick
+     * the screen (the menu for F-lock, the VFO otherwise). */
     {
-        const BOOT_Mode_t mode = BOOT_GetMode();
-
-        if (mode == BOOT_MODE_F_LOCK) {
+        if (boot_mode == BOOT_MODE_F_LOCK) {
             gF_LOCK = true;
             gEeprom.KEY_LOCK = 0;
             SETTINGS_SaveSettings();
@@ -1099,7 +1108,7 @@ int main(void)
          * key only asks for DISPLAY_MENU, so without this the menu screen would
          * have an empty list. */
         UI_MENU_BuildView();
-        BOOT_ProcessMode(mode);      /* F-lock -> the menu, else straight into
+        BOOT_ProcessMode(boot_mode); /* F-lock -> the menu, else straight into
                                       * the VFO (console '4' has the K1 boot
                                       * screen if it is wanted) */
     }
