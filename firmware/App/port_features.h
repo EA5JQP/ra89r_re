@@ -46,15 +46,17 @@
  * the port has no engine for. */
 #define PORT_TWO_ROW_UI 1
 
-/* Version strings the K1's menus and boot screen print.  The RA89R port is its
- * own build, so these say so rather than impersonating the K1 release. */
-#define AUTHOR_STRING "RA89R port"
-#define AUTHOR_STRING_1 "RA89R port"
-#define AUTHOR_STRING_2 "EA5JQP"
+/* Version strings the K1's menus and boot screen print.  The SysInf screen
+ * (ui/menu.c, MENU_VOL) shows AUTHOR_STRING_2 + DISPLAY_VERSION_STRING_2 + the
+ * edition, and the K1's identity there is kept -- only the version is the
+ * port's, so the screen matches the K1's apart from the version. */
+#define AUTHOR_STRING "F4HWN"
+#define AUTHOR_STRING_1 "F4HWN"
+#define AUTHOR_STRING_2 "F4HWN"
 #define VERSION_STRING_1 "ra89r_fw"
 #define VERSION_STRING_2 "0.3"
 #define DISPLAY_VERSION_STRING_2 "0.3"
-#define EDITION_STRING "port"
+#define EDITION_STRING "Custom"
 #define ALERT_TOT 10
 
 /* The CTSS/squelch tone the K1's CMake sets (App/CMakeLists.txt: SQL_TONE=550). */

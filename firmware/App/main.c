@@ -1112,6 +1112,23 @@ int main(void)
                                       * the VFO (console '4' has the K1 boot
                                       * screen if it is wanted) */
     }
+
+    /* The K1's power-on display (PonMSG).  When the mode calls for a message the
+     * K1 shows the welcome screen for ~2.5 s, or until a key; the port used to
+     * skip it entirely, so the PonMSG setting did nothing. */
+    if (gEeprom.POWER_ON_DISPLAY_MODE != POWER_ON_DISPLAY_MODE_NONE &&
+        gEeprom.POWER_ON_DISPLAY_MODE != POWER_ON_DISPLAY_MODE_SOUND) {
+        unsigned t;
+
+        port_gui_welcome();
+        for (t = 0; t < 250u; t++) {
+            if (keypad_poll() != KEY_INVALID)
+                break;
+            systick_delay_ms(10);
+        }
+        gUpdateDisplay = true;
+    }
+
     /* Paint the status line once at boot, as the K1's Main() does with
      * gUpdateStatus = true: gUpdateDisplay only draws pages 1..7, so without
      * this the top bar keeps whatever the panel powered up with. */

@@ -87,6 +87,11 @@ bool keypad_ptt2_level(void)
     return !s_host_ptt2;
 }
 
+/* `helper/boot.c` prints what it sampled and names the keys; the preview links
+ * neither the UART nor the real keypad reader. */
+const char *keypad_name(KEY_Code_t key) { (void)key; return "?"; }
+void uart_printf(const char *fmt, ...) { (void)fmt; }
+
 void BK4819_DisableDTMF(void) { }
 
 /* RF reads the VFO screen makes (driver/bk4819.c + the codeplug's calibration

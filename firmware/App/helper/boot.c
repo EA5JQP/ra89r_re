@@ -33,6 +33,7 @@
 #include "driver/keyboard.h"
 #include "driver/keypad.h"
 #include "driver/system.h"
+#include "driver/uart.h"
 #include "ui/ui.h"
 
 BOOT_Mode_t BOOT_GetMode(void)
@@ -40,6 +41,11 @@ BOOT_Mode_t BOOT_GetMode(void)
     unsigned int i;
     KEY_Code_t   Keys[2];
     bool         PttPressed[2];
+
+    /* Port: the port's keypad is the ADC/DMA scan, not a matrix -- give it a few
+     * rounds after keypad_init() so every line reads a key before the first
+     * sample (the K1's matrix scan needs no such settle). */
+    SYSTEM_DelayMs(50);
 
     /* Two samples, 20 ms apart, as the K1: PTT has to be held for both, and the
      * same key has to be down for both. */
@@ -49,6 +55,10 @@ BOOT_Mode_t BOOT_GetMode(void)
         Keys[i]       = keypad_poll();
         SYSTEM_DelayMs(20);
     }
+
+    uart_printf("boot: PTT %d/%d, key %s/%s\n",
+                PttPressed[0] ? 1 : 0, PttPressed[1] ? 1 : 0,
+                keypad_name(Keys[0]), keypad_name(Keys[1]));
 
     if (!PttPressed[0] || !PttPressed[1])
         return BOOT_MODE_NORMAL;
