@@ -964,7 +964,7 @@ void UI_DisplayMenu(void)
     switch (m)
     {
         case MENU_SQL:
-            sprintf(String, "%d", gSubMenuSelection);
+            sprintf(String, "%d", (int)gSubMenuSelection);
             break;
 
         case MENU_MIC:
@@ -1030,7 +1030,7 @@ void UI_DisplayMenu(void)
         case MENU_OFFSET:
             if (!gIsInSubMenu || gInputBoxIndex == 0)
             {
-                sprintf(String, "%3d.%05u", gSubMenuSelection / 100000, abs(gSubMenuSelection) % 100000);
+                sprintf(String, "%3d.%05u", (int)(gSubMenuSelection / 100000), abs(gSubMenuSelection) % 100000);
             }
             else
             {
@@ -1062,7 +1062,7 @@ void UI_DisplayMenu(void)
 
         case MENU_VOX:
             #ifdef ENABLE_VOX
-                sprintf(String, gSubMenuSelection == 0 ? gSubMenu_OFF_ON[0] : "%u", gSubMenuSelection);
+                sprintf(String, gSubMenuSelection == 0 ? gSubMenu_OFF_ON[0] : "%u", (unsigned)gSubMenuSelection);
             #else
                 strcpy(String, gSubMenu_NA);
             #endif
@@ -1075,7 +1075,7 @@ void UI_DisplayMenu(void)
             }
             else if(gSubMenuSelection < 61)
             {
-                sprintf(String, "%02dm:%02ds", (((gSubMenuSelection) * 5) / 60), (((gSubMenuSelection) * 5) % 60));
+                sprintf(String, "%02dm:%02ds", (int)(((gSubMenuSelection) * 5) / 60), (int)(((gSubMenuSelection) * 5) % 60));
                 //#if !defined(ENABLE_SPECTRUM) || !defined(ENABLE_FMRADIO)
                 //ST7565_Gauge(4, 1, 60, gSubMenuSelection);
                 gaugeLine = 4;
@@ -1095,7 +1095,7 @@ void UI_DisplayMenu(void)
 
         case MENU_ABR_MIN:
         case MENU_ABR_MAX:
-            sprintf(String, "%d", gSubMenuSelection);
+            sprintf(String, "%d", (int)gSubMenuSelection);
             if(gIsInSubMenu)
                 BACKLIGHT_SetBrightness(gSubMenuSelection);
             // Obsolete ???
@@ -1112,7 +1112,7 @@ void UI_DisplayMenu(void)
                 strcpy(String, gSubMenu_OFF_ON[0]);
             else
             {
-                sprintf(String, "%02dm:%02ds", ((gSubMenuSelection * 15) / 60), ((gSubMenuSelection * 15) % 60));
+                sprintf(String, "%02dm:%02ds", (int)((gSubMenuSelection * 15) / 60), (int)((gSubMenuSelection * 15) % 60));
                 //#if !defined(ENABLE_SPECTRUM) || !defined(ENABLE_FMRADIO)
                 //ST7565_Gauge(4, 1, 40, gSubMenuSelection);
                 gaugeLine = 4;
@@ -1182,7 +1182,7 @@ void UI_DisplayMenu(void)
                 if (valid && !gAskForConfirmation)
                 {   // show the frequency so that the user knows the channels frequency
                     const uint32_t frequency = SETTINGS_FetchChannelFrequency(gSubMenuSelection);
-                    sprintf(String, "%u.%05u", frequency / 100000, frequency % 100000);
+                    sprintf(String, "%u.%05u", (unsigned)(frequency / 100000), (unsigned)(frequency % 100000));
                     UI_PrintString(String, menu_item_x1, menu_item_x2, 5, 8);
                 }
 
@@ -1243,7 +1243,7 @@ void UI_DisplayMenu(void)
 
                 if (!gAskForConfirmation)
                 {   // show the frequency so that the user knows the channels frequency
-                    sprintf(String, "%u.%05u", frequency / 100000, frequency % 100000);
+                    sprintf(String, "%u.%05u", (unsigned)(frequency / 100000), (unsigned)(frequency % 100000));
                     UI_PrintString(String, menu_item_x1, menu_item_x2, 5, 8);
                 }
             }
@@ -1253,7 +1253,7 @@ void UI_DisplayMenu(void)
         }
 
         case MENU_SAVE:
-            sprintf(String, gSubMenuSelection == 0 ? gSubMenu_OFF_ON[0] : "1:%u", gSubMenuSelection);
+            sprintf(String, gSubMenuSelection == 0 ? gSubMenu_OFF_ON[0] : "1:%u", (unsigned)gSubMenuSelection);
             break;
 
         case MENU_TDR:
@@ -1261,7 +1261,7 @@ void UI_DisplayMenu(void)
             break;
 
         case MENU_TOT:
-            sprintf(String, "%02dm:%02ds", (((gSubMenuSelection + 1) * 5) / 60), (((gSubMenuSelection + 1) * 5) % 60));
+            sprintf(String, "%02dm:%02ds", (int)(((gSubMenuSelection + 1) * 5) / 60), (int)(((gSubMenuSelection + 1) * 5) % 60));
             //#if !defined(ENABLE_SPECTRUM) || !defined(ENABLE_FMRADIO)
             //ST7565_Gauge(4, 5, 179, gSubMenuSelection);
             gaugeLine = 4;
@@ -1283,7 +1283,7 @@ void UI_DisplayMenu(void)
             }
             else if(gSubMenuSelection < 81)
             {
-                sprintf(String, "CARRIER\n%02ds:%03dms", ((gSubMenuSelection * 250) / 1000), ((gSubMenuSelection * 250) % 1000));
+                sprintf(String, "CARRIER\n%02ds:%03dms", (int)((gSubMenuSelection * 250) / 1000), (int)((gSubMenuSelection * 250) % 1000));
                 //#if !defined(ENABLE_SPECTRUM) || !defined(ENABLE_FMRADIO)
                 //ST7565_Gauge(5, 1, 80, gSubMenuSelection);
                 gaugeLine = 5;
@@ -1293,7 +1293,7 @@ void UI_DisplayMenu(void)
             }
             else
             {
-                sprintf(String, "TIMEOUT\n%02dm:%02ds", (((gSubMenuSelection - 80) * 5) / 60), (((gSubMenuSelection - 80) * 5) % 60));
+                sprintf(String, "TIMEOUT\n%02dm:%02ds", (int)(((gSubMenuSelection - 80) * 5) / 60), (int)(((gSubMenuSelection - 80) * 5) % 60));
                 //#if !defined(ENABLE_SPECTRUM) || !defined(ENABLE_FMRADIO)
                 //ST7565_Gauge(5, 80, 104, gSubMenuSelection);
                 gaugeLine = 5;
@@ -1308,7 +1308,7 @@ void UI_DisplayMenu(void)
             break;
 
         case MENU_RP_STE:
-            sprintf(String, gSubMenuSelection == 0 ? gSubMenu_OFF_ON[0] : "%u*100ms", gSubMenuSelection);
+            sprintf(String, gSubMenuSelection == 0 ? gSubMenu_OFF_ON[0] : "%u*100ms", (unsigned)gSubMenuSelection);
             break;
 
         case MENU_LIST_CH:
@@ -1322,9 +1322,9 @@ void UI_DisplayMenu(void)
                 
                 // If first character is empty/invalid, display "N/A"
                 if (IsEmptyName(name, sizeof(gListName[0])))
-                    sprintf(String, "%02u", gSubMenuSelection);
+                    sprintf(String, "%02u", (unsigned)gSubMenuSelection);
                 else
-                    sprintf(String, "%02u (%.3s)", gSubMenuSelection, name);
+                    sprintf(String, "%02u (%.3s)", (unsigned)gSubMenuSelection, name);
             }
             break;
             
@@ -1359,7 +1359,7 @@ void UI_DisplayMenu(void)
             break;
 #endif
         case MENU_D_PRE:
-            sprintf(String, "%d*10ms", gSubMenuSelection);
+            sprintf(String, "%d*10ms", (int)gSubMenuSelection);
             break;
 
         case MENU_PTT_ID:
@@ -1549,7 +1549,7 @@ void UI_DisplayMenu(void)
         case MENU_BATCAL:
         {
             const uint16_t vol = (uint32_t)gBatteryVoltageAverage * gBatteryCalibration[3] / gSubMenuSelection;
-            sprintf(String, "%u.%02uV\n%u", vol / 100, vol % 100, gSubMenuSelection);
+            sprintf(String, "%u.%02uV\n%u", vol / 100, vol % 100, (unsigned)gSubMenuSelection);
             break;
         }
 
@@ -1619,7 +1619,7 @@ void UI_DisplayMenu(void)
 
         case MENU_SET_CTR:
             #ifdef ENABLE_FEAT_F4HWN_CTR
-                sprintf(String, "%d", gSubMenuSelection);
+                sprintf(String, "%d", (int)gSubMenuSelection);
                 gSetting_set_ctr = gSubMenuSelection;
                 ST7565_ContrastAndInv();
             #else
@@ -1693,7 +1693,7 @@ void UI_DisplayMenu(void)
                 }
                 else if(gSubMenuSelection < 64)
                 {
-                    sprintf(String, "%02u", gSubMenuSelection);
+                    sprintf(String, "%02u", (unsigned)gSubMenuSelection);
                     //#if !defined(ENABLE_SPECTRUM) || !defined(ENABLE_FMRADIO)
                     //ST7565_Gauge(4, 1, 63, gSubMenuSelection);
                     gaugeLine = 4;

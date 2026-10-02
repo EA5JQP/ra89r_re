@@ -1316,7 +1316,7 @@ void UI_MAIN_TimeSlice500ms(void)
 // ----------------------------------------
 
 static void UI_FormatFrequency(uint32_t freq, char *buffer) {
-    sprintf(buffer, "%3u.%05u", freq / 100000, freq % 100000);
+    sprintf(buffer, "%3u.%05u", (unsigned)(freq / 100000), (unsigned)(freq % 100000));
 }
 
 #if defined(ENABLE_SCAN_RANGES) && defined(ENABLE_FEAT_F4HWN_SCAN_SUBAUDIBLE) && ENABLE_FEAT_F4HWN_SCAN_SUBAUDIBLE
@@ -1928,11 +1928,11 @@ void UI_DisplayMain(void)
                             }
                             else
                             {
-                                sprintf(String, "%03u.%05u", frequency / 100000, frequency % 100000);
+                                sprintf(String, "%03u.%05u", (unsigned)(frequency / 100000), (unsigned)(frequency % 100000));
                                 UI_PrintStringSmallNormal(String, 32 + 4, 0, line + 1);
                             }
 #else                           // show the channel frequency below the channel number/name
-                            sprintf(String, "%03u.%05u", frequency / 100000, frequency % 100000);
+                            sprintf(String, "%03u.%05u", (unsigned)(frequency / 100000), (unsigned)(frequency % 100000));
                             UI_PrintStringSmallNormal(String, 32 + 4, 0, line + 1);
 #endif
                         }

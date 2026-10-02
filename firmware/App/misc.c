@@ -596,7 +596,7 @@ void MR_InitChannelAttributesCache(void)
     // This speeds up first access
     uint16_t channels_to_preload[] = {0, 1, 2};
     
-    for (int i = 0; i < ARRAY_SIZE(channels_to_preload); i++) {
+    for (unsigned i = 0; i < ARRAY_SIZE(channels_to_preload); i++) {
         if (channels_to_preload[i] < (MR_CHANNELS_MAX + 7)) {
             MR_GetChannelAttributes(channels_to_preload[i]);
         }

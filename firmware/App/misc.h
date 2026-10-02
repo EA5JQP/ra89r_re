@@ -45,11 +45,13 @@
 
 
 /* The casts keep the comparison from warning when the argument is an unsigned
- * type (the enum operands are ints, so `x >= 0` is otherwise "always true"). */
-#define IS_MR_CHANNEL(x)       ((uint32_t)(x) >= (uint32_t)MR_CHANNEL_FIRST && (uint32_t)(x) <= (uint32_t)MR_CHANNEL_LAST)
+ * type.  MR_CHANNEL_FIRST is 0, so its lower bound is written as a cast rather
+ * than `x >= 0` -- the cast rejects negative (signed) arguments the same way
+ * and does not trip -Wtype-limits. */
+#define IS_MR_CHANNEL(x)       ((uint32_t)(x) <= (uint32_t)MR_CHANNEL_LAST)
 #define IS_FREQ_CHANNEL(x)     ((uint32_t)(x) >= (uint32_t)FREQ_CHANNEL_FIRST && (uint32_t)(x) <= (uint32_t)FREQ_CHANNEL_LAST)
-#define IS_VALID_CHANNEL(x)    ((x) < LAST_CHANNEL)
-#define IS_NOAA_CHANNEL(x)     ((x) >= NOAA_CHANNEL_FIRST && (x) <= NOAA_CHANNEL_LAST)
+#define IS_VALID_CHANNEL(x)    ((uint32_t)(x) < (uint32_t)LAST_CHANNEL)
+#define IS_NOAA_CHANNEL(x)     ((uint32_t)(x) >= (uint32_t)NOAA_CHANNEL_FIRST && (uint32_t)(x) <= (uint32_t)NOAA_CHANNEL_LAST)
 
 enum {
     MR_CHANNEL_FIRST   = 0,

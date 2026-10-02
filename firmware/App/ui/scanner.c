@@ -26,7 +26,7 @@
 
 void UI_DisplayScanner(void)
 {
-    char String[16];
+    char String[32];
     char *pPrintStr = String;
 
     UI_DisplayClear();
@@ -54,7 +54,7 @@ void UI_DisplayScanner(void)
 
     // 2nd line
     if (gScanSingleFrequency || (gScanCssState != SCAN_CSS_STATE_OFF && gScanCssState != SCAN_CSS_STATE_FAILED)) {
-        sprintf(String, "Freq:%u.%05u", gScanFrequency / 100000, gScanFrequency % 100000);
+        sprintf(String, "Freq:%u.%05u", (unsigned)(gScanFrequency / 100000), (unsigned)(gScanFrequency % 100000));
         pPrintStr = String;
     } else {
         pPrintStr = "Freq:---.-----";
