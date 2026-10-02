@@ -21,6 +21,7 @@
 #include "driver/audio_path.h"
 #include "driver/led.h"
 #include "driver/rx.h"
+#include "functions.h"
 #include "driver/clock.h"
 #include "driver/fault.h"
 #include "driver/gpio.h"
@@ -270,6 +271,18 @@ static void print_mode(void)
                 (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency % 100000u),
                 (unsigned)gTxVfo->CHANNEL_SAVE, (unsigned)gTxVfo->Band,
                 (unsigned)gEeprom.RX_VFO);
+    /* Why a key beep can be silent: the K1's AUDIO_PlayBeep() returns early in
+     * these two states, so the receive state is the first thing to look at. */
+    uart_printf("  function %u (%s)  squelch %s  RSSI 0x%03X  BEEP_CONTROL %u\n",
+                (unsigned)gCurrentFunction,
+                gCurrentFunction == FUNCTION_FOREGROUND ? "FOREGROUND, beeps ok" :
+                gCurrentFunction == FUNCTION_INCOMING   ? "INCOMING, beeps ok" :
+                gCurrentFunction == FUNCTION_RECEIVE    ? "RECEIVE, beeps SUPPRESSED" :
+                gCurrentFunction == FUNCTION_MONITOR    ? "MONITOR, beeps SUPPRESSED" :
+                gCurrentFunction == FUNCTION_TRANSMIT   ? "TRANSMIT" :
+                gCurrentFunction == FUNCTION_POWER_SAVE ? "POWER_SAVE" : "?",
+                rx_squelch_open() ? "open" : "closed",
+                (unsigned)rx_rssi(), (unsigned)gEeprom.BEEP_CONTROL);
 }
 
 /* Where does the time go on this radio?  Every line is wall-clock milliseconds
