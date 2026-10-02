@@ -453,11 +453,9 @@ static uint32_t GetCurrentTime(void)
 
 // Load channel attributes from Flash
 //
-// Port adaptation: the K1 keeps a 2-byte attribute per channel at 0x8000; on
-// this chip 0x8000 is the middle of the stock's channel records, so the mapping
-// is the port's instead -- the stock's own "channel used" and "scan allow"
-// bitmaps, decoded in settings.c.  The cache around this function, and
-// every caller of MR_GetChannelAttributes(), are the K1's, unchanged.
+// The K1 keeps a 2-byte attribute per channel at 0x8000.  On the RA89R that
+// address is inside the port's own image (the stock's codeplug is 0x0-0x3FFF),
+// so this is the K1's read again -- see driver/py25q16.c for the image.
 void MR_LoadChannelAttributesFromFlash(uint16_t channel_id, ChannelAttributes_t* attributes)
 {
     if (attributes == NULL)
@@ -467,18 +465,18 @@ void MR_LoadChannelAttributesFromFlash(uint16_t channel_id, ChannelAttributes_t*
         return;
     }
 
-    attributes->__val = codeplug_attributes(channel_id);
+    PY25Q16_ReadBuffer(K1_IMAGE_ATTR_BASE + (uint32_t)channel_id * 2u,
+                       attributes, sizeof *attributes);
 }
 
 // Save channel attributes to Flash
-//
-// Port adaptation: this would write the stock's scan-allow bitmap, which is a
-// write into a stock region the port does not do yet (docs/ra89r_codeplug.md), and
-// the K1's 0x8000 is not ours to touch.  Refused, deliberately.
 void MR_SaveChannelAttributesToFlash(uint16_t channel_id, const ChannelAttributes_t* attributes)
 {
-    (void)channel_id;
-    (void)attributes;
+    if (attributes == NULL || channel_id >= (MR_CHANNELS_MAX + 7))
+        return;
+
+    PY25Q16_WriteBuffer(K1_IMAGE_ATTR_BASE + (uint32_t)channel_id * 2u,
+                        attributes, sizeof *attributes, false);
 }
 
 // Get channel attributes (from cache or Flash)

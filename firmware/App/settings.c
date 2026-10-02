@@ -82,7 +82,6 @@ bool     codeplug_excluded(uint16_t channel);
 bool     codeplug_scan_info(uint16_t channel, ChannelScanDisplayInfo_t *info);
 void     codeplug_name(char *out, size_t size, uint16_t channel);
 uint16_t codeplug_attributes(uint16_t channel);
-void     codeplug_save_attributes(uint16_t channel, uint16_t value);
 bool     codeplug_freq_get(uint16_t channel, uint8_t vfo, ChannelScanDisplayInfo_t *info);
 void     codeplug_freq_set(uint16_t channel, uint8_t vfo, const ChannelScanDisplayInfo_t *info);
 void     codeplug_freq_snapshot(uint8_t *dest, size_t size);
@@ -322,14 +321,13 @@ void SETTINGS_LoadCalibration(void)
 
 uint32_t SETTINGS_FetchChannelFrequency(const uint16_t channel)
 {
-    ra89r_codeplug_record_t record;
-
     if (IS_MR_CHANNEL(channel)) {
-        if (!codeplug_read(channel, &record))
+        uint32_t freq = 0u;
+
+        PY25Q16_ReadBuffer(K1_IMAGE_CH_BASE + (uint32_t)channel * 16u, &freq, 4u);
+        if (freq == 0xFFFFFFFFu)
             return 0u;
-        if (record.rx_frequency == 0xFFFFFFFFu)
-            return 0u;
-        return record.rx_frequency;
+        return freq;
     }
 
     if (IS_FREQ_CHANNEL(channel)) {
@@ -367,8 +365,16 @@ bool SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDis
     if (info == 0)
         return false;
 
-    if (IS_MR_CHANNEL(channel))
-        return codeplug_scan_info(channel, info);
+    if (IS_MR_CHANNEL(channel)) {
+        uint8_t raw[16];
+
+        PY25Q16_ReadBuffer(K1_IMAGE_CH_BASE + (uint32_t)channel * 16u, raw, sizeof raw);
+        if ((raw[0] | raw[1] | raw[2] | raw[3]) == 0u ||
+            (raw[0] & raw[1] & raw[2] & raw[3]) == 0xFFu)
+            return false;
+        codeplug_channel_unpack(raw, info);
+        return true;
+    }
 
     if (IS_FREQ_CHANNEL(channel))
         return codeplug_freq_get(channel, gEeprom.RX_VFO, info);
@@ -386,7 +392,21 @@ void SETTINGS_FetchChannelName(char *s, const uint16_t channel)
     if (!IS_MR_CHANNEL(channel))
         return;
 
-    codeplug_name(s, 16u, channel);
+    {
+        char raw[10];
+        size_t i;
+
+        PY25Q16_ReadBuffer(K1_IMAGE_NAME_BASE + (uint32_t)channel * 16u,
+                           raw, sizeof raw);
+        for (i = 0; i < sizeof raw && i < 10u; i++) {
+            if (raw[i] < 32 || raw[i] > 126)
+                break;
+            s[i] = raw[i];
+        }
+        s[i] = 0;
+        while (i > 0 && s[i - 1] == ' ')
+            s[--i] = 0;
+    }
 }
 
 /* ---------------------------------------------------------------------------
@@ -440,13 +460,12 @@ void SETTINGS_SaveVfoIndicesFlush(void)
 
 void SETTINGS_SaveChannel(uint16_t Channel, uint8_t VFO, const VFO_Info_t *pVFO, uint8_t Mode)
 {
-    (void)Channel;
     (void)VFO;
-    (void)pVFO;
     (void)Mode;
-    /* A memory channel lives in the stock's records, which this firmware does
-     * not write yet.  A frequency channel is the port's own, so it can. */
-    if (IS_FREQ_CHANNEL(Channel) && pVFO != 0) {
+
+    /* Both kinds of channel live in the port's own image now (the K1's own
+     * format), so a user edit is a write into the K1 image, not the stock's. */
+    if (pVFO != 0 && (IS_FREQ_CHANNEL(Channel) || IS_MR_CHANNEL(Channel))) {
         ChannelScanDisplayInfo_t info;
 
         memset(&info, 0, sizeof info);
@@ -463,7 +482,16 @@ void SETTINGS_SaveChannel(uint16_t Channel, uint8_t VFO, const VFO_Info_t *pVFO,
         info.busyChannelLock = pVFO->BUSY_CHANNEL_LOCK;
         info.txLock = pVFO->TX_LOCK;
         info.dtmfPttIdTxMode = pVFO->DTMF_PTT_ID_TX_MODE;
-        codeplug_freq_set(Channel, gEeprom.TX_VFO, &info);
+
+        if (IS_FREQ_CHANNEL(Channel)) {
+            codeplug_freq_set(Channel, gEeprom.TX_VFO, &info);
+        } else {
+            uint8_t raw[16];
+
+            codeplug_channel_pack(&info, raw);
+            PY25Q16_WriteBuffer(K1_IMAGE_CH_BASE + (uint32_t)Channel * 16u,
+                                raw, sizeof raw, false);
+        }
     }
 
     (void)settings_save_all();
@@ -471,10 +499,16 @@ void SETTINGS_SaveChannel(uint16_t Channel, uint8_t VFO, const VFO_Info_t *pVFO,
 
 void SETTINGS_SaveChannelName(uint16_t channel, const char *name)
 {
-    (void)channel;
-    (void)name;
-    /* The stock's channel names are the codeplug's; writing one is a write into
-     * a stock region, which waits for the journal work. */
+    if (IS_MR_CHANNEL(channel) && name != 0) {
+        char raw[16];
+        unsigned i;
+
+        memset(raw, ' ', sizeof raw);
+        for (i = 0; i < sizeof raw && name[i] != 0; i++)
+            raw[i] = name[i];
+        PY25Q16_WriteBuffer(K1_IMAGE_NAME_BASE + (uint32_t)channel * 16u,
+                            raw, sizeof raw, false);
+    }
 }
 
 void SETTINGS_UpdateChannel(uint16_t channel, const VFO_Info_t *pVFO, bool keep)
@@ -804,17 +838,6 @@ uint16_t codeplug_attributes(uint16_t channel)
     return value;
 }
 
-void codeplug_save_attributes(uint16_t channel, uint16_t value)
-{
-    /* The K1 writes its 2-byte attribute table at 0x8000; on this chip that is
-     * the middle of the stock's channel records, so writing it would destroy
-     * the codeplug.  The stock's own scan-allow bitmap is what this would have
-     * to change, and that is a write into a stock region the port does not do
-     * yet (docs/ra89r_codeplug.md, "Writing"). */
-    (void)channel;
-    (void)value;
-}
-
 /* ---------------------------------------------------------------------------
  * The frequency (VFO) channels
  * ------------------------------------------------------------------------- */
@@ -828,7 +851,7 @@ void codeplug_save_attributes(uint16_t channel, uint16_t value)
 
 static uint8_t cp_freq[CP_FREQ_BANDS][CP_FREQ_VFOS][CP_FREQ_SIZE];
 
-static void cp_freq_pack(const ChannelScanDisplayInfo_t *info, uint8_t *out)
+void codeplug_channel_pack(const ChannelScanDisplayInfo_t *info, uint8_t *out)
 {
     memset(out, 0, CP_FREQ_SIZE);
 
@@ -857,7 +880,7 @@ static void cp_freq_pack(const ChannelScanDisplayInfo_t *info, uint8_t *out)
     out[15] = 0;
 }
 
-static void cp_freq_unpack(const uint8_t *in, ChannelScanDisplayInfo_t *info)
+void codeplug_channel_unpack(const uint8_t *in, ChannelScanDisplayInfo_t *info)
 {
     memset(info, 0, sizeof *info);
 
@@ -918,7 +941,7 @@ static void cp_freq_default_one(unsigned band, unsigned vfo)
     info.stepFrequency = gStepFrequencyTable[STEP_12_5kHz];
     info.outputPower = OUTPUT_POWER_HIGH;
     info.txLock = 0;
-    cp_freq_pack(&info, cp_freq[band][vfo]);
+    codeplug_channel_pack(&info, cp_freq[band][vfo]);
 }
 
 static void cp_freq_defaults(void)
@@ -938,7 +961,7 @@ bool codeplug_freq_get(uint16_t channel, uint8_t vfo, ChannelScanDisplayInfo_t *
     if (info == 0 || band >= CP_FREQ_BANDS || vfo >= CP_FREQ_VFOS)
         return false;
 
-    cp_freq_unpack(cp_freq[band][vfo], info);
+    codeplug_channel_unpack(cp_freq[band][vfo], info);
     return true;
 }
 
@@ -949,7 +972,7 @@ void codeplug_freq_set(uint16_t channel, uint8_t vfo, const ChannelScanDisplayIn
     if (info == 0 || band >= CP_FREQ_BANDS || vfo >= CP_FREQ_VFOS)
         return;
 
-    cp_freq_pack(info, cp_freq[band][vfo]);
+    codeplug_channel_pack(info, cp_freq[band][vfo]);
 }
 
 void codeplug_freq_snapshot(uint8_t *dest, size_t size)

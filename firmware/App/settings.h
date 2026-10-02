@@ -335,7 +335,15 @@ void     SETTINGS_FetchChannelName(char *s, const uint16_t channel);
 uint16_t codeplug_attributes(uint16_t channel);
 bool     codeplug_scan_info(uint16_t channel, ChannelScanDisplayInfo_t *info);
 bool     codeplug_excluded(uint16_t channel);
+bool     codeplug_used(uint16_t channel);
 void     codeplug_name(char *out, size_t size, uint16_t channel);
+
+/* The stock's channel count, and the K1's own 16-byte record pack/unpack (the
+ * same format RADIO_ConfigureChannel and the frequency channels use).  The
+ * one-time import (driver/py25q16.c) uses these to give the K1 its image. */
+#define CODEPLUG_CHANNEL_COUNT 210u
+void codeplug_channel_pack(const ChannelScanDisplayInfo_t *info, uint8_t out[16]);
+void codeplug_channel_unpack(const uint8_t in[16], ChannelScanDisplayInfo_t *info);
 void     SETTINGS_FactoryReset(bool bIsAll);
 #ifdef ENABLE_FMRADIO
     void SETTINGS_SaveFM(void);

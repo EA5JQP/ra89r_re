@@ -385,15 +385,54 @@ void storage_import_k1(void)
                                (uint8_t)(K1_IMAGE_MAGIC >> 16),
                                (uint8_t)(K1_IMAGE_MAGIC >> 24) };
     uint32_t present = 0;
+    uint32_t sector;
 
     spi_flash_init();
     PY25Q16_ReadBuffer(K1_IMAGE_MAGIC_ADDR, &present, sizeof present);
     if (present == K1_IMAGE_MAGIC)
         return;                     /* already imported */
 
-    build_k1_calibration(cal);
-
+    /* Erase the image's sectors first: names 0x4000-0x7FFF, attributes
+     * 0x8000-0x8FFF (one sector is enough), channel records 0x9000-0x9FFF. */
+    for (sector = 0x4000u; sector < 0xA000u; sector += SPI_FLASH_SECTOR_SIZE)
+        spi_flash_sector_erase(sector);
     spi_flash_sector_erase(K1_IMAGE_SECTOR);
+
+    /* Channel records, names and attributes, from the stock's codeplug.  The
+     * K1 code reads this image; the stock's own records are never written. */
+    {
+        uint16_t ch;
+
+        for (ch = 0; ch < CODEPLUG_CHANNEL_COUNT; ch++) {
+            ChannelScanDisplayInfo_t info;
+            uint8_t  raw[16];
+            char     name[16];
+            char     nraw[16];
+            uint16_t attr;
+            unsigned i;
+
+            if (!codeplug_used(ch) || !codeplug_scan_info(ch, &info))
+                continue;
+
+            codeplug_channel_pack(&info, raw);
+            spi_flash_program(K1_IMAGE_CH_BASE + (uint32_t)ch * 16u,
+                              raw, sizeof raw);
+
+            memset(name, 0, sizeof name);
+            codeplug_name(name, sizeof name, ch);
+            memset(nraw, ' ', sizeof nraw);
+            for (i = 0; i < sizeof nraw && name[i] != 0; i++)
+                nraw[i] = name[i];
+            spi_flash_program(K1_IMAGE_NAME_BASE + (uint32_t)ch * 16u,
+                              nraw, sizeof nraw);
+
+            attr = codeplug_attributes(ch);
+            spi_flash_program(K1_IMAGE_ATTR_BASE + (uint32_t)ch * 2u,
+                              (const uint8_t *)&attr, sizeof attr);
+        }
+    }
+
+    build_k1_calibration(cal);
     spi_flash_program(K1_IMAGE_MAGIC_ADDR, magic, sizeof magic);
     spi_flash_program(K1_IMAGE_CAL_BASE, cal, sizeof cal);
 }
