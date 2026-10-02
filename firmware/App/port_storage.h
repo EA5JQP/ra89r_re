@@ -33,4 +33,26 @@ bool port_storage_get_extra(void *data, uint32_t size);
  * reports the first differing address in *bad_offset. */
 bool port_storage_write_test(uint32_t *bad_offset);
 
+/* The K1 application's own EEPROM image, rebuilt inside the RA89R's erased band
+ * at the addresses the K1 code already uses (see docs/ra89r_calibration.md).
+ * Only the channel-record base is relocated: the K1 puts records at 0, which is
+ * the stock's codeplug, so they move to 0x9000.  Names (0x4000), attributes
+ * (0x8000) and calibration (0x100C0) are already the K1's own addresses. */
+#define K1_IMAGE_NAME_BASE 0x04000u
+#define K1_IMAGE_ATTR_BASE 0x08000u
+#define K1_IMAGE_CH_BASE   0x09000u
+#define K1_IMAGE_CAL_BASE  0x100C0u
+#define K1_IMAGE_CAL_SIZE  0xD0u        /* 0x100C0 .. 0x1018F */
+#define K1_IMAGE_BASE      0x04000u
+#define K1_IMAGE_END       0x20000u
+
+/* True when [addr, addr+size) is a region the port may write: the K1 image band
+ * or the tail blob.  Anything else is the stock's, and read-only here. */
+bool port_storage_writable(uint32_t addr, uint32_t size);
+
+/* One-time import of the stock's codeplug and calibration into the K1 image, so
+ * the K1's own settings/misc/radio code has the EEPROM it expects.  It only
+ * writes when the image is not already present, so it is safe to call at boot. */
+void port_storage_import_k1(void);
+
 #endif /* APP_PORT_STORAGE_H */

@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include "app/dtmf.h"
+#include "driver/py25q16.h"
 #include "frequencies.h"
 #include "misc.h"
 #include "port_codeplug.h"
@@ -123,6 +124,11 @@ void SETTINGS_InitEEPROM(void)
     port_storage_init();
     port_codeplug_init();
 
+    /* Give the K1 its own EEPROM image in the erased band (port_storage.c); it
+     * imports from the stock on first use.  Do it before the calibration load
+     * and the attribute cache, which both read it. */
+    port_storage_import_k1();
+
     /* The K1's channel-attribute cache marks an unused slot with
      * channel_id == 0xFFFF, so it has to be initialised before the first lookup
      * -- otherwise a lookup of channel 0 hits the zeroed slot and is told the
@@ -172,34 +178,51 @@ void SETTINGS_InitEEPROM(void)
 
 void SETTINGS_LoadCalibration(void)
 {
-    /* The stock's calibration lives in the codeplug's calibration block
-     * (docs/ra89r_codeplug.md) and is not mapped yet.  The RF driver runs on the
-     * values measured on this radio (docs/ra89r_bk4829.md), so there is nothing to
-     * load here -- and nothing that may overwrite the stock's calibration. */
-}
+    /* The K1's calibration image now exists in the port's own store at its
+     * native addresses (port_storage.c imports it from the stock's 0x3000
+     * window).  This is the K1's own loader, unchanged except for where the
+     * bytes are -- they used to live in a region that is erased on this radio. */
+    uint8_t  misc[8];
+    int16_t  xtal;
 
-void SETTINGS_GetTxCalibration(uint8_t band, uint8_t op, uint8_t out[3])
-{
-    /* Provisional.  The K1 reads its TX calibration (the low/mid/high reference
-     * for each band) from EEPROM 0x100D0, which is erased -- 0xFF -- on this
-     * radio, so RADIO_ConfigureSquelchAndOutputPower() would compute a garbage
-     * TXP_CalculatedSetting.  These are the K1's own values for the nearest
-     * bands, a stand-in until a measured power sweep replaces them
-     * (docs/ra89r_rfpath.md). */
-    static const uint8_t cal[7][3] = {
-        { 0x32, 0x64, 0x8c },   /* 0: 50 MHz  */
-        { 0x32, 0x64, 0x8c },   /* 1: 108 MHz */
-        { 0x4b, 0x78, 0x96 },   /* 2: 137 MHz (the port's VHF) */
-        { 0x32, 0x64, 0x8c },   /* 3: 174 MHz */
-        { 0x5a, 0x64, 0xa0 },   /* 4: 350 MHz */
-        { 0x4b, 0x78, 0x96 },   /* 5: 400 MHz (the port's UHF) */
-        { 0x32, 0x64, 0x94 },   /* 6: 470 MHz */
-    };
-    const uint8_t v = (band < 7u && op < 3u) ? cal[band][op] : 0x32u;
+    PY25Q16_ReadBuffer(0x100C0u, gEEPROM_RSSI_CALIB[3], 8);
+    memcpy(gEEPROM_RSSI_CALIB[4], gEEPROM_RSSI_CALIB[3], 8);
+    memcpy(gEEPROM_RSSI_CALIB[5], gEEPROM_RSSI_CALIB[3], 8);
+    memcpy(gEEPROM_RSSI_CALIB[6], gEEPROM_RSSI_CALIB[3], 8);
 
-    out[0] = v;
-    out[1] = v;
-    out[2] = v;
+    PY25Q16_ReadBuffer(0x100C8u, gEEPROM_RSSI_CALIB[0], 8);
+    memcpy(gEEPROM_RSSI_CALIB[1], gEEPROM_RSSI_CALIB[0], 8);
+    memcpy(gEEPROM_RSSI_CALIB[2], gEEPROM_RSSI_CALIB[0], 8);
+
+    PY25Q16_ReadBuffer(0x10140u, gBatteryCalibration, 12);
+    if (gBatteryCalibration[0] >= 5000) {
+        gBatteryCalibration[0] = 1900;
+        gBatteryCalibration[1] = 2000;
+    }
+    gBatteryCalibration[5] = 2300;
+
+#ifdef ENABLE_VOX
+    PY25Q16_ReadBuffer(0x10150u + (gEeprom.VOX_LEVEL * 2),
+                       &gEeprom.VOX1_THRESHOLD, 2);
+    PY25Q16_ReadBuffer(0x10168u + (gEeprom.VOX_LEVEL * 2),
+                       &gEeprom.VOX0_THRESHOLD, 2);
+#endif
+
+    gEeprom.MIC_SENSITIVITY_TUNING = gMicGain_dB2[gEeprom.MIC_SENSITIVITY];
+
+    PY25Q16_ReadBuffer(0x10188u, misc, sizeof misc);
+    xtal = (int16_t)((uint16_t)misc[0] | ((uint16_t)misc[1] << 8));
+    gEeprom.BK4819_XTAL_FREQ_LOW = (xtal >= -1000 && xtal <= 1000) ? xtal : 0;
+    gEEPROM_1F8A = (uint16_t)((uint16_t)misc[2] | ((uint16_t)misc[3] << 8)) & 0x01FFu;
+    gEEPROM_1F8C = (uint16_t)((uint16_t)misc[4] | ((uint16_t)misc[5] << 8)) & 0x01FFu;
+    gEeprom.VOLUME_GAIN = (misc[6] < 64u) ? misc[6] : 58u;
+    gEeprom.DAC_GAIN = (misc[7] < 16u) ? misc[7] : 8u;
+#ifdef ENABLE_FEAT_F4HWN
+    gEeprom.VOLUME_GAIN_BACKUP = gEeprom.VOLUME_GAIN;
+#endif
+
+    BK4819_WriteRegister(BK4819_REG_3B,
+                         (uint16_t)(22656 + gEeprom.BK4819_XTAL_FREQ_LOW));
 }
 
 /* ---------------------------------------------------------------------------

@@ -324,12 +324,6 @@ typedef struct {
 void     SETTINGS_InitEEPROM(void);
 void     SETTINGS_LoadCalibration(void);
 
-/* The per-band, per-level TX calibration the K1 reads from its EEPROM
- * (`0x100D0 + band*16 + op*3`).  That region is erased on this radio, so this
- * supplies provisional values (see settings.c and docs/ra89r_rfpath.md).  `op`
- * is 0/1/2 for the low/mid/high reference; `out[3]` gets the band's low/mid/high
- * bytes. */
-void     SETTINGS_GetTxCalibration(uint8_t band, uint8_t op, uint8_t out[3]);
 uint32_t SETTINGS_FetchChannelFrequency(const uint16_t channel);
 bool     SETTINGS_FetchChannelScanInfo(const uint16_t channel, uint32_t *frequency, ModulationMode_t *modulation);
 bool     SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDisplayInfo_t *info);
