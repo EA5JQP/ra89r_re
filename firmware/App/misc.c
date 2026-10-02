@@ -380,7 +380,7 @@ unsigned long StrToUL(const char * str)
 //
 // Port: unused on this radio -- 0x8000 is the middle of the stock's channel
 // records, and the attributes come from the stock's bitmaps instead
-// (port_codeplug.c).  Kept so the diff against the K1 stays legible.
+// (settings.c).  Kept so the diff against the K1 stays legible.
 
 #define FLASH_CHANNEL_ATTR_BASE 0x8000
 

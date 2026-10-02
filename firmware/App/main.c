@@ -38,7 +38,6 @@
 #include "helper/boot.h"
 #include "misc.h"
 #include "driver/py25q16.h"
-#include "port_state.h"
 #include "radio.h"
 #include "ui/main.h"
 #include "ui/menu.h"
@@ -1083,7 +1082,14 @@ int main(void)
      * the panel back to them); at boot the K1 shows its own screen instead.
      * The settings and the codeplug come first, so radio_boot() tunes the
      * measured receive chain to the channel the codeplug put the radio on. */
-    port_state_init();
+    /* The K1's own boot order (its App/main.c): settings, calibration, then the
+     * two VFOs from the codeplug and the pointer swap that publishes them. */
+    SETTINGS_InitEEPROM();
+    SETTINGS_LoadCalibration();
+    RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD);
+    RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD);
+    RADIO_SelectVfos();
+    SETTINGS_FixupVfoPointers();
     /* The RF/audio chain first: radio_boot() -> rx_init() -> BK4819_Init() brings
      * the shared RF bus up.  BACKLIGHT_TurnOn() both lights the panel and plays
      * the startup beep through the chip, so it must come after -- the K1 orders
@@ -1400,7 +1406,7 @@ int main(void)
             }
             case '5':
                 /* Save the port's settings to the external flash (blob in the
-                 * empty tail of the part -- see port_storage.c). */
+                 * empty tail of the part -- see driver/py25q16.c). */
                 uart_printf("\nstorage: settings save %s\n",
                             port_storage_save_settings() ? "PASS (read back)"
                                                          : "FAILED");

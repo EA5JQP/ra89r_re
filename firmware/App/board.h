@@ -41,7 +41,7 @@
 
 /* The K1 application's board surface (see NOTICE).  The K1's board.c owns its
  * vendor bring-up and the battery ADC; on the RA89R the bring-up is this repo's
- * drivers and only the battery read is left, implemented in port_board.c. */
+ * drivers and only the battery read is left, implemented in board.c. */
 void BOARD_FLASH_Init(void);
 void BOARD_GPIO_Init(void);
 void BOARD_ADC_Init(void);

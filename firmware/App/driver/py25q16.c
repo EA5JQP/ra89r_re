@@ -23,7 +23,6 @@
 #include "driver/spi_flash.h"
 #include "frequencies.h"
 #include "misc.h"
-#include "port_state.h"
 #include "driver/py25q16.h"
 #include "settings.h"
 
@@ -193,7 +192,7 @@ bool port_storage_load_settings(void)
     gEeprom = blob.settings;
     /* The struct carries pointers into itself, which a flash round-trip cannot
      * be trusted to preserve: re-establish them. */
-    port_state_fixup_vfo();
+    SETTINGS_FixupVfoPointers();
     return true;
 }
 
@@ -255,7 +254,7 @@ bool port_storage_write_test(uint32_t *bad_offset)
 }
 
 /* ---------------------------------------------------------------------------
- * The K1 application's EEPROM image (see port_storage.h).
+ * The K1 application's EEPROM image (see driver/py25q16.h).
  *
  * The K1 code reads and writes this through the PY25Q16_* calls above, at the
  * addresses it always used.  The port only has to (a) allow writes inside the

@@ -120,7 +120,7 @@ void GPIO_TurnOffBacklight(void)
     BACKLIGHT_TurnOff();
 }
 
-/* The port owns PTT: port_gui.c reads the keypad and drives the *measured*
+/* The port owns PTT: driver/tx.c reads the keypad and drives the *measured*
  * transmit chain (driver/tx.c).  The K1's own PTT path -- CheckKeys() ->
  * GENERIC_Key_PTT -> FUNCTION_Transmit -> RADIO_SetTxParameters -- is the K1's
  * chip sequence, which on this radio still needs comparing against the stock

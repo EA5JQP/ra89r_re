@@ -5,7 +5,7 @@
  * (docs/ra89r_codeplug.md), so the *interface* is the K1's and the *layout* is the
  * stock's: every function below is the K1's contract, implemented against
  * settings.c for the stock's regions and against the port's own blob
- * (port_storage.c) for the values the stock has no place for.
+ * (driver/py25q16.c) for the values the stock has no place for.
  *
  * What is deliberately read-only: the stock's codeplug.  Nothing here writes a
  * channel, a name or the settings block, so the stock firmware and the CPS keep
@@ -31,7 +31,7 @@
  * records, its two bitmaps and its tone encoding.  It lives here, next to the
  * K1 settings interface, so the port's only stock-specific knowledge has one
  * home.  On this radio the K1's own EEPROM image is imported from it (see
- * port_storage.c) and the K1 code reads that image; this decoder is for the
+ * driver/py25q16.c) and the K1 code reads that image; this decoder is for the
  * import and for the stock's shared settings.
  * ------------------------------------------------------------------------- */
 
@@ -90,6 +90,32 @@ bool     port_codeplug_freq_restore(const uint8_t *src, size_t size);
 void     port_codeplug_shared_settings(void);
 
 EEPROM_Config_t gEeprom;
+
+/* The VFO objects live inside gEeprom and carry pointers into themselves, so
+ * anything that replaces or clears gEeprom -- the defaults, or a blob read back
+ * from flash -- has to re-establish them before the screens dereference them.
+ * The K1 does this in its boot; here it is one call the boot and the settings
+ * load both make. */
+void SETTINGS_FixupVfoPointers(void)
+{
+    unsigned i;
+
+    for (i = 0; i < 2; i++) {
+        VFO_Info_t *vfo = &gEeprom.VfoInfo[i];
+
+        vfo->pRX = &vfo->freq_config_RX;
+        vfo->pTX = &vfo->freq_config_TX;
+    }
+
+    if (gEeprom.TX_VFO > 1u)
+        gEeprom.TX_VFO = 0;
+    if (gEeprom.RX_VFO > 1u)
+        gEeprom.RX_VFO = 0;
+
+    gTxVfo = &gEeprom.VfoInfo[gEeprom.TX_VFO];
+    gRxVfo = &gEeprom.VfoInfo[gEeprom.RX_VFO];
+    gCurrentVfo = gRxVfo;
+}
 
 /* The port's own state, saved in the blob next to gEeprom. */
 typedef struct {
@@ -189,7 +215,7 @@ void SETTINGS_InitEEPROM(void)
     port_storage_init();
     port_codeplug_init();
 
-    /* Give the K1 its own EEPROM image in the erased band (port_storage.c); it
+    /* Give the K1 its own EEPROM image in the erased band (driver/py25q16.c); it
      * imports from the stock on first use.  Do it before the calibration load
      * and the attribute cache, which both read it. */
     port_storage_import_k1();
@@ -244,7 +270,7 @@ void SETTINGS_InitEEPROM(void)
 void SETTINGS_LoadCalibration(void)
 {
     /* The K1's calibration image now exists in the port's own store at its
-     * native addresses (port_storage.c imports it from the stock's 0x3000
+     * native addresses (driver/py25q16.c imports it from the stock's 0x3000
      * window).  This is the K1's own loader, unchanged except for where the
      * bytes are -- they used to live in a region that is erased on this radio. */
     uint8_t  misc[8];

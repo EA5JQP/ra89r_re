@@ -88,7 +88,6 @@ set(APP_SOURCES
     App/functions.c
     App/audio.c
     App/misc.c
-    App/port_state.c
     App/driver/py25q16.c
     App/driver/spi_flash.c
     App/driver/eeprom_console.c

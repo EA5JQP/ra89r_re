@@ -175,7 +175,7 @@ cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver \
     App/app/menu.c App/app/action.c App/app/app.c App/app/main.c \
     App/app/generic.c App/app/common.c App/app/chFrScanner.c App/app/dtmf.c \
     App/app/scanner.c App/radio.c App/functions.c App/audio.c App/misc.c \
-    App/port_state.c App/driver/py25q16.c \
+    App/driver/py25q16.c \
     App/board.c App/settings.c App/version.c App/dcs.c App/frequencies.c \
     App/helper/battery.c App/helper/boot.c App/driver/system.c App/font.c App/bitmaps.c \
     App/driver/st7565.c App/driver/keyboard.c App/driver/backlight.c \
@@ -269,13 +269,12 @@ port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
                                          driver/st7565.c gives the K1's buffer layout
                                          over this repo's bit-banged panel;
                                          driver/keyboard.c is the K1 keyboard
-                                         interface over our keypad reader and
-                                         port_gui.c routes the keys; ui/status.c draws
-                                         the status line.  port_state.c is the state
-                                         facade (gEeprom and one inert stub per K1
-                                         module still to port, each named after its
-                                         owner) and port_storage.c backs settings with
-                                         the external SPI NOR flash.  The K1 GUI is
+                                         interface over our keypad reader and the
+                                         K1's app/main.c routes the keys; ui/status.c
+                                         draws the status line.  driver/py25q16.c
+                                         backs settings with the external SPI NOR
+                                         flash, giving the K1 its own EEPROM image in
+                                         the erased band.  The K1 GUI is
                                          what the radio boots into, straight into the
                                          VFO, in its double-channel layout
                                          (`PORT_TWO_ROW_UI` in port_features.h
@@ -284,7 +283,7 @@ port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
                                          the receiver follows the selected VFO --
                                          dual-watch would toggle it);
                                          the two VFOs land on the first two channels
-                                         the codeplug has, because port_codeplug.c
+                                         the codeplug has, because settings.c
                                          decodes the stock's own 21-byte records,
                                          bitmaps and tones (docs/ra89r_codeplug.md) and
                                          settings.c is the K1's SETTINGS_* interface
@@ -298,11 +297,11 @@ port                      integration -- OPEN: the K1/F4HWN VFO+menu port, off
                                          screens on a PC (see "Offline checks").
                                          The app core is in as well (radio.c,
                                          functions.c, audio.c, misc.c + a port
-                                         driver/system.c), which retired most of
-                                         port_state.c's stubs, and port_gui.c drives
-                                         the measured chains: UP/DOWN retune the
-                                         receiver, PTT keys the transmitter, the
-                                         squelch sets FUNCTION_INCOMING/RECEIVE.
+                                         driver/system.c), and driver/tx.c /
+                                         driver/rx.c drive the measured chains:
+                                         UP/DOWN retune the receiver, PTT keys the
+                                         transmitter, the squelch sets
+                                         FUNCTION_INCOMING/RECEIVE.
                                          radio.c's own chip sequences stay unused
                                          until they are compared with the stock.
                                          The K1's app loop and key layer are in too

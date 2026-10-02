@@ -21,7 +21,6 @@
 #include "py32f4xx.h"      /* TIM7/DMA/SYSCFG scratch, for the backlight checks */
 #include "misc.h"
 #include "settings.h"
-#include "port_state.h"
 #include "radio.h"
 #include "settings.h"
 #include "ui/main.h"
@@ -89,7 +88,7 @@ static void render(const char *title)
 int main(void)
 {
     ST7565_Init();
-    port_state_init();
+    SETTINGS_InitEEPROM(); SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
 
     /* ---- the codeplug: what the stock's records decode to ---------------- */
     {
@@ -174,7 +173,7 @@ int main(void)
         /* Put the state back so the screens below render as before (a plain
          * PORT_SettingsDefaults() would clear the VFO pointers those screens
          * dereference -- port_state_init() re-establishes them). */
-        port_state_init();
+        SETTINGS_InitEEPROM(); SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
     }
 
     /* ---- the boot screen and the status line ---------------------------- */
