@@ -26,6 +26,7 @@
 #include "driver/bk4819.h"
 #include "driver/py25q16.h"
 #include "driver/gpio.h"
+#include "driver/rx.h"
 #include "functions.h"
 #include "misc.h"
 #include "settings.h"
@@ -112,6 +113,12 @@ void FM_TurnOff(void)
 
     BK1080_Init0();
 
+    /* Hand the RF receiver back: clear the FM gate and put the BK4829's AF
+     * where the port's receive path expects it (muted; rx_poll() opens it on a
+     * carrier).  FM_AudioPathOn() muted it -- see there for why. */
+    rx_set_fm_active(false);
+    BK4819_SetAF(BK4819_AF_MUTE);
+
     // Enable relevant LNA based on VFO frequency
     BK4819_PickRXFilterPathBasedOnFrequency(gRxVfo->freq_config_RX.Frequency);
 
@@ -176,6 +183,19 @@ void FM_Tune(uint16_t Frequency, int8_t Step, bool bFlag)
 void FM_AudioPathOn(void) {
     AUDIO_AudioPathOn();
     gEnableSpeaker = true;
+
+    /* The RA89R's own FM-on (`FUN_0800D35C`) idles the RF transceivers before it
+     * plays the BK1080: `FUN_08009CC4` writes the BK4829's AF output register
+     * `0x47 = 0x6042`, i.e. `REG_47<11:8> = 0` = **Mute** (BK4829 register
+     * table; 1 = Normal AF out, which is what `RADIO_SetModulation` leaves it
+     * at).  The K1 board has no such requirement -- it only raises its
+     * audio-path GPIO -- but on this board the BK4829's `EARO` and the
+     * BK1080's `LOUT`/`ROUT` reach the same amplifier input, so an un-muted
+     * BK4829 drives that node with the VFO's demodulated audio and the FM
+     * broadcast is lost under it.  Mute the RF chip here; `FM_TurnOff()`
+     * restores it, and `rx_set_fm_active()` keeps `rx_poll()` from re-opening
+     * it.  See docs/ra89r_bk1080.md, "The FM audio path". */
+    BK4819_SetAF(BK4819_AF_MUTE);
 }
 
 void FM_PlayAndUpdate(void)
@@ -652,6 +672,15 @@ void FM_Start(void)
     gFmRadioMode              = true;
     gFM_ScanState             = FM_SCAN_OFF;
     gFM_RestoreCountdown_10ms = 0;
+
+    /* Bring the BK1080's two-wire bus up.  The console 'j' bench did this by
+     * hand; the feature has to do it itself or a cold boot into FM talks to
+     * unconfigured PC14/PB2. */
+    bk1080_init();
+
+    /* Take the RF receiver out of the audio path before the chip is brought up
+     * (rx_service() becomes a no-op; FM_AudioPathOn() mutes the BK4829). */
+    rx_set_fm_active(true);
 
     BK1080_Init(gEeprom.FM_FrequencyPlaying, gEeprom.FM_Band/*, gEeprom.FM_Space*/);
     // Disable UHF LNA, enable VHF LNA

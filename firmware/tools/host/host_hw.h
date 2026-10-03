@@ -24,4 +24,9 @@ unsigned host_beeper_play_count(void);
 unsigned host_beeper_plays_path_on(void);
 void host_beeper_reset_counts(void);
 
+/* The last value passed to the host's `BK4819_SetAF` (the K1 `BK4819_AF_Type_t`
+ * value, or -1 before any call).  The FM feature must mute the RF chip's AF
+ * (`BK4819_AF_MUTE` = 0) while it owns the audio; see docs/ra89r_bk1080.md. */
+int host_bk4819_last_af(void);
+
 #endif /* HOST_HW_H */

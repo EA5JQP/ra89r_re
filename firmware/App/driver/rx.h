@@ -52,7 +52,13 @@ uint16_t rx_rssi(void);
 uint32_t rx_rx_frequency(void);
 
 /* The app loop's receive service: the squelch poll, the retune when the K1's
- * selected VFO moves, and the g_SquelchLost publication. */
+ * selected VFO moves, and the g_SquelchLost publication.  Does nothing while
+ * the FM feature is up (rx_set_fm_active(true)). */
 void rx_service(void);
+
+/* Hand the receiver over to the FM broadcast feature (or take it back).  While
+ * active, rx_service() is a no-op so the BK4829 cannot drive the shared
+ * amplifier node out from under the BK1080. */
+void rx_set_fm_active(bool active);
 
 #endif /* DRIVER_RX_H */

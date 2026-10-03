@@ -14,6 +14,7 @@
 
 static bool s_ready;
 static bool s_squelch_open;
+static bool s_fm_active;        /* the FM feature owns the audio; see rx_set_fm_active() */
 static uint16_t s_rssi;
 static uint32_t s_freq_10hz;    /* what the BK4829 was last tuned to */
 
@@ -64,6 +65,18 @@ bool rx_ready(void)
     return s_ready;
 }
 
+/* The FM broadcast feature (app/fm.c) runs the BK1080 on this board's shared
+ * amplifier node.  While it is up, the BK4829 must not be polled or re-tuned:
+ * `rx_poll()` would open the chip's AF on a carrier and drive that node with
+ * the VFO's demodulated audio, and `rx_service()` would re-tune the RF chip to
+ * the VFO, both of which the stock's own FM-on avoids (it idles the
+ * transceivers, `FUN_08009CC4`).  `FM_Start()` sets this; `FM_TurnOff()`
+ * clears it. */
+void rx_set_fm_active(bool active)
+{
+    s_fm_active = active;
+}
+
 void rx_poll(void)
 {
     if (!s_ready)
@@ -108,6 +121,12 @@ void rx_service(void)
 {
     static bool squelch_open;
     static uint32_t last_freq;
+
+    /* The FM feature owns the receiver and the audio while it is up (see
+     * rx_set_fm_active()): leave the BK4829 alone so it cannot drive the
+     * amplifier node out from under the BK1080. */
+    if (s_fm_active)
+        return;
 
     if (rx_ready())
         rx_poll();
