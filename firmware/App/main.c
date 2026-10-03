@@ -228,6 +228,7 @@ static void print_help(void)
               "          D step the RF bus delay (find what still gives audio)\n"
               "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
+              "          u battery (pack on ADC channel 9 / PB1)\n"
               "          v/V contrast   L status led cycle (PA13/PA14)\n"
               "          Z beeper test tones (DAC tone on PA4)\n"
               "          R probe RF ids   W configure both   X verify config\n"
@@ -1191,6 +1192,17 @@ int main(void)
                 print_info();
                 print_diagnostics();
                 break;
+            case 'u': {
+                /* The pack: ADC channel 9 (PB1), via the K1's BOARD_ADC_* hook
+                 * (board.c -> driver/battery.c).  The value is in 10 mV. */
+                uint16_t v = 0, c = 0;
+
+                BOARD_ADC_GetBatteryInfo(&v, &c);
+                uart_printf("\nbattery: %u (10 mV) = %u.%02u V, current %u\n",
+                            (unsigned)v, (unsigned)(v / 100u),
+                            (unsigned)(v % 100u), (unsigned)c);
+                break;
+            }
             case 'm':
                 /* The K1 switches between channel and frequency mode with F
                  * then 3 (MAIN_ProcessKeys -> processFKeyFunction -> KEY_3).

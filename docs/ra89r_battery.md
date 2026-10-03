@@ -1,9 +1,10 @@
 # RA89R battery
 
-**Status: the pack is read by the MCU's ADC, not a companion chip.**
-`App/driver/battery.c` (branch `driver/battery`) now reads **ADC channel 9 (PB1)** -- the
-sixth channel the stock scans and the one the keypad ladders do not use -- and reports the
-raw sample, the stock's 0..255 level and a provisional pack voltage.  Console command `u`.
+**Status: merged into `develop` and wired to the K1.**
+`App/driver/battery.c` reads **ADC channel 9 (PB1)** -- the sixth channel the stock scans
+and the one the keypad ladders do not use -- via `keypad_aux_raw()`.  It reports the raw
+sample and the stock's 0..255 level, and `board.c`'s `BOARD_ADC_GetBatteryInfo()` feeds the
+K1's `BATTERY_GetReadings()` with the pack voltage in 10 mV.  Console command `u`.
 
 ## The "two-wire gauge" was the BK1080 FM receiver
 
@@ -36,6 +37,15 @@ The millivolt figure is **calibrated on this radio**: 3413 counts read 8.32 V on
 multimeter, so `battery_mv()` uses **2.438 mV/count** (full scale 4095 -> ~10 V, the
 divider's top).  `BATTERY_MV_NUM` in `battery.c` is the one constant to change if that
 ever moves.
+
+### K1 integration
+
+`board.c`'s `BOARD_ADC_GetBatteryInfo()` -- the K1's battery hook, previously a fixed
+placeholder -- now returns `battery_mv()/10`: the pack in **10 mV**, which is what
+`helper/battery.c`'s `gBatteryVoltageAverage = (value * 760) / gBatteryCalibration[3]`
+expects.  With the K1's default calibration (760) that is the measured pack directly, and
+the K1's own battery-calibration menu can still trim it.  There is no charge-current sense
+on this board, so the reported current is zero.  Console `u` prints the same value.
 
 
 ## Enable / power, and the CMSIS (both checked, 2026-10)
