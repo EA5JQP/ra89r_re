@@ -546,7 +546,8 @@ static void bt_on_event(bt_event_t ev, const char *payload, unsigned len)
 
 static void bt_bench(void)
 {
-    static const uint32_t bauds[] = { 115200u, 9600u, 38400u, 57600u };
+    static const uint32_t bauds[] = { 115200u, 57600u, 38400u, 19200u,
+                                      9600u, 4800u, 230400u, 76800u };
     unsigned b, t;
 
     bluetooth_init();
@@ -566,7 +567,8 @@ static void bt_bench(void)
         while (BOARD_BT_UART->SR & USART_SR_RXNE)
             (void)BOARD_BT_UART->DR;
 
-        uart_printf("  -- %u baud: -> AT+GMR?\n", (unsigned)bauds[b]);
+        uart_printf("  -- %u baud: -> AT / AT+GMR?\n", (unsigned)bauds[b]);
+        bluetooth_send("AT\r\n");
         bluetooth_send_cmd(BT_CMD_GMR);
 
         for (t = 0; t < 60u; t++) {     /* ~0.6 s */
