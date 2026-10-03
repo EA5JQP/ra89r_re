@@ -636,7 +636,8 @@ static void bt_soft_rx(void)
                           | ((BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN)
                                  ? 0x80u : 0u));
         }
-        uart_printf("     soft 0x%02X %s\n", (unsigned)b,
+        uart_printf("     soft 0x%02X (normal) / 0x%02X (inverted) %s\n",
+                    (unsigned)b, (unsigned)(uint8_t)(~b),
                     (b >= 0x20 && b < 0x7f) ? (const char[]){ b, 0 } : "");
     }
 
@@ -706,6 +707,27 @@ static void bt_bench(void)
                 if (bt_listen(500u) == 0u)
                     uart_puts("     (nothing)\n");
             }
+        }
+    }
+
+    /* Framing variants at 115200: 7 data bits (CR1 M, bit 12) and 2 stop bits
+     * (CR2 STOP, bits 13:12), in case the module is not 8N1. */
+    {
+        static const char *const names[] = { "8N1", "7N1", "8N2" };
+        unsigned m;
+
+        BOARD_BT_UART->BRR = (BOARD_APB1_HZ + (115200u / 2u)) / 115200u;
+        for (m = 0; m < 3u; m++) {
+            BOARD_BT_UART->CR1 = (uint32_t)(USART_CR1_UE | USART_CR1_TE
+                | USART_CR1_RE | (m == 1 ? (1u << 12) : 0u));
+            BOARD_BT_UART->CR2 = (uint16_t)(m == 2 ? (2u << 12) : 0u);
+            while (BOARD_BT_UART->SR & USART_SR_RXNE)
+                (void)BOARD_BT_UART->DR;
+
+            uart_printf("  -- %s 115200: -> AT+GMR?\n", names[m]);
+            bluetooth_send_cmd(BT_CMD_GMR);
+            if (bt_listen(500u) == 0u)
+                uart_puts("     (nothing)\n");
         }
     }
 
