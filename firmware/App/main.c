@@ -600,6 +600,49 @@ static void bt_bit_probe(void)
     BOARD_BT_UART_PORT->MODER |= (2u << (11u * 2u));    /* PB11 -> AF */
 }
 
+/* A short busy delay in the same loop the bit probe measured, so ~51 ticks is
+ * one 115200 bit.  Volatile so it is not optimised away. */
+static void bt_delay_ticks(unsigned n)
+{
+    volatile unsigned i;
+
+    for (i = 0; i < n; i++)
+        ;
+}
+
+/* Decode bytes from PB11 in software, sampling at the bit probe's rate, to
+ * bypass the USART: the last test for a slow/weak-drive signal the peripheral
+ * samples wrong. */
+static void bt_soft_rx(void)
+{
+    unsigned n;
+
+    BOARD_BT_UART_PORT->MODER &= ~(3u << (11u * 2u));   /* PB11 -> input */
+    bluetooth_send_cmd(BT_CMD_GMR);
+
+    for (n = 0; n < 24u; n++) {
+        unsigned i = 0, k;
+        uint8_t b = 0;
+
+        while (i < 3000000u && (BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN))
+            i++;
+        if (i >= 3000000u)
+            break;
+
+        bt_delay_ticks(25u);                    /* half a bit: into the data */
+        for (k = 0; k < 8u; k++) {
+            bt_delay_ticks(51u);                /* one bit */
+            b = (uint8_t)((b >> 1)
+                          | ((BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN)
+                                 ? 0x80u : 0u));
+        }
+        uart_printf("     soft 0x%02X %s\n", (unsigned)b,
+                    (b >= 0x20 && b < 0x7f) ? (const char[]){ b, 0 } : "");
+    }
+
+    BOARD_BT_UART_PORT->MODER |= (2u << (11u * 2u));    /* PB11 -> AF */
+}
+
 static void bt_bench(void)
 {
     /* bluetooth_init() brings up USART3 and releases the module from reset on
@@ -636,6 +679,10 @@ static void bt_bench(void)
      * polarity without guessing. */
     uart_puts("  <- bit probe (PB11 as a plain input):\n");
     bt_bit_probe();
+
+    /* And decode a few bytes in software, bypassing the USART. */
+    uart_puts("  <- software RX at the probed rate:\n");
+    bt_soft_rx();
 
     /* Then the rate, both oversamplings. */
     {
