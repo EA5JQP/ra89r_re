@@ -17,6 +17,7 @@
 #include "driver/beeper.h"
 #include "driver/bk4815.h"
 #include "driver/battery.h"
+#include "driver/bluetooth.h"
 #include "helper/battery.h"
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
@@ -236,6 +237,7 @@ static void print_help(void)
               "          R probe RF ids   W configure both   X verify config\n"
               "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
               "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
+              "          y Bluetooth (USART3): send AT+GMR?, print the reply\n"
               "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
@@ -517,6 +519,48 @@ static void rf_k1_bringup(void)
                 rx_squelch_open() ? "open" : "quiet");
     uart_puts("  press R to see the register snapshot; 'X' still checks the\n"
               "  stock configuration path, which this overwrites.\n");
+}
+
+/* The console's 'y': the Jieli Bluetooth module on USART3 (PB10 TX / PB11 RX,
+ * AF2, 115200 8N1).  It sends the version query and prints whatever the module
+ * answers for ~3 s -- the first thing this link has to show is whether the
+ * module is there at all.  Nothing here has run on the radio --
+ * docs/ra89r_bluetooth.md. */
+static void bt_on_event(bt_event_t ev, const char *payload, unsigned len)
+{
+    static const char *const names[] = {
+        "NONE", "BINARY(RDTP)", "READY", "OK", "ERROR", "VERSION",
+        "BT_EMITTER", "NAME_EQUALLY", "BT_RECEIVER", "BLE_MASTER", "BLE_SLAVE",
+        "CONN_STATE", "SCO_CONN", "CALL_CONNECTED", "CALL_DISCONNECTED",
+        "SCO_DISCONNECT", "EARDEV", "BT_SCAN_STOP", "BT_EAR_CONN",
+        "BT_DISCONNECT", "EAR_PTT_DOWN", "EAR_PTT_UP", "BLE_LOCAL", "BT_LOCAL",
+    };
+
+    uart_printf("  <- %s",
+                (unsigned)ev < (unsigned)(sizeof names / sizeof names[0])
+                    ? names[ev] : "?");
+    if (payload != 0 && len != 0u)
+        uart_printf("  '%.*s'", (int)len, payload);
+    uart_putc('\n');
+}
+
+static void bt_bench(void)
+{
+    unsigned t;
+
+    bluetooth_init();
+    bluetooth_set_event_cb(bt_on_event);
+    uart_puts("\nBT: Jieli module on USART3 (PB10 TX / PB11 RX, 115200 8N1)\n");
+    uart_puts("  -> AT+GMR?\n");
+    bluetooth_send_cmd(BT_CMD_GMR);
+
+    for (t = 0; t < 300u; t++) {        /* ~3 s of listening */
+        bluetooth_poll();
+        systick_delay_ms(10);
+    }
+
+    uart_puts("  no VERSION event means the module is silent: check PB10/PB11 and\n"
+              "  the AF, and that the module is powered -- docs/ra89r_bluetooth.md.\n");
 }
 
 /* ------------------------------------------- cable-free audio-path bench
@@ -1446,6 +1490,9 @@ int main(void)
                 break;
             case 'Q':
                 rf_squelch_autodetect();
+                break;
+            case 'y':
+                bt_bench();
                 break;
             case 'e': {
                 /* The external SPI NOR flash: identity, then a hexdump. */
