@@ -42,6 +42,7 @@ set(APP_SOURCES
     App/driver/fault.c
     App/driver/gpio.c
     App/driver/uart.c
+    App/driver/bluetooth.c
     App/driver/systick.c
     App/driver/lcd_st7565.c
     App/driver/keypad.c

@@ -204,6 +204,16 @@
  * PC14/PB2, once taken for a companion gauge, is the BK1080 FM receiver's I2C. */
 #define BATTERY_ADC_PIN      (1u << 1)    /* PB1  */
 
+/* Bluetooth: a Jieli audio module on **USART3**, PB10 (TX) / PB11 (RX), AF2,
+ * 115200 8N1.  `FUN_08013420` is the pin/DMA bring-up and runs only when the
+ * UART handle's base is `0x40004800`, configuring GPIOB mask `0xC00` as AF2;
+ * `FUN_0801d718` calls `FUN_08020be4(0x1c200)` to set it up.  The module speaks
+ * a line AT protocol (driver/bluetooth.c).  See docs/ra89r_bluetooth.md. */
+#define BT_UART_TX_PIN       (1u << 10)   /* PB10 */
+#define BT_UART_RX_PIN       (1u << 11)   /* PB11 */
+#define BT_UART_AF           2u           /* GPIO_AF2_USART3 */
+#define BT_UART_BAUD         115200u
+
 /* Not mapped yet: the USB-C port goes to the MCU's USB device peripheral, which
  * nothing in the stock firmware enables. */
 
