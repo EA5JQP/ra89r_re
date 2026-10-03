@@ -568,6 +568,38 @@ static unsigned bt_listen(unsigned ms)
     return got;
 }
 
+/* Time the low pulse on PB11 (the module's TX) after a command: a UART start
+ * bit is one bit time, so its width gives the module's baud directly, and a
+ * line that never goes low means the signal is inverted.  PB11 is taken off
+ * AF2 and read as a plain input for this; a busy loop, since systick is 1 ms. */
+static void bt_bit_probe(void)
+{
+    unsigned n;
+
+    BOARD_BT_UART_PORT->MODER &= ~(3u << (11u * 2u));   /* PB11 -> input */
+
+    for (n = 0; n < 3u; n++) {
+        unsigned i = 0, low = 0, high = 0;
+
+        bluetooth_send_cmd(BT_CMD_GMR);
+
+        while (i < 3000000u && (BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN))
+            i++;
+        if (i >= 3000000u) {
+            uart_puts("     no low edge (line stays high)\n");
+            continue;
+        }
+        while (low < 3000000u && !(BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN))
+            low++;
+        while (high < 3000000u && (BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN))
+            high++;
+
+        uart_printf("     start-bit low = %u, high = %u loop ticks\n", low, high);
+    }
+
+    BOARD_BT_UART_PORT->MODER |= (2u << (11u * 2u));    /* PB11 -> AF */
+}
+
 static void bt_bench(void)
 {
     /* bluetooth_init() brings up USART3 and releases the module from reset on
@@ -600,28 +632,38 @@ static void bt_bench(void)
     if (bt_listen(1000u) == 0u)
         uart_puts("     (nothing)\n");
 
-    /* The module is out of reset now, so find its real baud: it answered every
-     * step with framing errors, which is a rate mismatch, not silence. */
+    /* Measure the bit time on the wire: it settles both the baud and the
+     * polarity without guessing. */
+    uart_puts("  <- bit probe (PB11 as a plain input):\n");
+    bt_bit_probe();
+
+    /* Then the rate, both oversamplings. */
     {
         static const uint32_t bauds[] = { 115200u, 9600u, 38400u, 57600u,
                                           19200u, 4800u, 230400u, 76800u };
-        unsigned b;
+        unsigned b, o;
 
-        for (b = 0; b < sizeof bauds / sizeof bauds[0]; b++) {
-            BOARD_BT_UART->BRR =
-                (BOARD_APB1_HZ + (bauds[b] / 2u)) / bauds[b];
-            while (BOARD_BT_UART->SR & USART_SR_RXNE)
-                (void)BOARD_BT_UART->DR;
+        for (o = 0; o < 2u; o++) {
+            BOARD_BT_UART->CR1 = (uint32_t)((o ? (1u << 15) : 0u)
+                                            | USART_CR1_UE
+                                            | USART_CR1_TE | USART_CR1_RE);
+            for (b = 0; b < sizeof bauds / sizeof bauds[0]; b++) {
+                BOARD_BT_UART->BRR =
+                    (BOARD_APB1_HZ + (bauds[b] / 2u)) / bauds[b];
+                while (BOARD_BT_UART->SR & USART_SR_RXNE)
+                    (void)BOARD_BT_UART->DR;
 
-            uart_printf("  -- %u baud: -> AT+GMR?\n", (unsigned)bauds[b]);
-            bluetooth_send_cmd(BT_CMD_GMR);
-            if (bt_listen(600u) == 0u)
-                uart_puts("     (nothing)\n");
+                uart_printf("  -- %s %u baud: -> AT+GMR?\n",
+                            o ? "OVER8" : "16x", (unsigned)bauds[b]);
+                bluetooth_send_cmd(BT_CMD_GMR);
+                if (bt_listen(500u) == 0u)
+                    uart_puts("     (nothing)\n");
+            }
         }
     }
 
-    uart_puts("  the baud whose bytes decode cleanly (no 'err SR=...') is the\n"
-              "  module's rate -- docs/ra89r_bluetooth.md.\n");
+    uart_puts("  a start-bit low of ~55-85 ticks is 115200 (48 MHz loop); the\n"
+              "  rate whose bytes decode cleanly (no 'err SR=...') is the one.\n");
 }
 
 /* ------------------------------------------- cable-free audio-path bench
