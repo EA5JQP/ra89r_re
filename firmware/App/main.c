@@ -1207,6 +1207,13 @@ int main(void)
                             (unsigned)gBatteryCalibration[3],
                             (unsigned)gBatteryVoltageAverage,
                             (unsigned)gBatteryDisplayLevel, (unsigned)c);
+                uart_printf("  slots %u %u %u %u (idx %u) -- they fill over "
+                            "~4 s in the K1 loop\n",
+                            (unsigned)gBatteryVoltages[0],
+                            (unsigned)gBatteryVoltages[1],
+                            (unsigned)gBatteryVoltages[2],
+                            (unsigned)gBatteryVoltages[3],
+                            (unsigned)gBatteryVoltageIndex);
                 break;
             }
             case 'm':
