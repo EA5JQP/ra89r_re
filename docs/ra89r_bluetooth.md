@@ -1,10 +1,17 @@
 # RA89R Bluetooth
 
-**Status: identified, its control protocol extracted, and a transport driver +
-host test written — branch `driver/bluetooth`.  Nothing here has run on the
-radio yet** (this branch was written in a worktree with the vendor SDK submodule
-empty, so only the host test was built).  Every hardware claim below is a static
-reading of the stock image and says which function it comes from.
+**Status: mapped from the stock image; driver + host test complete; the module
+does not answer on this unit (branch `driver/bluetooth`, parked).**  The protocol
+work is solid — every `AT+…` command string and every `+IM_*` event is taken
+byte-for-byte from the image and checked by the host test (80 checks).  On the
+radio, however, the module never replies: console `y` drives it at 115200 (and
+9600/38400/57600/19200/4800/230400/76800) and through the stock's own order
+(`AT+RST`, `AT+SLEEP=OFF`, `AT+BT=EMITTER`, `AT+GMR?`), and every attempt returns
+the *same* byte `0x51 'Q'` with a framing error — an idle/floating line, not a
+response.  The UART, pins and rate match the stock exactly and there is no BT
+power/enable pin in the bring-up, so the remaining explanations are hardware
+level (module absent/unhealthy on this unit, or a variant that does not speak
+this AT set).  See "On-radio result" at the end.
 
 The owner's teardown says the board carries a **Jieli** Bluetooth audio chip; the
 firmware agrees and adds the detail: it is a Jieli **"AT" module**, the firmware
@@ -308,12 +315,44 @@ of the 40 command strings byte for byte; the five parameterised builders; every
 `+IM_*` / `+OK` / `+ERROR` line classifying to the right event; and the
 CRLF-splitting receive path delivering whole lines to the callback.
 
+## On-radio result: the module does not answer
+
+The driver was built for the target and run on the radio (console `y`).  The
+UART is provably correct — after `bluetooth_init()` the USART3 registers read
+`CR1 = 0x200c` (UE|TE|RE), `BRR = 0x01a1` (48 MHz / 115200), `CR3 = 0`, and
+`GPIOB` shows PB10/PB11 in AF2 (`MODER` bit-pairs = 2, `AFR[1]` nibbles = 2),
+with **PB11 idling high**.
+
+What the module returns, however, is nothing usable:
+
+* `AT+GMR?` at 115200 → one byte `0x51 'Q'`, framing error (`SR` `FE|ORE`).
+* The same at 9600, 38400, 57600, 19200, 4800, 76800 and 230400.
+* The stock's own order (`AT+RST`, `AT+SLEEP=OFF`, `AT+BT=EMITTER`, `AT+GMR?`),
+  one step at a time with ~0.8 s of listening each → **the same `0x51` with a
+  framing error, every step.**
+
+A real UART response differs per command and decodes cleanly at *some* rate; an
+identical byte with a framing error at every rate and every command is an idle/
+floating line, not data.  So the module is powered (PB11 is not floating low) but
+is not transmitting on PB11.
+
+That the software is not the cause is established statically as well:
+
+* The pins/rate/AF match the stock exactly (`FUN_08013420`, `FUN_08020bf4`).
+* The board bring-up `FUN_0801d718` sets only the LED (`PA13/PA14`), `PC13/PC15`,
+  `PD0`, `PA0/PA1` and the RF bus — **no BT power/enable/reset pin**, and no BT
+  init command.  The module is meant to come up on its own.
+
+So the remaining causes are hardware-level: the module is absent or unhealthy on
+this unit, its clock/rail is dead, or it is a variant that does not speak this AT
+set.  **The branch is parked** until a unit whose module answers is available; the
+protocol and driver are kept for that case.
+
 ## Open
 
-1. **Radio validation.**  Nothing here has been exercised on the device: the
-   driver has never been built for the target (the worktree's vendor SDK
-   submodule is empty), let alone run.  The first check is to echo `AT+GMR?` and
-   watch for `+IM_VERSION:`, then `AT+CONN_STATE?`.
+1. **Radio validation of the module itself** (not the driver): confirm on a unit
+   whose module answers that `AT+GMR?` returns `+IM_VERSION:`, then
+   `AT+CONN_STATE?`.  On *this* unit the module is silent (above).
 2. **The binary `RDTP` protocol.**  Frame layout, the meaning of the
    `fe fe ee ef` prefix, and the opcode list are open; the opcodes are only known
    from the two dispatch sites.
