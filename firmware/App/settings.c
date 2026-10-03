@@ -270,6 +270,13 @@ void SETTINGS_InitEEPROM(void)
      * between the two VFOs.  The receiver must follow the selected VFO, so
      * force it off whatever the blob says. */
     gEeprom.DUAL_WATCH = DUAL_WATCH_OFF;
+
+    /* A blob saved before BATTERY_TYPE_2800_MAH existed carries the old default
+     * (0 = 1600 mAh), the wrong curve for this radio's 2800 mAh pack.  The blob
+     * round-trips the whole gEeprom, so the default in SettingsDefaults() is
+     * overwritten on every boot; force the type here, as DUAL_WATCH is.  The
+     * BatTyp menu can still change it at runtime. */
+    gEeprom.BATTERY_TYPE = BATTERY_TYPE_2800_MAH;
 }
 
 void SETTINGS_LoadCalibration(void)
