@@ -546,13 +546,14 @@ static void bt_on_event(bt_event_t ev, const char *payload, unsigned len)
 
 static void bt_bench(void)
 {
-    static const uint32_t bauds[] = { 115200u, 57600u, 38400u, 19200u,
-                                      9600u, 4800u, 230400u, 76800u };
-    unsigned b, t;
+    static const char *const seq[] = {
+        "AT+RST\r\n", "AT+SLEEP=OFF\r\n", "AT+BT=EMITTER\r\n", "AT+GMR?\r\n",
+    };
+    unsigned s, t;
 
     bluetooth_init();
     bluetooth_set_event_cb(bt_on_event);
-    uart_puts("\nBT: Jieli module on USART3 (PB10 TX / PB11 RX)\n");
+    uart_puts("\nBT: Jieli module on USART3 (PB10 TX / PB11 RX, 115200)\n");
     uart_printf("  USART3 CR1=0x%04X BRR=0x%04X CR3=0x%04X\n",
                 (unsigned)BOARD_BT_UART->CR1, (unsigned)BOARD_BT_UART->BRR,
                 (unsigned)BOARD_BT_UART->CR3);
@@ -562,29 +563,33 @@ static void bt_bench(void)
                 (unsigned)BOARD_BT_UART_PORT->IDR,
                 (BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN) ? "high" : "low");
 
-    for (b = 0; b < sizeof bauds / sizeof bauds[0]; b++) {
-        BOARD_BT_UART->BRR = (BOARD_APB1_HZ + (bauds[b] / 2u)) / bauds[b];
-        while (BOARD_BT_UART->SR & USART_SR_RXNE)
-            (void)BOARD_BT_UART->DR;
+    /* The stock's own order: reset, un-sleep, set the role, then ask. */
+    for (s = 0; s < sizeof seq / sizeof seq[0]; s++) {
+        unsigned len = 0;
 
-        uart_printf("  -- %u baud: -> AT / AT+GMR?\n", (unsigned)bauds[b]);
-        bluetooth_send("AT\r\n");
-        bluetooth_send_cmd(BT_CMD_GMR);
+        uart_printf("  -> %s", seq[s]);
+        bluetooth_send(seq[s]);
+        while (seq[s][len] != '\0' && seq[s][len] != '\r')
+            len++;
+        (void)len;
 
-        for (t = 0; t < 60u; t++) {     /* ~0.6 s */
+        for (t = 0; t < 80u; t++) {     /* ~0.8 s per step */
             uint16_t sr = BOARD_BT_UART->SR;
 
-            if (sr & USART_SR_RXNE)
-                uart_printf("     raw 0x%02X\n",
-                            (unsigned)(BOARD_BT_UART->DR & 0xffu));
+            if (sr & USART_SR_RXNE) {
+                uint8_t b = (uint8_t)BOARD_BT_UART->DR;
+
+                uart_printf("     raw 0x%02X %s\n", (unsigned)b,
+                            (b >= 0x20 && b < 0x7f) ? (const char[]){ b, 0 } : "");
+            }
             if (sr & (USART_SR_ORE | USART_SR_FE | USART_SR_PE | USART_SR_NE))
                 uart_printf("     err SR=0x%04X\n", (unsigned)sr);
             systick_delay_ms(10);
         }
     }
 
-    uart_puts("  no bytes at any baud means the module is alive (PB11 high) but not\n"
-              "  answering -- it likely needs the stock's own init or a wake.\n");
+    uart_puts("  if every step is silent, the module is not speaking this AT set\n"
+              "  on this unit -- docs/ra89r_bluetooth.md.\n");
 }
 
 /* ------------------------------------------- cable-free audio-path bench
