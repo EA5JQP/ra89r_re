@@ -1214,6 +1214,11 @@ int main(void)
                             (unsigned)gBatteryVoltages[2],
                             (unsigned)gBatteryVoltages[3],
                             (unsigned)gBatteryVoltageIndex);
+                uart_printf("  type %u (%s), percent %u%%, text mode %u\n",
+                            (unsigned)gEeprom.BATTERY_TYPE,
+                            gSubMenu_BATTYP[gEeprom.BATTERY_TYPE],
+                            BATTERY_VoltsToPercent(gBatteryVoltageAverage),
+                            (unsigned)gSetting_battery_text);
                 break;
             }
             case 'm':
@@ -1577,6 +1582,7 @@ int main(void)
              * transmit chain) plus the repaint.  The console stays a debugging
              * channel throughout. */
             static uint32_t slice10, slice500;
+            static uint8_t  last_battery_level = 0xFFu;
 
             /* The K1's own loop: APP_Update() runs the state machine and
              * repaints when it sets gUpdateDisplay; APP_TimeSlice10ms() ends
@@ -1600,6 +1606,16 @@ int main(void)
             if ((uint32_t)(now - slice500) >= 500u) {
                 slice500 = now;
                 APP_TimeSlice500ms();
+
+                /* The K1 refreshes the status bar -- where the battery icon
+                 * lives -- only for a charging pack or when the battery-text
+                 * setting is on (app/app.c).  A level change must repaint it
+                 * regardless, or the icon keeps whatever the boot draw left
+                 * (which is level 0, because the samples fill over ~4 s). */
+                if (gBatteryDisplayLevel != last_battery_level) {
+                    last_battery_level = gBatteryDisplayLevel;
+                    gUpdateStatus      = true;
+                }
             }
         }
 

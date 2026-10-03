@@ -177,7 +177,13 @@ void SettingsDefaults(void)
     gEeprom.MIC_SENSITIVITY_TUNING = 0;
     gEeprom.VOLUME_GAIN = 8;
     gEeprom.DAC_GAIN = 8;
-    gEeprom.BATTERY_TYPE = BATTERY_TYPE_1600_MAH;
+    gEeprom.BATTERY_TYPE = BATTERY_TYPE_2800_MAH;
+    /* The K1 loads this from its settings block and maps a blank (0xFF) field
+     * to 2 (percentage).  The port bypasses that loader, so it used to stay 0
+     * -- and app/app.c only refreshes the status bar, where the battery icon
+     * lives, when this is > 0.  The bar was therefore painted once at boot,
+     * before the first sample, and the icon stayed empty. */
+    gSetting_battery_text = 2;
     gEeprom.POWER_ON_DISPLAY_MODE = POWER_ON_DISPLAY_MODE_ALL;
     gEeprom.ROGER = ROGER_MODE_OFF;
     gEeprom.BACKLIGHT_MIN = 1;

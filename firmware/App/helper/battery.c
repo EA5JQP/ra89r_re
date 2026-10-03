@@ -103,6 +103,18 @@ const uint16_t Voltage2PercentageTable[][7][2] = {
         {623, 0  },  // Fully discharged (between 630 and 600)
         {0,   0  },
     },
+
+    // 2800 mAh pack (the RA89R's own cell): the 2S Li-ion curve sits between
+    // the 2500 and 3500 entries, so this is their midpoint.
+    [BATTERY_TYPE_2800_MAH] = {
+        {838, 100},  // Fully charged
+        {822, 95 },  // Top end
+        {747, 50 },  // Mid range
+        {701, 25 },  // Low level
+        {644, 5  },  // Almost empty
+        {611, 0  },  // Fully discharged
+        {0,   0  },
+    },
 };
 
 /* Useless (for compilator only)

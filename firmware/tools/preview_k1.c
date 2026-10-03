@@ -19,6 +19,7 @@
 #include "driver/keyboard.h"
 #include "driver/st7565.h"
 #include "helper/boot.h"
+#include "helper/battery.h"
 #include "host_hw.h"
 #include "py32f4xx.h"      /* TIM7/DMA/SYSCFG scratch, for the backlight checks */
 #include "misc.h"
@@ -32,6 +33,7 @@
 #include "ui/ui.h"
 #include "driver/py25q16.h"
 #include "ui/menu.h"
+#include "ui/status.h"
 
 /* State assertions this preview checks (the panel rendering is eyeballed). */
 static int failures;
@@ -170,6 +172,26 @@ int main(void)
     gMenuCursor = 3;
     UI_DisplayMenu();
     render("K1 UI_DisplayMenu(): the menu list, fourth item");
+
+    /* SysInf, as the menu draws it: page 0 is the identity (the port now shows
+     * the pack there too) and page 2 is the dedicated BATTERY page.  A plausible
+     * pack so the lines are visible. */
+    gBatteryVoltageAverage = 828;
+    gBatteryDisplayLevel   = 6;
+    gIsInSubMenu           = true;
+    gMenuCursor            = UI_MENU_GetViewPos(MENU_VOL);
+    gSubMenuSelection      = 0;
+    UI_DisplayMenu();
+    render("SysInf page 0 (identity + battery)");
+    gSubMenuSelection      = 2;
+    UI_DisplayMenu();
+    render("SysInf page 2 (BATTERY)");
+    gIsInSubMenu           = false;
+
+    /* The status bar with a charged pack: the icon must show bars, and (with
+     * gSetting_battery_text = 2) the percentage beside it. */
+    UI_DisplayStatus();
+    render("status bar: battery icon, level 6");
 
     gRxVfo->freq_config_RX.Frequency = 43350000u;
     gRxVfo->freq_config_TX.Frequency = 43350000u;

@@ -47,11 +47,27 @@ expects.  With the K1's default calibration (760) that is the measured pack dire
 the K1's own battery-calibration menu can still trim it.  There is no charge-current sense
 on this board, so the reported current is zero.  Console `u` prints the same value.
 
-The external flash's battery-calibration window (`0x10140`) is **blank on this radio** (all
-`0xFF`), and `settings.c`'s fallback only covered `[0]`/`[1]`, so `gBatteryCalibration[3]`
-stayed `0xFFFF`.  That is the divisor in `BATTERY_GetReadings`' `(voltage * 760) / [3]`, so
-every reading collapsed to ~0 -- the empty battery icon and a `0.00V 0%` SysInf.  `settings.c`
-now falls back `[3]` to the K1's `760` as well.
+The external flash's battery-calibration window (`0x10140`) holds the **K1's raw-ADC
+reference**, `gBatteryCalibration[3] = 2300` on this radio -- not the `0xFFFF` a blank
+window would give.  That is the divisor in `BATTERY_GetReadings`' `(voltage * 760) / [3]`,
+and it is meaningless here because `BOARD_ADC_GetBatteryInfo()` already returns the pack in
+10 mV: even a full `8.28 V` read collapsed to `828 * 760 / 2300 = ~2.73 V` -> below the
+`630`/`600` cutoffs -> **level 0, the empty battery icon and a `0.00 V 0 %` SysInf**.  So the
+calibration must be the **identity**: `SETTINGS_LoadCalibration()` now forces
+`gBatteryCalibration[3] = 760` unconditionally.  (The earlier guard only replaced a blank
+`0xFFFF`; the real value is not blank, so it never fired.)
+
+**Validated on the radio (`u`, 2026-10).**  The four `gBatteryVoltages[]` slots fill one per
+~1 s in the K1's `APP_TimeSlice500ms`, so `u` run repeatedly after boot shows the average
+ramping `0 -> 207 -> 414 -> 828`; once full:
+
+```
+battery: raw 3399 (ch9/PB1), board 828 (10 mV), cal[3] 760, avg 828 (10 mV), level 6, cur 0
+  slots 828 829 829 828 (idx 0)
+```
+
+`avg 828` -> `level 6` -> a filled icon.  A `u` taken within the first ~4 s after boot
+under-reports because the slots are still filling; that is the K1's smoothing, not a fault.
 
 
 ## Enable / power, and the CMSIS (both checked, 2026-10)

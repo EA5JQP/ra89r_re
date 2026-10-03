@@ -374,7 +374,7 @@ int MENU_GetLimits(uint8_t menu_id, int32_t *pMin, int32_t *pMax)
 
         case MENU_BATTYP:
             //*pMin = 0;
-            *pMax = 4;
+            *pMax = 5;
             break;
 
         case MENU_SET_NAV:
