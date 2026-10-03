@@ -1406,6 +1406,18 @@ void UI_DisplayMenu(void)
 #ifdef ENABLE_FEAT_F4HWN
                 sprintf(String, "%s\n%s", AUTHOR_STRING_2, DISPLAY_VERSION_STRING_2);
                 UI_PrintStringSmallNormal(Edition, menu_item_x1 - 1, menu_item_x2, 6);
+
+                /* The pack also has its own page below, but SysInf opens here,
+                 * so show it too.  Row 5 is the free one: the version's two-row
+                 * glyph owns 3-4 and Edition is at 6. */
+                {
+                    char batt[16];
+
+                    sprintf(batt, "%u.%02uV %u%%",
+                        gBatteryVoltageAverage / 100, gBatteryVoltageAverage % 100,
+                        BATTERY_VoltsToPercent(gBatteryVoltageAverage));
+                    UI_PrintStringSmallNormal(batt, menu_item_x1 - 1, menu_item_x2, 5);
+                }
 #ifdef ENABLE_FEAT_F4HWN_MULTIBOOT
                 /* Two 3x5 inverse-capsule labels on one line (scan-list "label"
                  * style): the running firmware slot (M = Main) and the active
