@@ -204,6 +204,15 @@
  * PC14/PB2, once taken for a companion gauge, is the BK1080 FM receiver's I2C. */
 #define BATTERY_ADC_PIN      (1u << 1)    /* PB1  */
 
+/* BK1080 FM receiver: a two-wire bus on PC14 (clock) / PB2 (data,
+ * bidirectional -- driven to send, released to read).  This is the line pair
+ * once read as a "companion battery gauge"; docs/ra89r_bk1080.md corrects that
+ * identification.  The framing is the BK1080's: device id `0x80`, then a
+ * control word `(reg << 1) | R/W`, then 16-bit words MSB first (stock
+ * `FUN_08007034`/`FUN_08007158`/`FUN_08007240`). */
+#define BK1080_SCL_PIN       (1u << 14)   /* PC14 */
+#define BK1080_SDA_PIN       (1u << 2)    /* PB2  */
+
 /* Not mapped yet: the USB-C port goes to the MCU's USB device peripheral, which
  * nothing in the stock firmware enables. */
 
