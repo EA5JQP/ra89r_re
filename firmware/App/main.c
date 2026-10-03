@@ -545,10 +545,19 @@ static void fm_bench(void)
     uart_printf("  init: 68-byte block + %u writes to reg 0x32 sent\n",
                 (unsigned)bk1080_config_reg32_writes());
 
+    uart_printf("  after init: reg2=0x%04X reg3=0x%04X reg5=0x%04X\n",
+                (unsigned)bk1080_read_reg(0x02), (unsigned)bk1080_read_reg(0x03),
+                (unsigned)bk1080_read_reg(0x05));
+
     bk1080_set_frequency(10000000u);        /* 100.0 MHz, in 10 Hz units */
+    for (volatile unsigned d = 0; d < 300000u; d++)   /* let the PLL settle */
+        ;
     got = bk1080_get_frequency();
     status = bk1080_read_status();
 
+    uart_printf("  after tune: reg2=0x%04X reg3=0x%04X reg5=0x%04X readchan=0x%04X\n",
+                (unsigned)bk1080_read_reg(0x02), (unsigned)bk1080_read_reg(0x03),
+                (unsigned)bk1080_read_reg(0x05), (unsigned)bk1080_read_reg(0x0B));
     uart_printf("  tuned 100.0 MHz -> READCHAN reads %u.%05u MHz\n",
                 (unsigned)(got / 100000u), (unsigned)(got % 100000u));
     uart_printf("  status 0x%04X: RSSI %u dBuV, SNR %u, STC %u, SF/BL %u, ST %u\n",
