@@ -21,3 +21,6 @@ docs/superpowers/
 
 # editor settings
 .vscode/
+
+# git worktrees for parallel per-peripheral work (see AGENTS.md)
+.worktrees/
