@@ -32,6 +32,10 @@ project, the CPS sources) lives outside the workspace (see "Reference inputs").
 - `docs/ra89r_bk1080.md` — the BK1080 FM receiver on `PC14`/`PB2`: the I2C
   framing, the register map the stock uses, the 68-byte init block, the tuning
   word, and the RSSI/seek path, with the driver on branch `driver/bk1080`.
+- `docs/ra89r_usart2.md` — the third UART: USART2 on `PA2`/`PA3` (AF2, 115200),
+  brought up by `FUN_080072A4` but with no TX/RX, no handler and no device —
+  its pins are switched to the keypad ADC ladder in the same function, so it is
+  a vestigial init, not a link.
 - `docs/ra89r_keypad.md` — the 20-button ADC-ladder key matrix and its F4HWN
   `KEY_Code_e` mapping.
 - `docs/ra89r_beeper.md` — the beeper: a DAC tone on `PA4`, played by TIM4 + DMA.

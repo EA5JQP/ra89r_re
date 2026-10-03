@@ -282,15 +282,15 @@ The three UARTs the stock brings up:
 | UART | pins | rate | evidence |
 |---|---|---|---|
 | USART1 | `PB6`/`PB7` | **57600** | `FUN_0801D718` calls `FUN_08020B48(0xE100)` |
-| USART2 | `PA2`/`PA3` (AF2) | **115200** | `FUN_080072A4`: enables `APB1ENR` bit 17, baud `0x1C200`, configures `PA2`/`PA3` as AF and enables its interrupt |
+| USART2 | `PA2`/`PA3` (AF2) | **115200** | `FUN_080072A4`: enables `APB1ENR` bit 17, baud `0x1C200`, configures `PA2`/`PA3` as AF and enables its interrupt — but it is **never used** (no TX/RX, no handler, and its pins become the keypad ADC ladder): see `ra89r_usart2.md` |
 | USART3 | not established | **115200** | `FUN_0801D718` calls `FUN_08020BE4(0x1C200)`; the init sets the rate but configures no pins, so the pin mux is set elsewhere |
 
-`USART1` at 57600 is the Kenwood/programming port the bootloader also uses.  That
-leaves **two** external devices on UARTs and only one identified candidate — the
-Bluetooth module — so either `USART2` or `USART3` is the Bluetooth link and the
-other is still unnamed.  The AT strings are reached by index rather than by
-pointer (nothing in the image points into `0x08022300..0x08022900`), so naming
-the link needs the AT-command layer read, not a pointer search.
+`USART1` at 57600 is the Kenwood/programming port the bootloader also uses.
+`USART3` is the Bluetooth module — the Jieli AT module on `PB10`/`PB11`, whose
+write-up `ra89r_bluetooth.md` lives on branch `driver/bluetooth`.  `USART2` is a
+**vestigial bring-up with no device behind it** — no TX/RX path, no handler, and
+its `PA2`/`PA3` pins are reconfigured as the keypad ADC ladder in the same
+function that initialises it (`ra89r_usart2.md`).
 
 ### Loading the current decode into Ghidra
 

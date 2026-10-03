@@ -22,6 +22,7 @@ notes and quoted addresses use a shifted coordinate system.
 | [`ra89r_led.md`](ra89r_led.md) | the status LED (`PA13` red / `PA14` green, active high) and the backlight (`PA5`), including the pin searches that came up empty |
 | [`ra89r_battery.md`](ra89r_battery.md) | the battery sense (ADC channel 9 / `PB1`), and the record of the earlier "companion gauge" dead end — that bus is the BK1080, see below |
 | [`ra89r_bk1080.md`](ra89r_bk1080.md) | the BK1080 FM receiver on `PC14`/`PB2`: the I2C framing, the register map, the init block, the tune, and the RSSI/seek path |
+| [`ra89r_usart2.md`](ra89r_usart2.md) | USART2 on `PA2`/`PA3` (AF2, 115200): the bring-up, and the evidence that it is a vestigial init with no device behind it — its pins are the keypad ADC ladder |
 | [`ra89r_beeper.md`](ra89r_beeper.md) | the beeper: TIM4 plus a tone generator, its pin is `PA4` (`DAC_OUT1`) |
 | [`ra89r_bk4829.md`](ra89r_bk4829.md) | the RF transceiver on chip select `PB8`: identity (`0x4829`), boot sequence, differences from the UV-K1/K5V3 driver |
 | [`ra89r_bk4815.md`](ra89r_bk4815.md) | the second transceiver, on `PB13`: identity (`0x4816`), its differently framed register access, boot sequence, 18-register table, the datasheet register map, the `0x71`/`0x72` frequency word, and its role as the > 134 MHz receive path |
