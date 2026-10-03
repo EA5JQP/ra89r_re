@@ -550,8 +550,7 @@ static void fm_bench(void)
                 (unsigned)bk1080_read_reg(0x05));
 
     bk1080_set_frequency(10000000u);        /* 100.0 MHz, in 10 Hz units */
-    for (volatile unsigned d = 0; d < 300000u; d++)   /* let the PLL settle */
-        ;
+    (void)bk1080_wait_tune(300);            /* the stock polls STC */
     got = bk1080_get_frequency();
     status = bk1080_read_status();
 
@@ -567,11 +566,33 @@ static void fm_bench(void)
                 (unsigned)bk1080_seek_failed(),
                 (unsigned)((status & BK1080_STATUS_ST) ? 1u : 0u));
 
-    if (id == BK1080_ID)
-        uart_puts("  the part answers: the bus, the pins and the framing are ours.\n");
-    else
+    if (id != BK1080_ID) {
         uart_puts("  0xFFFF means the bus stayed high: check PC14/PB2 and the\n"
                   "  part's supply -- see docs/ra89r_bk1080.md.\n");
+        return;
+    }
+
+    uart_puts("  the part answers: the bus, the pins and the framing are ours.\n"
+              "  band sweep -- RSSI should track the broadcast signals:\n");
+
+    {
+        static const uint32_t fm[] = { 8750000u, 9000000u, 9500000u, 9800000u,
+                                       10000000u, 10400000u, 10800000u };
+        unsigned k;
+
+        for (k = 0; k < sizeof fm / sizeof fm[0]; k++) {
+            uint16_t st;
+
+            bk1080_set_frequency(fm[k]);
+            (void)bk1080_wait_tune(300);
+            st = bk1080_read_status();
+            uart_printf("    %3u.%u MHz   RSSI %3u   %s\n",
+                        (unsigned)(fm[k] / 1000000u),
+                        (unsigned)((fm[k] / 100000u) % 10u),
+                        (unsigned)(st & BK1080_STATUS_RSSI_MASK),
+                        (st & BK1080_STATUS_ST) ? "stereo" : "mono");
+        }
+    }
 }
 
 /* ------------------------------------------- cable-free audio-path bench

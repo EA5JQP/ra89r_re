@@ -107,6 +107,12 @@ void     bk1080_config_reg32_entry(unsigned i, uint16_t *value);
  * and TUNE|CHAN to register 3.  The channel step is 100 kHz. */
 void bk1080_set_frequency(uint32_t freq_10hz);
 
+/* Wait for the tune to complete: poll STC up to `timeout` times.  The stock
+ * polls the status register rather than delaying, and the part needs a moment
+ * after TUNE before STC and READCHAN are valid -- reading READCHAN immediately
+ * returns the band base.  Returns true when STC came back. */
+bool bk1080_wait_tune(unsigned timeout);
+
 /* The tuned frequency in 10 Hz units, `FUN_0800687C`: READCHAN[9:0] from
  * register 0x0b plus the band's base (875/760/640 in 100 kHz units). */
 uint32_t bk1080_get_frequency(void);

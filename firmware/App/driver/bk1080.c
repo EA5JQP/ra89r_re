@@ -156,6 +156,15 @@ void bk1080_set_frequency(uint32_t freq_10hz)
     bk1080_write_reg(BK1080_REG_CHANNEL, (uint16_t)(BK1080_CHANNEL_TUNE | chan));
 }
 
+bool bk1080_wait_tune(unsigned timeout)
+{
+    while (timeout-- > 0u) {
+        if (bk1080_seek_complete())
+            return true;
+    }
+    return false;
+}
+
 /* `FUN_0800687C`: READCHAN from register 0x0b, BAND from register 0x05, then the
  * band's base in 100 kHz units.  The order of the two reads is the stock's. */
 uint32_t bk1080_get_frequency(void)
