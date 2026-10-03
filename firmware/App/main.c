@@ -551,6 +551,14 @@ static void bt_bench(void)
     bluetooth_init();
     bluetooth_set_event_cb(bt_on_event);
     uart_puts("\nBT: Jieli module on USART3 (PB10 TX / PB11 RX, 115200 8N1)\n");
+    uart_printf("  USART3 CR1=0x%04X BRR=0x%04X CR3=0x%04X\n",
+                (unsigned)BOARD_BT_UART->CR1, (unsigned)BOARD_BT_UART->BRR,
+                (unsigned)BOARD_BT_UART->CR3);
+    uart_printf("  GPIOB MODER=0x%08X AFR[1]=0x%08X IDR=0x%04X -- PB11 idle %s\n",
+                (unsigned)BOARD_BT_UART_PORT->MODER,
+                (unsigned)BOARD_BT_UART_PORT->AFR[1],
+                (unsigned)BOARD_BT_UART_PORT->IDR,
+                (BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN) ? "high" : "low");
     uart_puts("  -> AT+GMR?\n");
     bluetooth_send_cmd(BT_CMD_GMR);
 
