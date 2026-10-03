@@ -71,9 +71,11 @@ set(APP_SOURCES
     App/ui/battery.c
     App/ui/scanner.c
     App/ui/welcome.c
+    App/ui/fmradio.c
     App/driver/keyboard.c
     App/app/menu.c
     App/app/action.c
+    App/app/fm.c
     App/version.c
     App/dcs.c
     App/frequencies.c

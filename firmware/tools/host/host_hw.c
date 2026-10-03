@@ -4,6 +4,7 @@
 #include "py32f4xx.h"
 
 #include "driver/backlight.h"
+#include "driver/bk1080.h"
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
 #include "driver/systick.h"
@@ -59,6 +60,22 @@ void BK4819_SetFilterBandwidth(const BK4819_FilterBandwidth_t Bandwidth,
 }
 
 void BK4819_SetRxAudioGain(void) { }
+
+/* FM broadcast: the host compiles no I2C bus, so the K1's BK1080 API is a set of
+ * no-ops here.  The FM screen's layout and the FM state machine still run (the
+ * ported app/fm.c is linked), which is what the preview exercises; the chip
+ * itself is only reachable on the radio (docs/ra89r_bk1080.md). */
+uint16_t BK1080_BaseFrequency;
+uint16_t BK1080_FrequencyDeviation;
+void     BK1080_Init0(void) { }
+void     BK1080_Init(uint16_t Frequency, uint8_t band) { (void)Frequency; (void)band; }
+uint16_t BK1080_ReadRegister(BK1080_Register_t Register) { (void)Register; return 0; }
+void     BK1080_WriteRegister(BK1080_Register_t Register, uint16_t Value) { (void)Register; (void)Value; }
+void     BK1080_Mute(bool Mute) { (void)Mute; }
+uint16_t BK1080_GetFreqLoLimit(uint8_t band) { static const uint16_t lim[] = {875, 760, 760, 640}; return lim[band % 4]; }
+uint16_t BK1080_GetFreqHiLimit(uint8_t band) { static const uint16_t lim[] = {1080, 1080, 900, 760}; return lim[band % 4]; }
+void     BK1080_SetFrequency(uint16_t frequency, uint8_t band) { (void)frequency; (void)band; }
+void     BK1080_GetFrequencyDeviation(uint16_t Frequency) { (void)Frequency; }
 
 /* Keypad: the RA89R reads an ADC ladder, so the host stands in with a key the
  * preview sets by hand -- that is how the port's key loop (port_gui.c) is

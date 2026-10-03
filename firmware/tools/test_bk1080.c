@@ -88,6 +88,10 @@ void i2c_bus_send_ack(bool ack)
         txns[ntxn].ack[txns[ntxn].ack_len++] = ack ? 1 : 0;
 }
 
+/* The K1 API's `BK1080_Init`/`BK1080_SetFrequency` pace the part with
+ * SYSTEM_DelayMs (driver/system.h).  A stub keeps the test instant. */
+void SYSTEM_DelayMs(uint32_t Delay) { (void)Delay; }
+
 /* ---------------------------------------------------------------- checks --- */
 
 static int failures;
@@ -295,6 +299,82 @@ static void test_status(void)
     check_hex((txns[1].wr[2] << 8) | txns[1].wr[3], 0x00f0, "clear_tune clears bit 15");
 }
 
+/* --------------------------------------------- the K1/F4HWN driver API --- */
+
+/* The K1 API shares the framing above; these checks pin its own register image
+ * and its 100 kHz arithmetic, which is what app/fm.c drives. */
+static void test_k1_api(void)
+{
+    printf("K1/F4HWN API\n");
+
+    check_hex(BK1080_GetFreqLoLimit(0), 875, "K1 band 0 low limit");
+    check_hex(BK1080_GetFreqLoLimit(1), 760, "K1 band 1 low limit");
+    check_hex(BK1080_GetFreqLoLimit(3), 640, "K1 band 3 low limit");
+    check_hex(BK1080_GetFreqHiLimit(1), 1080, "K1 band 1 high limit");
+    check_hex(BK1080_GetFreqHiLimit(3), 760, "K1 band 3 high limit");
+
+    /* Mute: register 2 = 0x4201, unmute = 0x0201. */
+    bus_reset();
+    BK1080_Mute(true);
+    check(ntxn == 1 && txn_wr(&txns[0], 1, 0x04), "BK1080_Mute(true) writes reg 2");
+    check_hex((txns[0].wr[2] << 8) | txns[0].wr[3], 0x4201, "  mute value");
+    bus_reset();
+    BK1080_Mute(false);
+    check_hex((txns[0].wr[2] << 8) | txns[0].wr[3], 0x0201, "  unmute value");
+
+    /* A register read is the same word read as the stock path. */
+    bus_reset();
+    queue_read(0x12, 0x34);
+    check_hex(BK1080_ReadRegister(BK1080_REG_07), 0x1234, "BK1080_ReadRegister reg 0x07");
+    check_hex(txns[0].wr[1], 0x0f, "  control word (0x07 << 1) | 1");
+
+    /* Deviation: reg 0x07 / 16, and the base frequency is stored. */
+    bus_reset();
+    queue_read(0x12, 0x34);
+    BK1080_GetFrequencyDeviation(1000);
+    check_hex(BK1080_BaseFrequency, 1000, "BK1080_BaseFrequency is stored");
+    check_hex(BK1080_FrequencyDeviation, 0x1234 / 16, "BK1080_FrequencyDeviation = reg7 / 16");
+
+    /* BK1080_SetFrequency(1000, 1) -- 100.0 MHz in the K1's 100 kHz units:
+     * band bits 01 into reg 5 (0x0A1F -> 0x0A5F), channel 240, then TUNE. */
+    bus_reset();
+    queue_read(0x0a, 0x1f);            /* reg 5 read */
+    BK1080_SetFrequency(1000, 1);
+    check(ntxn == 4, "set frequency: read+write reg 5, then two reg 3 writes");
+    check_hex(txns[0].wr[1], 0x0b, "  reads reg 5 first (control (0x05<<1)|1)");
+    check_hex((txns[1].wr[2] << 8) | txns[1].wr[3], 0x0a5f, "  reg 5 band = 01");
+    check_hex((txns[2].wr[2] << 8) | txns[2].wr[3], 0x00f0, "  reg 3 channel 240");
+    check_hex((txns[3].wr[2] << 8) | txns[3].wr[3], 0x80f0, "  reg 3 TUNE|channel");
+
+    /* The full K1 power-up image: 34 registers (0x00..0x21), then two writes to
+     * reg 0x19, reg 5 = 0x0A1F, then the tune.  Only the first init runs (the
+     * driver latches gIsInitBK1080), so this is the one call that walks the
+     * table. */
+    bus_reset();
+    queue_read(0x0a, 0x1f);            /* reg 5 read inside SetFrequency */
+    BK1080_Init(1000, 1);
+    check(ntxn == 41, "K1 init: 34 table writes + 2 reg 0x19 + reg 5 + 4 tune");
+    check(txn_wr(&txns[0], 1, 0x00), "  table starts at reg 0");
+    check_hex((txns[0].wr[2] << 8) | txns[0].wr[3], 0x0008, "  reg 0 = 0x0008");
+    check_hex((txns[1].wr[2] << 8) | txns[1].wr[3], 0x1080, "  reg 1 = chip id 0x1080");
+    check_hex((txns[5].wr[2] << 8) | txns[5].wr[3], 0x0a1f, "  reg 5 = 0x0A1F");
+    check(txn_wr(&txns[34], 1, 0x32) && txns[34].wr[2] == 0xa8 && txns[34].wr[3] == 0x3c,
+          "  then reg 0x19 = 0xA83C");
+    check(txn_wr(&txns[35], 1, 0x32) && txns[35].wr[2] == 0xa8 && txns[35].wr[3] == 0xbc,
+          "  then reg 0x19 = 0xA8BC");
+    check(txn_wr(&txns[36], 1, 0x0a) &&
+          ((txns[36].wr[2] << 8) | txns[36].wr[3]) == 0x0a1f,
+          "  then reg 5 = 0x0A1F");
+    check_hex((txns[40].wr[2] << 8) | txns[40].wr[3], 0x80f0,
+              "  and the 100.0 MHz tune (reg 3 TUNE|240)");
+
+    /* Power-down: BK1080_Init0() writes reg 2 = 0x0241. */
+    bus_reset();
+    BK1080_Init0();
+    check(ntxn == 1 && txn_wr(&txns[0], 1, 0x04), "BK1080_Init0() writes reg 2");
+    check_hex((txns[0].wr[2] << 8) | txns[0].wr[3], 0x0241, "  power-down value");
+}
+
 int main(void)
 {
     printf("bk1080 register-layer test (stub bus, no radio)\n\n");
@@ -303,6 +383,7 @@ int main(void)
     test_configure();
     test_tuning();
     test_status();
+    test_k1_api();
 
     printf("\n%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

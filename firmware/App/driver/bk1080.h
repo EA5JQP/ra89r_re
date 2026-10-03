@@ -25,12 +25,24 @@
  *
  * None of this has run on the radio.  The evidence is the stock image and the
  * datasheet; see docs/ra89r_bk1080.md for the function-by-function derivation.
+ *
+ * This header also carries the K1/F4HWN driver API (`BK1080_Init`,
+ * `BK1080_SetFrequency`, ...), imported from the UV-K1/K5V3 project's
+ * `App/driver/bk1080.h` + `bk1080-regs.h` so the ported `app/fm.c` and
+ * `ui/fmradio.c` link unchanged.  The K1's implementation lives in this file's
+ * `.c` (see NOTICE); it is the same part and the same wire framing, with a
+ * different vendor register image (the K1's 33-entry table vs the RA89R stock's
+ * 68-byte block) and the K1's 100 kHz frequency unit instead of the stock
+ * path's 10 Hz.  Both are offered because the stock path is what the console
+ * `j` bench and `tools/test_bk1080.c` exercise; the FM feature uses the K1 API.
  */
 #ifndef DRIVER_BK1080_H
 #define DRIVER_BK1080_H
 
 #include <stdbool.h>
 #include <stdint.h>
+
+#include "driver/bk1080-regs.h"
 
 /* The fixed device-id byte the stock clocks out before every control word. */
 #define BK1080_ADDR  0x80u
@@ -128,5 +140,26 @@ uint8_t  bk1080_get_snr(void);           /* SNR[3:0] from register 0x07 */
 void bk1080_seek_up(void);     /* set SEEK | SEEKUP | SKMODE  (`FUN_08006952`) */
 void bk1080_clear_seek(void);  /* clear SEEK                  (`FUN_08006982`) */
 void bk1080_clear_tune(void);  /* clear TUNE                  (`FUN_080069A6`) */
+
+/* ---------------------------------------------------------------------------
+ * The K1/F4HWN driver API (imported -- see the header comment and NOTICE).
+ *
+ * Frequencies here are the K1's 100 kHz units (875 = 87.5 MHz), not the stock
+ * path's 10 Hz.  The register access is the same framing above; only the init
+ * image and the arithmetic differ.
+ * ------------------------------------------------------------------------- */
+
+extern uint16_t BK1080_BaseFrequency;
+extern uint16_t BK1080_FrequencyDeviation;
+
+void     BK1080_Init0(void);
+void     BK1080_Init(uint16_t Frequency, uint8_t band);
+uint16_t BK1080_ReadRegister(BK1080_Register_t Register);
+void     BK1080_WriteRegister(BK1080_Register_t Register, uint16_t Value);
+void     BK1080_Mute(bool Mute);
+uint16_t BK1080_GetFreqLoLimit(uint8_t band);
+uint16_t BK1080_GetFreqHiLimit(uint8_t band);
+void     BK1080_SetFrequency(uint16_t frequency, uint8_t band);
+void     BK1080_GetFrequencyDeviation(uint16_t Frequency);
 
 #endif /* DRIVER_BK1080_H */
