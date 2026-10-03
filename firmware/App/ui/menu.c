@@ -1404,9 +1404,10 @@ void UI_DisplayMenu(void)
             if (page == p++) {
                 // Page 0: firmware identity.
 #ifdef ENABLE_FEAT_F4HWN
-                /* Pack first, then the identity -- four lines, so the menu
-                 * draws them in its small font. */
-                sprintf(String, "%u.%02uV %u%%\n%s\nv%s\n%s Edition",
+                /* Pack first, then the identity -- the menu draws the whole
+                 * thing in its small font when there are more than three
+                 * lines.  "Edition" gets its own line so no line runs wide. */
+                sprintf(String, "%u.%02uV %u%%\n%s\nv%s\n%s\nEdition",
                     gBatteryVoltageAverage / 100, gBatteryVoltageAverage % 100,
                     BATTERY_VoltsToPercent(gBatteryVoltageAverage),
                     AUTHOR_STRING_2, DISPLAY_VERSION_STRING_2, Edition);
