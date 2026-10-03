@@ -24,6 +24,7 @@
 /* Bluetooth module (Jieli): USART3 on PB10/PB11, AF2 -- board_pins.h */
 #define BOARD_BT_UART_PORT  GPIOB
 #define BOARD_BT_UART       USART3
+#define BOARD_BT_RESET_PORT GPIOD   /* PD0 = module active-low reset/enable */
 
 /* Keypad lines (see board_pins.h): the ladder inputs and the one digital key */
 #define KEYPAD_ANALOG_A_PORT GPIOA

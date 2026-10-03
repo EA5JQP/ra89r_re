@@ -544,13 +544,39 @@ static void bt_on_event(bt_event_t ev, const char *payload, unsigned len)
     uart_putc('\n');
 }
 
+/* Read whatever USART3 has for ~`ms`, printing each raw byte and any framing
+ * error.  Returns the number of bytes seen. */
+static unsigned bt_listen(unsigned ms)
+{
+    unsigned got = 0;
+    unsigned t;
+
+    for (t = 0; t < ms / 10u; t++) {
+        uint16_t sr = BOARD_BT_UART->SR;
+
+        if (sr & USART_SR_RXNE) {
+            uint8_t b = (uint8_t)BOARD_BT_UART->DR;
+
+            got++;
+            uart_printf("     raw 0x%02X %s\n", (unsigned)b,
+                        (b >= 0x20 && b < 0x7f) ? (const char[]){ b, 0 } : "");
+        }
+        if (sr & (USART_SR_ORE | USART_SR_FE | USART_SR_PE | USART_SR_NE))
+            uart_printf("     err SR=0x%04X\n", (unsigned)sr);
+        systick_delay_ms(10);
+    }
+    return got;
+}
+
 static void bt_bench(void)
 {
     static const char *const seq[] = {
         "AT+RST\r\n", "AT+SLEEP=OFF\r\n", "AT+BT=EMITTER\r\n", "AT+GMR?\r\n",
     };
-    unsigned s, t;
+    unsigned s;
 
+    /* bluetooth_init() brings up USART3 and releases the module from reset on
+     * PD0 (the stock's BT Switch line -- docs/ra89r_bluetooth.md). */
     bluetooth_init();
     bluetooth_set_event_cb(bt_on_event);
     uart_puts("\nBT: Jieli module on USART3 (PB10 TX / PB11 RX, 115200)\n");
@@ -562,34 +588,33 @@ static void bt_bench(void)
                 (unsigned)BOARD_BT_UART_PORT->AFR[1],
                 (unsigned)BOARD_BT_UART_PORT->IDR,
                 (BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN) ? "high" : "low");
+    uart_printf("  GPIOD MODER=0x%08X ODR=0x%04X -- PD0 reset %s\n",
+                (unsigned)BOARD_BT_RESET_PORT->MODER,
+                (unsigned)BOARD_BT_RESET_PORT->ODR,
+                (BOARD_BT_RESET_PORT->ODR & BT_RESET_PIN)
+                    ? "released (high)" : "held (low)");
+
+    /* Power-cycle the module so this run shows whether the reset line is the
+     * switch: assert PD0 low, release it high, then listen for the unsolicited
+     * `+IM_READY` the module sends when it boots. */
+    uart_puts("  -> PD0 low (assert reset), then high (release)\n");
+    bluetooth_power(false);
+    systick_delay_ms(100);
+    bluetooth_power(true);
+    uart_puts("  <- boot banner (1 s):\n");
+    if (bt_listen(1000u) == 0u)
+        uart_puts("     (nothing)\n");
 
     /* The stock's own order: reset, un-sleep, set the role, then ask. */
     for (s = 0; s < sizeof seq / sizeof seq[0]; s++) {
-        unsigned len = 0;
-
         uart_printf("  -> %s", seq[s]);
         bluetooth_send(seq[s]);
-        while (seq[s][len] != '\0' && seq[s][len] != '\r')
-            len++;
-        (void)len;
-
-        for (t = 0; t < 80u; t++) {     /* ~0.8 s per step */
-            uint16_t sr = BOARD_BT_UART->SR;
-
-            if (sr & USART_SR_RXNE) {
-                uint8_t b = (uint8_t)BOARD_BT_UART->DR;
-
-                uart_printf("     raw 0x%02X %s\n", (unsigned)b,
-                            (b >= 0x20 && b < 0x7f) ? (const char[]){ b, 0 } : "");
-            }
-            if (sr & (USART_SR_ORE | USART_SR_FE | USART_SR_PE | USART_SR_NE))
-                uart_printf("     err SR=0x%04X\n", (unsigned)sr);
-            systick_delay_ms(10);
-        }
+        if (bt_listen(800u) == 0u)
+            uart_puts("     (nothing)\n");
     }
 
-    uart_puts("  if every step is silent, the module is not speaking this AT set\n"
-              "  on this unit -- docs/ra89r_bluetooth.md.\n");
+    uart_puts("  if every step is still silent, PD0 was not the missing line\n"
+              "  (or the module is unhealthy) -- docs/ra89r_bluetooth.md.\n");
 }
 
 /* ------------------------------------------- cable-free audio-path bench

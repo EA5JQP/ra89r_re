@@ -1,17 +1,19 @@
 # RA89R Bluetooth
 
-**Status: mapped from the stock image; driver + host test complete; the module
-does not answer on this unit (branch `driver/bluetooth`, parked).**  The protocol
-work is solid — every `AT+…` command string and every `+IM_*` event is taken
-byte-for-byte from the image and checked by the host test (80 checks).  On the
-radio, however, the module never replies: console `y` drives it at 115200 (and
-9600/38400/57600/19200/4800/230400/76800) and through the stock's own order
-(`AT+RST`, `AT+SLEEP=OFF`, `AT+BT=EMITTER`, `AT+GMR?`), and every attempt returns
-the *same* byte `0x51 'Q'` with a framing error — an idle/floating line, not a
-response.  The UART, pins and rate match the stock exactly and there is no BT
-power/enable pin in the bring-up, so the remaining explanations are hardware
-level (module absent/unhealthy on this unit, or a variant that does not speak
-this AT set).  See "On-radio result" at the end.
+**Status: mapped from the stock image; driver + host test complete; the missing
+enable line is found — the module is held in reset on `PD0` until the stock's
+"BT Switch" turns Bluetooth on (branch `driver/bluetooth`).**  The protocol work
+is solid — every `AT+…` command string and every `+IM_*` event is taken
+byte-for-byte from the image and checked by the host test (80 checks).  The
+earlier runs failed for a hardware reason that is now identified: the stock holds
+the Jieli module in reset on **`PD0`** (GPIOD bit 0) and only releases it when
+Bluetooth is enabled, so a firmware that never drives PD0 sees the same idle byte
+`0x51 'Q'` with a framing error at every rate and every command — an idle/
+floating line, not a response.  `bluetooth_init()` now configures PD0 as an
+output and releases the module (the stock's own low→high reset pulse) before the
+first command, and console `y` prints the PD0 state and listens for the module's
+boot banner.  Radio validation of the power-on is the open step; see
+"On-radio result" and "The BT Switch and the module reset line (PD0)".
 
 The owner's teardown says the board carries a **Jieli** Bluetooth audio chip; the
 firmware agrees and adds the detail: it is a Jieli **"AT" module**, the firmware
@@ -63,11 +65,17 @@ FUN_0801d718:
   FUN_08020be4(0x1c200)   USART3 = Bluetooth, 115200   <-- here
   FUN_08005460()          USART2 + keypad/ADC scan
   FUN_0800a8f4()          DAC (PA4/PA5)
-  FUN_08013c74()          GPIO: LED, PC13/PC15, PD0
+  FUN_08013c74()          GPIO: LED, PC13/PC15, PD0   <-- PD0 = BT reset, left LOW
   FUN_0801370c()          RF bus PA12/PB12/PB13
   FUN_08013838()          PA12/PB8/PB12
   ...
 ```
+
+`FUN_08013c74` configures PD0 as an output (GPIOD mask `1`) and its tail
+`FUN_08013c24` clears every GPIOD pin (`BRR = 0xFFFF`), i.e. **PD0 low = the
+module held in reset** right after boot.  The application only releases it when
+Bluetooth is enabled (next section), which is why a firmware that never drives
+PD0 never sees the module.
 
 `FUN_08020be4(baud)` does two things:
 
@@ -119,6 +127,63 @@ FUN_08024448 (main loop)
 line.  `FUN_08020c68` first looks at a command byte inside the frame descriptor
 `0x20009f9c` (`+0x12`); for the binary opcodes `0xE0`, `0xE2`–`0xE7`, `0xEB` it
 calls a handler directly, and otherwise falls through to the text line parser.
+
+## The BT Switch and the module reset line (PD0)
+
+The UART bring-up alone does **not** power the module: the stock holds it in
+reset on **PD0** (GPIOD, mask `1`) and only releases it when Bluetooth is turned
+on.  The earlier "there is no BT power/enable pin" reading missed it because PD0
+*is* in the bring-up, but as a reset the application drives rather than as a
+static GPIO setup (the "companion gauge" note had also claimed PD0 — see below).
+
+**The menu path.**  The string `BT Switch` sits at **`0x0802702C`**; it is the
+first item of the `BT Menu` descriptor at **`0x080256AC`** (title `BT Menu` at
+`0x080271E0`, then the item-label pointers), inside the menu-descriptor table
+**`0x080256D4`** (the table `FUN_08008124` renders from).  The BT menu state
+machine is **`FUN_0800C588`**; its first item (case 0) calls
+**`FUN_08009660(value)`**.
+
+**`FUN_08009660(value)`** is the on/off setter:
+
+* it writes `value` to `config[0x38]` — the settings struct at `0x20009F28`,
+  i.e. **codeplug settings byte 9 bit 0, the CPS "Bluetooth" bool** — and
+  mirrors it to the external flash via `FUN_080193E4`;
+* **off** (`value == 0`): queues `AT+BT_DISCN` (`FUN_08022664(0x22, …)`), clears
+  the connection flags, waits 400 ms, then drives **PD0 LOW**.  The raw write is
+  `GPIOD BRR = 1` — `FUN_08011B74(0x48000C00, 1, 0)` at `0x080096B2`–`0x080096B8`;
+* **on** (`value != 0`): calls **`FUN_0801D69C`**, which drives PD0 low
+  (`GPIOD BRR = 1`, `0x0801D69E`), does the module handshake, then drives PD0
+  **HIGH** (`GPIOD BSRR = 1`, `0x0801D6DA`) — an active-low reset pulse.
+
+So **PD0 high = module released/running; PD0 low = held in reset.**
+
+`FUN_0801D69C` is the module bring-up proper, not a gauge reset: it reads a
+settings byte (`0x08025FF3`), copies two tables, loads the eight paired-device
+records from the external flash (`FUN_080106A4`: 8 × 16-byte names + 8 × 64-byte
+records) and clears the ready flag — all Bluetooth state.  It is called from:
+
+* `FUN_08009660` (the BT Switch on path, `0x0800968C`);
+* the power/mode path `FUN_0801B058` (case `0x20`), **only when
+  `config[0x38] != 0`** (`0x0801B0EE`);
+* the resume path `FUN_080167F0`, again only when `config[0x38] != 0`
+  (`0x08016886`).
+
+The periodic check `FUN_080066CC` (under the time-slice flag `0x08` of
+`FUN_0801E034`, which the main loop `FUN_08024448` calls at `0x080244A6`) reads
+PD0 back (`FUN_08011B64(GPIOD, 1)` = `GPIOD->IDR & 1`) and re-pulses it via
+`FUN_08006850` while `config[0x38] == 1` and the module has not reported ready —
+a reset retry, and further proof the line is the module's reset.
+
+**Is it on by default?  No.**  The stock drives PD0 high only when the codeplug
+Bluetooth bool is set, and that bit defaults to **0** (`ra89r_codeplug.md`, byte 9
+bit 0, "this radio" = 0), so the stock itself leaves the module in reset.  This is
+also why a firmware that never touches PD0 sees exactly the observed idle line:
+the module is simply not running.
+
+**Not a gauge.**  `ra89r_battery.md` read PD0 as the "companion gauge" reset, and
+`FUN_0801D69C` as the gauge's boot handshake.  That gauge was a dead end (the
+PC14/PB2 bus is the BK1080 FM receiver — `ra89r_bk1080.md`), and the function it
+names is this same Bluetooth bring-up, reached only from the BT paths above.
 
 ## The AT command set
 
@@ -224,7 +289,7 @@ The command names say most of it, and the trigger functions confirm the wiring:
 
 | feature | function(s) | commands queued |
 |---|---|---|
-| turn the radio's BT on/off, pick emitter/receiver | `FUN_08009660` | `AT+BT_DISCN` on off; `FUN_0801d69c` + state on |
+| turn the radio's BT on/off, pick emitter/receiver | `FUN_08009660` | `AT+BT_DISCN` on off; `FUN_0801d69c` + state on; **PD0 low on off, low→high reset pulse on on** |
 | BT call audio on/off | `FUN_08007540`, `FUN_080075a0`, `FUN_0801a774`, `FUN_08006234`, `FUN_080177a8` | `AT+BT_CALL=ON` / `AT+BT_CALL=OFF` |
 | pair / scan / reconnect | `FUN_08007fd0` (on `+IM_READY`), `FUN_0800c588` | `AT+BT=EMITTER|RECEIVER`, `AT+WRITE_NAME=`, `AT+BLE_LOCAL?`, `AT+BT_SCANATCN=ON`, `AT+BT_CONN_LAST`, `AT+BT_SCAN=ON`, `AT+BT_PAIRCLR` |
 | connect a known earpiece | `FUN_0800c588` (`FUN_08022664(0x24, record)`) | `AT+EAR_CONN=<addr>` |
@@ -315,7 +380,7 @@ of the 40 command strings byte for byte; the five parameterised builders; every
 `+IM_*` / `+OK` / `+ERROR` line classifying to the right event; and the
 CRLF-splitting receive path delivering whole lines to the callback.
 
-## On-radio result: the module does not answer
+## On-radio result: the module does not answer (cause found: PD0 held in reset)
 
 The driver was built for the target and run on the radio (console `y`).  The
 UART is provably correct — after `bluetooth_init()` the USART3 registers read
@@ -323,7 +388,7 @@ UART is provably correct — after `bluetooth_init()` the USART3 registers read
 `GPIOB` shows PB10/PB11 in AF2 (`MODER` bit-pairs = 2, `AFR[1]` nibbles = 2),
 with **PB11 idling high**.
 
-What the module returns, however, is nothing usable:
+What the module returned was nothing usable:
 
 * `AT+GMR?` at 115200 → one byte `0x51 'Q'`, framing error (`SR` `FE|ORE`).
 * The same at 9600, 38400, 57600, 19200, 4800, 76800 and 230400.
@@ -333,26 +398,34 @@ What the module returns, however, is nothing usable:
 
 A real UART response differs per command and decodes cleanly at *some* rate; an
 identical byte with a framing error at every rate and every command is an idle/
-floating line, not data.  So the module is powered (PB11 is not floating low) but
-is not transmitting on PB11.
+floating line, not data.  The module's TX line is not being driven.
 
-That the software is not the cause is established statically as well:
+The cause is the **reset line, not the UART**: the stock holds the module in reset
+on **PD0** and only releases it when Bluetooth is enabled (see "The BT Switch and
+the module reset line (PD0)").  The bring-up does set PD0 — `FUN_08013c74`
+configures it as output and `FUN_08013c24` clears it — but this firmware never
+drove it, so the module stayed in reset.  The earlier conclusion ("no BT
+power/enable/reset pin") was wrong: PD0 was there, attributed to the debunked
+"companion gauge" reset instead.
 
-* The pins/rate/AF match the stock exactly (`FUN_08013420`, `FUN_08020bf4`).
-* The board bring-up `FUN_0801d718` sets only the LED (`PA13/PA14`), `PC13/PC15`,
-  `PD0`, `PA0/PA1` and the RF bus — **no BT power/enable/reset pin**, and no BT
-  init command.  The module is meant to come up on its own.
-
-So the remaining causes are hardware-level: the module is absent or unhealthy on
-this unit, its clock/rail is dead, or it is a variant that does not speak this AT
-set.  **The branch is parked** until a unit whose module answers is available; the
-protocol and driver are kept for that case.
+**The fix (built, radio validation pending).**  `bluetooth_init()` now calls
+`bluetooth_power(true)`, which configures PD0 as an output and reproduces the
+stock's reset pulse (low 10 ms, then high) after the UART is up, so the module
+boots and can emit `+IM_READY`.  Console `y` prints the PD0 state (`GPIOD MODER`/
+`ODR`), power-cycles the module, listens 1 s for the boot banner, then runs the
+stock's command order and prints every raw byte and framing error.  If the module
+now answers, this is the missing piece; if it is still silent, PD0 was not the
+only issue and the hardware-level explanations (absent/unhealthy module, a
+variant that does not speak this AT set) come back into play.  The write-up keeps
+the latter only as the fallback it now is.
 
 ## Open
 
-1. **Radio validation of the module itself** (not the driver): confirm on a unit
-   whose module answers that `AT+GMR?` returns `+IM_VERSION:`, then
-   `AT+CONN_STATE?`.  On *this* unit the module is silent (above).
+1. **Radio validation of the PD0 power-on.**  Run console `y` on the radio and
+   check that PD0 is driven high (`GPIOD ODR` bit 0), that the module emits
+   `+IM_READY` after the reset pulse, and that `AT+GMR?` then returns
+   `+IM_VERSION:` and `AT+CONN_STATE?` answers.  Until that run, PD0 is the
+   identified cause but the power-on itself is not observed on the device.
 2. **The binary `RDTP` protocol.**  Frame layout, the meaning of the
    `fe fe ee ef` prefix, and the opcode list are open; the opcodes are only known
    from the two dispatch sites.

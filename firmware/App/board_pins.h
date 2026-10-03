@@ -214,6 +214,24 @@
 #define BT_UART_AF           2u           /* GPIO_AF2_USART3 */
 #define BT_UART_BAUD         115200u
 
+/* Bluetooth module reset/enable: **PD0** (GPIOD, mask 1).  This is the line the
+ * old "companion gauge" reading called the gauge reset; the gauge was a dead end
+ * (the PC14/PB2 bus is the BK1080 FM receiver, see ra89r_bk1080.md) and PD0 is
+ * the Jieli module's **active-low reset**, held LOW (module in reset) until
+ * Bluetooth is enabled.  Evidence from the stock:
+ *
+ *   - the board bring-up configures PD0 as output (`FUN_08013C74`, GPIOD mask 1)
+ *     and clears it (`FUN_08013C24`, GPIOD BRR = 0xFFFF), i.e. reset asserted;
+ *   - "BT Switch" on -> `FUN_08009660` -> `FUN_0801D69C`, which drives PD0 low,
+ *     does the module handshake and then drives it high (GPIOD BSRR bit 0);
+ *   - "BT Switch" off -> `FUN_08009660` leaves PD0 low (GPIOD BRR bit 0);
+ *   - the periodic reset-retry `FUN_080066CC` reads PD0 back (`GPIOD->IDR & 1`)
+ *     and re-pulses it while `config[0x38]` (the codeplug Bluetooth bool) is 1.
+ *
+ * High = module out of reset (running).  See docs/ra89r_bluetooth.md. */
+#define BT_RESET_PIN         (1u << 0)    /* PD0 */
+#define BT_RESET_LEVEL       1            /* high = released / enabled */
+
 /* Not mapped yet: the USB-C port goes to the MCU's USB device peripheral, which
  * nothing in the stock firmware enables. */
 

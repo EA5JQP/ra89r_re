@@ -259,6 +259,24 @@ void bluetooth_feed(const uint8_t *data, unsigned len)
 
 #include "board.h"
 #include "driver/gpio.h"
+#include "driver/systick.h"
+
+/* The module's reset/enable line, PD0.  The stock asserts it low at boot and
+ * only releases it when Bluetooth is enabled (`FUN_08009660` -> `FUN_0801D69C`,
+ * which pulses PD0 low -> high); see docs/ra89r_bluetooth.md.  `on` does the
+ * same pulse so the module starts from a known reset; `off` holds it low. */
+void bluetooth_power(bool on)
+{
+    gpio_config_output(BOARD_BT_RESET_PORT, BT_RESET_PIN);
+
+    if (on) {
+        gpio_write(BOARD_BT_RESET_PORT, BT_RESET_PIN, !BT_RESET_LEVEL); /* reset */
+        systick_delay_ms(10);
+        gpio_write(BOARD_BT_RESET_PORT, BT_RESET_PIN, BT_RESET_LEVEL);  /* release */
+    } else {
+        gpio_write(BOARD_BT_RESET_PORT, BT_RESET_PIN, !BT_RESET_LEVEL);
+    }
+}
 
 void bluetooth_hw_write(const uint8_t *data, unsigned len)
 {
@@ -294,6 +312,12 @@ void bluetooth_init(void)
 
     while (BOARD_BT_UART->SR & USART_SR_RXNE)
         (void)BOARD_BT_UART->DR;
+
+    /* Release the module from reset *after* the UART is up, so its boot banner
+     * (`+IM_READY`) is not lost.  Without this the module stays in reset -- the
+     * stock only drives PD0 high when the codeplug Bluetooth bool is set -- and
+     * the line reads as an idle byte, which is what the earlier runs saw. */
+    bluetooth_power(true);
 }
 
 void bluetooth_poll(void)

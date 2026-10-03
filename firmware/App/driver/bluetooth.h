@@ -118,7 +118,14 @@ bt_event_t bt_parse_line(const char *line, unsigned len,
  * provides its own recorder. */
 void bluetooth_hw_write(const uint8_t *data, unsigned len);
 
-/* Bring up USART3 (PB10/PB11, AF2, 115200 8N1).  Target only. */
+/* Drive the module's reset/enable line, PD0 (GPIOD mask 1).  The stock holds it
+ * LOW (module in reset) until Bluetooth is enabled, then pulses it low -> high;
+ * so `on` releases the module (and lets it boot and emit `+IM_READY`), `off`
+ * holds it in reset.  Target only.  See docs/ra89r_bluetooth.md. */
+void bluetooth_power(bool on);
+
+/* Bring up USART3 (PB10/PB11, AF2, 115200 8N1) and release the module from
+ * reset on PD0.  Target only. */
 void bluetooth_init(void);
 
 /* Send raw bytes / a fixed command / a parameterised command. */
