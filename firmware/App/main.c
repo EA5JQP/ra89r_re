@@ -17,6 +17,8 @@
 #include "driver/beeper.h"
 #include "driver/bk4815.h"
 #include "driver/battery.h"
+#include "driver/bk1080.h"
+#include "driver/i2c_bus.h"
 #include "helper/battery.h"
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
@@ -236,6 +238,7 @@ static void print_help(void)
               "          R probe RF ids   W configure both   X verify config\n"
               "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
               "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
+              "          j BK1080 FM: init, id probe, tune 100.0 MHz, read status\n"
               "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
@@ -517,6 +520,49 @@ static void rf_k1_bringup(void)
                 rx_squelch_open() ? "open" : "quiet");
     uart_puts("  press R to see the register snapshot; 'X' still checks the\n"
               "  stock configuration path, which this overwrites.\n");
+}
+
+/* The console's 'j': the BK1080 FM receiver on its own two-wire bus, PC14
+ * (clock) / PB2 (data), device byte 0x80.  Bring the bus up, probe the chip
+ * id, replay the stock's init block, tune 100.0 MHz and read the status back.
+ * Nothing on this bus has ever run on the radio, so the first question is
+ * simply whether it acknowledges at all -- docs/ra89r_bk1080.md. */
+static void fm_bench(void)
+{
+    uint16_t id;
+    uint16_t status;
+    uint32_t got;
+
+    i2c_bus_init();
+    uart_puts("\nFM: BK1080 on PC14 (clock) / PB2 (data), device byte 0x80\n");
+
+    id = bk1080_read_id();
+    uart_printf("  chip id reg 0x01 = 0x%04X (datasheet 0x%04X) -- %s\n",
+                (unsigned)id, (unsigned)BK1080_ID,
+                id == BK1080_ID ? "present" : "no answer");
+
+    bk1080_configure();
+    uart_printf("  init: 68-byte block + %u writes to reg 0x32 sent\n",
+                (unsigned)bk1080_config_reg32_writes());
+
+    bk1080_set_frequency(10000000u);        /* 100.0 MHz, in 10 Hz units */
+    got = bk1080_get_frequency();
+    status = bk1080_read_status();
+
+    uart_printf("  tuned 100.0 MHz -> READCHAN reads %u.%05u MHz\n",
+                (unsigned)(got / 100000u), (unsigned)(got % 100000u));
+    uart_printf("  status 0x%04X: RSSI %u dBuV, SNR %u, STC %u, SF/BL %u, ST %u\n",
+                (unsigned)status, (unsigned)bk1080_get_rssi(),
+                (unsigned)bk1080_get_snr(),
+                (unsigned)bk1080_seek_complete(),
+                (unsigned)bk1080_seek_failed(),
+                (unsigned)((status & BK1080_STATUS_ST) ? 1u : 0u));
+
+    if (id == BK1080_ID)
+        uart_puts("  the part answers: the bus, the pins and the framing are ours.\n");
+    else
+        uart_puts("  0xFFFF means the bus stayed high: check PC14/PB2 and the\n"
+                  "  part's supply -- see docs/ra89r_bk1080.md.\n");
 }
 
 /* ------------------------------------------- cable-free audio-path bench
@@ -1446,6 +1492,9 @@ int main(void)
                 break;
             case 'Q':
                 rf_squelch_autodetect();
+                break;
+            case 'j':
+                fm_bench();
                 break;
             case 'e': {
                 /* The external SPI NOR flash: identity, then a hexdump. */
