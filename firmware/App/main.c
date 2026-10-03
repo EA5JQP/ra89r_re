@@ -16,6 +16,8 @@
 #include "driver/backlight.h"
 #include "driver/beeper.h"
 #include "driver/bk4815.h"
+#include "driver/battery.h"
+#include "helper/battery.h"
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
 #include "driver/audio_path.h"
@@ -1194,13 +1196,17 @@ int main(void)
                 break;
             case 'u': {
                 /* The pack: ADC channel 9 (PB1), via the K1's BOARD_ADC_* hook
-                 * (board.c -> driver/battery.c).  The value is in 10 mV. */
+                 * (board.c -> driver/battery.c).  Print the whole chain so a
+                 * single run says where a zero reading comes from. */
                 uint16_t v = 0, c = 0;
 
                 BOARD_ADC_GetBatteryInfo(&v, &c);
-                uart_printf("\nbattery: %u (10 mV) = %u.%02u V, current %u\n",
-                            (unsigned)v, (unsigned)(v / 100u),
-                            (unsigned)(v % 100u), (unsigned)c);
+                uart_printf("\nbattery: raw %u (ch9/PB1), board %u (10 mV), "
+                            "cal[3] %u, avg %u (10 mV), level %u, cur %u\n",
+                            (unsigned)battery_raw(), (unsigned)v,
+                            (unsigned)gBatteryCalibration[3],
+                            (unsigned)gBatteryVoltageAverage,
+                            (unsigned)gBatteryDisplayLevel, (unsigned)c);
                 break;
             }
             case 'm':
