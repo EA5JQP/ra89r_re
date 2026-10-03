@@ -47,6 +47,12 @@ expects.  With the K1's default calibration (760) that is the measured pack dire
 the K1's own battery-calibration menu can still trim it.  There is no charge-current sense
 on this board, so the reported current is zero.  Console `u` prints the same value.
 
+The external flash's battery-calibration window (`0x10140`) is **blank on this radio** (all
+`0xFF`), and `settings.c`'s fallback only covered `[0]`/`[1]`, so `gBatteryCalibration[3]`
+stayed `0xFFFF`.  That is the divisor in `BATTERY_GetReadings`' `(voltage * 760) / [3]`, so
+every reading collapsed to ~0 -- the empty battery icon and a `0.00V 0%` SysInf.  `settings.c`
+now falls back `[3]` to the K1's `760` as well.
+
 
 ## Enable / power, and the CMSIS (both checked, 2026-10)
 

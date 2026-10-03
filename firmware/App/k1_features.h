@@ -56,7 +56,7 @@
 #define VERSION_STRING_1 "ra89r_fw"
 #define VERSION_STRING_2 "0.3"
 #define DISPLAY_VERSION_STRING_2 "0.3"
-#define EDITION_STRING "Custom"
+#define EDITION_STRING "RA89R"
 #define ALERT_TOT 10
 
 /* The CTSS/squelch tone the K1's CMake sets (App/CMakeLists.txt: SQL_TONE=550). */

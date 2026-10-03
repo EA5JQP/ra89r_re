@@ -289,6 +289,13 @@ void SETTINGS_LoadCalibration(void)
         gBatteryCalibration[0] = 1900;
         gBatteryCalibration[1] = 2000;
     }
+    /* [3] is the divisor in BATTERY_GetReadings' (voltage * 760) / [3], so a
+     * blank flash leaving it 0xFFFF collapses every reading to ~0 -- the empty
+     * battery icon.  On this port the pack is read on ADC channel 9 (board.c ->
+     * driver/battery.c) and reported in 10 mV, so the K1's own 760 reference is
+     * the identity and the K1's battery menu can still trim it. */
+    if (gBatteryCalibration[3] >= 5000)
+        gBatteryCalibration[3] = 760;
     gBatteryCalibration[5] = 2300;
 
 #ifdef ENABLE_VOX
