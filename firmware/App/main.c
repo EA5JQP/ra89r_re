@@ -1111,6 +1111,18 @@ int main(void)
     RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD);
     RADIO_SelectVfos();
     SETTINGS_FixupVfoPointers();
+
+    /* Sample the pack before any screen is drawn.  The status bar (and the
+     * welcome screen) would otherwise show level 0 until the first 500 ms
+     * slice, which reads as the battery jumping from 0% to the real value.
+     * BOARD_ADC_GetBatteryInfo() seeds all four K1 samples, so one call is
+     * enough. */
+    {
+        uint16_t batt_v = 0, batt_i = 0;
+
+        BOARD_ADC_GetBatteryInfo(&batt_v, &batt_i);
+        BATTERY_GetReadings(true);
+    }
     /* The RF/audio chain first: radio_boot() -> rx_init() -> BK4819_Init() brings
      * the shared RF bus up.  BACKLIGHT_TurnOn() both lights the panel and plays
      * the startup beep through the chip, so it must come after -- the K1 orders
