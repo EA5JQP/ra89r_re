@@ -546,11 +546,12 @@ static void bt_on_event(bt_event_t ev, const char *payload, unsigned len)
 
 static void bt_bench(void)
 {
-    unsigned t;
+    static const uint32_t bauds[] = { 115200u, 9600u, 38400u, 57600u };
+    unsigned b, t;
 
     bluetooth_init();
     bluetooth_set_event_cb(bt_on_event);
-    uart_puts("\nBT: Jieli module on USART3 (PB10 TX / PB11 RX, 115200 8N1)\n");
+    uart_puts("\nBT: Jieli module on USART3 (PB10 TX / PB11 RX)\n");
     uart_printf("  USART3 CR1=0x%04X BRR=0x%04X CR3=0x%04X\n",
                 (unsigned)BOARD_BT_UART->CR1, (unsigned)BOARD_BT_UART->BRR,
                 (unsigned)BOARD_BT_UART->CR3);
@@ -559,16 +560,29 @@ static void bt_bench(void)
                 (unsigned)BOARD_BT_UART_PORT->AFR[1],
                 (unsigned)BOARD_BT_UART_PORT->IDR,
                 (BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN) ? "high" : "low");
-    uart_puts("  -> AT+GMR?\n");
-    bluetooth_send_cmd(BT_CMD_GMR);
 
-    for (t = 0; t < 300u; t++) {        /* ~3 s of listening */
-        bluetooth_poll();
-        systick_delay_ms(10);
+    for (b = 0; b < sizeof bauds / sizeof bauds[0]; b++) {
+        BOARD_BT_UART->BRR = (BOARD_APB1_HZ + (bauds[b] / 2u)) / bauds[b];
+        while (BOARD_BT_UART->SR & USART_SR_RXNE)
+            (void)BOARD_BT_UART->DR;
+
+        uart_printf("  -- %u baud: -> AT+GMR?\n", (unsigned)bauds[b]);
+        bluetooth_send_cmd(BT_CMD_GMR);
+
+        for (t = 0; t < 60u; t++) {     /* ~0.6 s */
+            uint16_t sr = BOARD_BT_UART->SR;
+
+            if (sr & USART_SR_RXNE)
+                uart_printf("     raw 0x%02X\n",
+                            (unsigned)(BOARD_BT_UART->DR & 0xffu));
+            if (sr & (USART_SR_ORE | USART_SR_FE | USART_SR_PE | USART_SR_NE))
+                uart_printf("     err SR=0x%04X\n", (unsigned)sr);
+            systick_delay_ms(10);
+        }
     }
 
-    uart_puts("  no VERSION event means the module is silent: check PB10/PB11 and\n"
-              "  the AF, and that the module is powered -- docs/ra89r_bluetooth.md.\n");
+    uart_puts("  no bytes at any baud means the module is alive (PB11 high) but not\n"
+              "  answering -- it likely needs the stock's own init or a wake.\n");
 }
 
 /* ------------------------------------------- cable-free audio-path bench
