@@ -233,19 +233,20 @@ frequency flag decides is only which part receives the *T/R state* writes
 (`0x47`/`0x13`/`0x30`/`0x31` versus `0x0c`).  Whether both parts are then in the
 signal path at once, or one is a band the other is not, is not established.
 
-**The BK4829 is not switched off above 134 MHz -- but the radio does not transmit
-below it either.**  The codeplug's TX ranges are 144–146 MHz and 430–440 MHz
-(band table, EEPROM `0x1F40`), both above 134, so the ≤134 MHz branch is
-receive-only (airband) and neither part transmits there in normal use.  In the TX
-range the stock writes *both* chips: the BK4829's TX setup (`0x38`/`0x39`,
-`0x47`, `0x37`, `0x50`, `0x70`, `0x30`) via `FUN_08017280` -- which has no band
-test and runs for every TX -- and the BK4815's T/R state (`0x0c`) and per-mode
-config (`FUN_08016CEC`).  Which of the two actually radiates above 134 MHz is the
-open question: the port's own BK4829-only TX at 145.75 MHz shows the BK4829's
-registers suffice to produce a carrier, but not that it is the stock's intended
-path.  A plausible reading is that the BK4829 is the modulator (mic ADC + TX DSP
-in `0x30`, the `0x7D` bias) and the BK4815 the band/PA above 134 MHz, matching
-the two-PA board -- an interpretation, not a finding.
+**Correction: the TX setup is selected, and the stock selects the BK4829 on
+every band.**  This paragraph previously read `FUN_08017280` as running "for
+every TX" and left "which part radiates above 134 MHz" open.  It does not:
+`FUN_08018AB8` (the transmit entry) calls `FUN_08017306(chan, 1)` with the
+argument **hard-coded to 1**, and `FUN_08017306` runs `FUN_08017280` (BK4829) for
+`1` or the BK4815's `FUN_080171D0` for `0`.  The `0` branch has no caller, so the
+BK4815's TX config is **dead code** and the stock's transmitter is the BK4829 for
+all bands.  The BK4815 is instead the **receive path above 134 MHz**
+(`FUN_08016EE0`'s `flag == 0` branch powers it up, `FUN_08005218` reads its
+`0x43`/`0x44` meters).  `ra89r_bk4815.md` has the call sites and the register
+values.  The codeplug's TX ranges (144–146 and 430–440 MHz) are both above 134,
+so above 134 the stock receives on the BK4815 and transmits on the BK4829; below
+134 the BK4829 does both.  Whether the BK4815 can radiate at all (it is a full
+transceiver on its datasheet) is untested, not a finding.
 
 ## Band and path selection: the pins
 
@@ -583,12 +584,12 @@ sweep, and the provisional table is where its results go.
 1. **Which chip does what.**  Answered as far as static reading goes: the BK4829
    carries the filter (`0x33`), the RSSI/metering (`0x63`/`0x65`/`0x67`/`0x99`),
    the squelch ramp (`0x13`), the T/R set (`0x47`/`0x30`/`0x31`) and the **whole
-   TX setup** (`0x38`/`0x39`/`0x30`/`0x50`/`0x7D`, written for both bands); the
-   BK4815 carries the band select (`0x75`), the T/R state (`0x0c`) and the per-mode
-   config above 134 MHz.  Still open: why the crossover is 134 MHz, what the state
-   byte `+0x75` means on its own, and **which part actually radiates above
-   134 MHz** -- the BK4829 is not switched off there (its TX registers are still
-   written), so this needs the radio, not the image.
+   TX setup** (`0x38`/`0x39`/`0x30`/`0x50`/`0x7D`; `FUN_08017306` selects it for
+   every TX); the BK4815 carries the band select (`0x75`), the T/R state (`0x0c`),
+   the per-mode config above 134 MHz and its own `0x43`/`0x44` RSSI/SNR.  Still
+   open: why the crossover is 134 MHz, what the state byte `+0x75` means on its
+   own, and **whether the BK4815 can radiate** -- its TX config is dead code, but
+   the part is a transceiver, so this needs the radio, not the image.
 2. The power-on/off and sleep handling, and whether anything else gates the RF
    rails — the decompiler is now available, but these paths have not been walked.
 3. The per-channel/per-band routines that feed the T/R registers.  The TX power

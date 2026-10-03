@@ -239,6 +239,7 @@ static void print_help(void)
               "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
               "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
               "          j BK1080 FM: init, id probe, tune 100.0 MHz, read status\n"
+              "          n BK4815 (PB13): boot config, tune 145.7500, read meters\n"
               "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
@@ -591,6 +592,66 @@ static void fm_bench(void)
                         (unsigned)((fm[k] / 10000u) % 10u),
                         (unsigned)(st & BK1080_STATUS_RSSI_MASK),
                         (st & BK1080_STATUS_ST) ? "stereo" : "mono");
+        }
+    }
+}
+
+/* The console's 'n': the BK4815, the second transceiver on PB13.  The stock
+ * uses it as the receive path above 134 MHz; this tunes it through the
+ * 0x71/0x72 synthesizer path and reads its own 0x43/0x44 meters, to see
+ * whether the synth locks and it receives.  Nothing here has run on the
+ * radio -- docs/ra89r_bk4815.md. */
+static void bk4815_bench(void)
+{
+    uint16_t id, vco, op, hi, lo, cal, snr, rssi;
+    uint32_t word;
+    uint8_t band;
+
+    bk4829_init();               /* brings up the shared bus and both selects */
+    uart_puts("\nBK4815 (PB13; shared PA12 clock / PB12 data):\n");
+
+    id = bk4815_read_reg(BK4815_REG_ID);
+    uart_printf("  reg 0x00 id = 0x%04X (expected 0x%04X) -- %s\n",
+                (unsigned)id, (unsigned)BK4815_ID,
+                id == BK4815_ID ? "present" : "not answering");
+
+    bk4815_configure();
+    uart_printf("  boot config replayed (%u writes, %u RAM-sourced as 0)\n",
+                bk4815_config_writes(), bk4815_ram_sourced_writes());
+
+    band = bk4815_vco_band(BENCH_FREQ_HZ);
+    word = bk4815_frequency_word(BENCH_FREQ_HZ, band);
+    bk4815_set_frequency(BENCH_FREQ_HZ, false);
+
+    vco = bk4815_read_reg(BK4815_REG_VCO);
+    op  = bk4815_read_reg(BK4815_REG_OPCTRL);
+    hi  = bk4815_read_reg(BK4815_REG_FREQ_HI);
+    lo  = bk4815_read_reg(BK4815_REG_FREQ_LO);
+    cal = bk4815_read_reg(BK4815_REG_CAL);
+
+    uart_printf("  tuned 145.7500 MHz: band %u, word 0x%08X\n",
+                (unsigned)band, (unsigned)word);
+    uart_printf("    reg 0x04=0x%04X 0x70=0x%04X 0x71=0x%04X 0x72=0x%04X 0x7E=0x%04X\n",
+                (unsigned)vco, (unsigned)op, (unsigned)hi, (unsigned)lo, (unsigned)cal);
+
+    snr  = bk4815_read_reg(0x43);
+    rssi = bk4815_read_reg(0x44);
+    uart_printf("    meters: 0x43 (SNR)=0x%04X  0x44 (RSSI)=0x%04X -> RSSI %u\n",
+                (unsigned)snr, (unsigned)rssi, (unsigned)(rssi & 0x7fu));
+    uart_puts("  if 0x71/0x72 hold the word the synth path landed; a 0x44 that\n"
+              "  moves with a carrier means it receives.\n"
+              "  sampling 0x44 for ~5 s -- key a transmitter on 145.7500 now:\n");
+
+    {
+        unsigned k;
+
+        for (k = 0; k < 25u; k++) {
+            uint16_t r = bk4815_read_reg(0x44);
+
+            uart_printf("    0x44 = 0x%04X   RSSI %u\n",
+                        (unsigned)r, (unsigned)(r & 0x7fu));
+            for (volatile unsigned d = 0; d < 400000u; d++)
+                ;
         }
     }
 }
@@ -1525,6 +1586,9 @@ int main(void)
                 break;
             case 'j':
                 fm_bench();
+                break;
+            case 'n':
+                bk4815_bench();
                 break;
             case 'e': {
                 /* The external SPI NOR flash: identity, then a hexdump. */
