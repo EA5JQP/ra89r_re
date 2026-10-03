@@ -28,8 +28,18 @@ void BOARD_ADC_GetBatteryInfo(uint16_t *pVoltage, uint16_t *pCurrent)
     uint32_t mv = 0;
 
     battery_mv(&mv);
-    if (pVoltage != 0)
+    if (pVoltage != 0) {
         *pVoltage = (uint16_t)(mv / 10u);
+
+        /* The K1 averages the last four samples and fills one per ~1 s, so a
+         * fresh boot reads a quarter of the pack until they do (level 0, an
+         * empty icon).  The pack sits on a stable ADC, so seed all four with
+         * this reading and the first display is already right. */
+        gBatteryVoltages[0] = *pVoltage;
+        gBatteryVoltages[1] = *pVoltage;
+        gBatteryVoltages[2] = *pVoltage;
+        gBatteryVoltages[3] = *pVoltage;
+    }
     if (pCurrent != 0)
         *pCurrent = 0;
 }
