@@ -587,8 +587,8 @@ static void fm_bench(void)
             (void)bk1080_wait_tune(300);
             st = bk1080_read_status();
             uart_printf("    %3u.%u MHz   RSSI %3u   %s\n",
-                        (unsigned)(fm[k] / 1000000u),
-                        (unsigned)((fm[k] / 100000u) % 10u),
+                        (unsigned)(fm[k] / 100000u),
+                        (unsigned)((fm[k] / 10000u) % 10u),
                         (unsigned)(st & BK1080_STATUS_RSSI_MASK),
                         (st & BK1080_STATUS_ST) ? "stereo" : "mono");
         }
