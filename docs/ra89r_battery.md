@@ -15,8 +15,10 @@ wrong.**  The bus on `PC14`/`PB2` is not a battery gauge:
   `0x80`** and its control word as `(7-bit register << 1) | R/W` -- byte for byte what
   `FUN_08007034`/`FUN_08007158` emit.  The stock's "gauge" functions are the BK1080's I2C
   driver.
-- The register they read, `0x0B`, is `REG11` = **RSSI/status** (`RSSI<7:0>`, in dBuV), not
-  a voltage.  The `875/760/640` "battery offsets" were a misread of an RSSI field.
+- The register they read, `0x0B`, is `REG11` = **Read Channel** (`READCHAN<9:0>`), and
+  `0x0A` (`REG10`) is the RSSI/status register.  The `875/760/640` "battery offsets"
+  were a misread of the FM band bases (87.5/76.0/64.0 MHz) and the value is the tuned
+  frequency, not a voltage.  The full FM side is in `docs/ra89r_bk1080.md`.
 - There is **no gauge IC on the board** (owner's teardown): BK4815, BK4829, BK1080,
   TDA2822, LM2904B and a Jieli BT chip only.  The BK4815/BK4829 "ADC" is the RX signal ADC
   (`REG67/68` = RSSI/SNR, `REG69` = AFC) and `VBATD` is a supply pin, not an ADC input; the

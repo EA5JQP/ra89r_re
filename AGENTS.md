@@ -26,9 +26,12 @@ project, the CPS sources) lives outside the workspace (see "Reference inputs").
   the evidence from `bootloader.bin` and from the decompiled CPS updater.
 - `docs/ra89r_lcd.md` — the screen/display driver write-up (panel, pin map, init
   sequence, addressing, fonts, port notes).
-- `docs/ra89r_battery.md` — the companion gauge chip: the bus, the protocol, the voltage
-  arithmetic, the configuration block, and the full troubleshooting log (what has
-  been eliminated and how, so it is not re-derived).
+- `docs/ra89r_battery.md` — the battery sense (ADC channel 9 / `PB1`) plus the
+  record of the earlier "companion gauge" dead end: the bus on `PC14`/`PB2` is
+  the BK1080 FM receiver (below), not a gauge.
+- `docs/ra89r_bk1080.md` — the BK1080 FM receiver on `PC14`/`PB2`: the I2C
+  framing, the register map the stock uses, the 68-byte init block, the tuning
+  word, and the RSSI/seek path, with the driver on branch `driver/bk1080`.
 - `docs/ra89r_keypad.md` — the 20-button ADC-ladder key matrix and its F4HWN
   `KEY_Code_e` mapping.
 - `docs/ra89r_beeper.md` — the beeper: a DAC tone on `PA4`, played by TIM4 + DMA.

@@ -33,6 +33,10 @@
 #define BK4815_CS_PORT       GPIOB
 #define AUDIO_PATH_PORT      GPIOC
 
+/* BK1080 FM receiver I2C bus (see board_pins.h and docs/ra89r_bk1080.md) */
+#define BK1080_SCL_PORT      GPIOC
+#define BK1080_SDA_PORT      GPIOB
+
 /* External SPI NOR flash -- the radio's "EEPROM" (see board_pins.h) */
 #define SPI_FLASH_CS_PORT    GPIOA
 #define SPI_FLASH_SCK_PORT   GPIOB

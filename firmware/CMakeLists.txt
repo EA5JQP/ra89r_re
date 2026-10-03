@@ -49,6 +49,8 @@ set(APP_SOURCES
     App/driver/rf_bus.c
     App/driver/bk4829.c
     App/driver/bk4815.c
+    App/driver/bk1080.c
+    App/driver/i2c_bus.c
     App/driver/bk4819.c
     App/driver/audio_path.c
     App/driver/pa.c
