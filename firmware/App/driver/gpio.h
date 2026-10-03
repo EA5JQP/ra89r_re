@@ -15,6 +15,11 @@ void gpio_config_af(GPIO_TypeDef *port, uint32_t mask, uint32_t af, uint32_t pul
 /* Configure every pin set in mask as a push-pull output (high speed). */
 void gpio_config_output(GPIO_TypeDef *port, uint32_t mask);
 
+/* As gpio_config_output, but with an explicit OSPEEDR value (0 low .. 3 very
+ * high).  gpio_config_output() uses 3; the stock configures the companion bus
+ * pins with 2 (high), so the battery driver matches that exactly. */
+void gpio_config_output_ospeed(GPIO_TypeDef *port, uint32_t mask, uint32_t ospeed);
+
 /* Configure every pin set in mask as a floating input. */
 void gpio_config_input(GPIO_TypeDef *port, uint32_t mask);
 

@@ -83,14 +83,10 @@
 #define KEYPAD_ANALOG_B_MASK  ((1u << 0) | (1u << 1))
 #define KEYPAD_PTT2_PIN       (1u << 9)
 
-/* Companion gauge chip -- pack voltage and charger status.  Two-wire bus on
- * PC14 (clock) and PB2 (data), plus a reset line on PD0 that the stock pulses at
- * boot; the stock polls registers 2, 3, 5, 7, 10 and 11 (0x08007158) and derives
- * the pack voltage from register 11 with a per-battery offset chosen by
- * register 5 (0x0800687C).  See ra89r_findings.md ("Battery gauge"). */
-#define BATTERY_CLK_PIN      (1u << 14)
-#define BATTERY_DATA_PIN     (1u << 2)
-#define BATTERY_RESET_PIN    (1u << 0)
+/* Battery sense: the pack divider is on PB1, ADC channel 9 -- the one scanned
+ * channel the keypad ladders do not use (ra89r_battery.md).  The bus on PC14/PB2,
+ * once taken for a companion gauge, is the BK1080 FM receiver's I2C. */
+#define BATTERY_ADC_PIN      (1u << 1)
 
 /* Not mapped yet: SPI1 (SCK PB3, MISO PB4, MOSI PB5, NSS PA15) talks to the
  * external SPI NOR flash (Winbond-class, id 0xEF16); the RF transceiver

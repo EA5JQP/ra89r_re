@@ -182,7 +182,7 @@ static void print_help(void)
               "          r re-init panel (standard, bootloader-proven)\n"
               "          s re-init panel (stock app variant, 8 extra bytes)\n"
               "          k keypad monitor (raw ADC per line + decoded key)\n"
-              "          u battery gauge (registers 2/3/5/7/10/11 + pack voltage)\n");
+              "          u battery (pack on ADC ch9 / PB1)\n");
 }
 
 /* --------------------------------------------------------------- animation */
@@ -203,51 +203,19 @@ static void animate_step(uint32_t ms)
     lcd_refresh();
 }
 
-/* Battery gauge: one report used by both the boot log and the 'u' command.  Each
- * stage of the stock's boot bring-up is listed separately, because which one (if
- * any) the chip acknowledges is the whole diagnostic. */
+/* Battery: the pack is on ADC channel 9 (PB1), read by the keypad's free-running
+ * DMA scan.  One report, used by both the boot log and the 'u' command.  The
+ * millivolt figure is provisional -- the pack divider is not in the firmware. */
 static void battery_report(void)
 {
-    unsigned i, s;
-    uint32_t mv;
-    uint16_t v = 0;
+    uint32_t mv = 0;
+    uint16_t raw = battery_raw();
 
-    uart_printf("battery: lse %s, clk %s, data %s, bus ~%u kHz max\n",
-                battery_lse_on() ? "ON" : "off",
-                battery_clk_pin_ok() ? "ok" : "STUCK",
-                battery_data_pin_ok() ? "ok" : "STUCK",
-                (unsigned)battery_bus_rate_khz());
-
-    for (s = 0; s < battery_pd0_count(); s++) {
-        uart_printf("battery: address ack, reset line %s:", battery_pd0_name(s));
-        for (i = 0; i < battery_bus_scale_count(); i++)
-            uart_printf(" %u=%s", (unsigned)battery_bus_scale_value(i),
-                        battery_scale_acked(s, i) ? "ack" : "--");
-        uart_puts("\n");
-    }
-
-    for (i = 0; i < battery_stage_count(); i++)
-        uart_printf("  %s: %s\n", battery_stage_name(i),
-                    battery_stage_ok(i) ? "ack" : "--");
-
-    uart_printf("battery: bring-up %u/%u stages acked at bus scale %u\n",
-                (unsigned)battery_stage_acks(), (unsigned)battery_stage_count(),
-                (unsigned)battery_bus_scale());
-
-    if (!battery_clk_pin_ok() || !battery_data_pin_ok()) {
-        uart_puts("battery: a bus pin is not ours; the gauge cannot answer\n");
-    } else if (!battery_bus_ok()) {
-        uart_printf("battery: the gauge never acknowledged (%u reset-line states x %u bus speeds)\n",
-                    (unsigned)battery_pd0_count(), (unsigned)battery_bus_scale_count());
-    } else if (battery_voltage_mv(&mv)) {
-        uart_printf("battery: pack %u mV (%u.%02u V)\n",
-                    (unsigned)mv, (unsigned)(mv / 1000u),
-                    (unsigned)((mv % 1000u) / 10u));
-    } else {
-        battery_read(BATTERY_REG_VOLTAGE, &v);
-        uart_printf("battery: no reading (reg %u=0x%04X)\n",
-                    (unsigned)BATTERY_REG_VOLTAGE, (unsigned)v);
-    }
+    battery_mv(&mv);
+    uart_printf("battery: raw %u, level %u/255, pack %u mV (%u.%02u V, uncalibrated)\n",
+                (unsigned)raw, (unsigned)battery_level(),
+                (unsigned)mv, (unsigned)(mv / 1000u),
+                (unsigned)((mv % 1000u) / 10u));
 }
 
 /* ------------------------------------------------------------------- main */
@@ -313,10 +281,8 @@ int main(void)
         uart_puts("keypad: WARNING -- the ADC/DMA scan is NOT running; the key "
                   "monitor would report zeros for every line\n");
 
-    /* Companion gauge chip: two-wire bus on PC14/PB2 (see driver/battery.c). */
-    uart_puts("battery: pins + address sweep over reset-line state and bus speed "
-              "(about a second) ...\n");
-    battery_init();
+    /* Battery: the pack is on ADC channel 9 (PB1), already sampled by the
+     * keypad's free-running scan (see driver/battery.c). */
     battery_report();
 
     uart_puts("lcd: reset + init (standard sequence, as the bootloader uses) ...\n");    lcd_init();
@@ -432,29 +398,13 @@ int main(void)
                 heartbeat = !heartbeat;
                 uart_printf("\nheartbeat %s\n", heartbeat ? "on" : "off");
                 break;
-            case 'u': {
-                static const uint8_t regs[] = { 2, 3, 5, 7, 10, 11 };
-                unsigned i;
-
-                uart_puts("battery:");
-                for (i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
-                    uint16_t v = 0;
-
-                    /* The value is reported either way: a silent bus reads as
-                     * 0x03FF/0x0000, which says far more than "no acknowledge". */
-                    if (battery_read(regs[i], &v))
-                        uart_printf(" %u=0x%04X", (unsigned)regs[i], (unsigned)v);
-                    else
-                        uart_printf(" %u=0x%04X!", (unsigned)regs[i], (unsigned)v);
-                }
+            case 'u':
+                /* Battery: the pack is on ADC channel 9 (PB1), sampled by the
+                 * keypad's free-running scan.  (The old 'u' talked to PC14/PB2,
+                 * which is the BK1080 FM receiver, not a gauge.) */
                 uart_puts("\n");
-
-                /* Re-run the stock's bring-up so the command can be repeated
-                 * after a power event without another flash. */
-                battery_init();
                 battery_report();
                 break;
-            }
             case 'k':
                 keypad_monitor = !keypad_monitor;
                 uart_printf("\nkeypad monitor %s -- press one button at a time\n",

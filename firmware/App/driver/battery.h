@@ -1,11 +1,14 @@
-/* Companion gauge chip: pack voltage and charger status.
+/* Battery sense -- MCU ADC channel 9 (PB1).
  *
- * A two-wire bus on PC14 (clock) and PB2 (data) -- I2C-shaped, and copied from
- * the stock firmware's own bit-bang rather than from a datasheet, since the
- * framing is not quite standard: a start condition, the byte 0x80, then the
- * register number sent as an address byte with the read bit (reg << 1 | 1).
- * 16-bit words are big-endian in both directions.  See ra89r_findings.md,
- * "Battery gauge".
+ * The stock measures the pack with its own ADC, not a companion chip: it scans
+ * six channels (`FUN_08004E58`), five of them the keypad ladders, and reads the
+ * sixth -- PB1, ADC channel 9 -- as a 0..255 level (`FUN_0800E514` /
+ * `FUN_08007664`).  This driver exposes that channel.
+ *
+ * The earlier "two-wire gauge" here was a mis-identification: the bus on PC14 /
+ * PB2 is the **BK1080 FM receiver** -- its I2C device ID is `0x80`, exactly the
+ * byte that driver sent -- and the register it read (`0x0B`) is the FM RSSI, not
+ * a pack voltage.  See ra89r_battery.md.
  */
 #ifndef DRIVER_BATTERY_H
 #define DRIVER_BATTERY_H
@@ -13,52 +16,18 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* The registers the stock firmware polls; 11 is the voltage reading and 5 picks
- * the per-battery offset. */
-#define BATTERY_REG_VOLTAGE 11u
-#define BATTERY_REG_GAIN     5u
+/* Latest 12-bit sample of the battery channel (PB1, ADC channel 9), 0..4095.
+ * The keypad's free-running DMA scan already samples it, so this is a memory
+ * read, not a conversion. */
+uint16_t battery_raw(void);
 
-/* Set up the bus pins, then replay the stock's boot bring-up.  Idle state: clock
- * low (output), data driven high as an *output* -- never released, which is the
- * state the stock's byte write leaves behind. */
-void battery_init(void);
+/* The stock's 0..255 level: raw >> 4 (`FUN_08007664`). */
+uint16_t battery_level(void);
 
-unsigned battery_bus_scale(void);
-unsigned battery_bus_rate_khz(void);
-bool battery_bus_ok(void);
-
-/* The bus-speed sweep, and the stage-by-stage result of the stock's boot
- * bring-up (FUN_0800D35C plus the enable FUN_0800D1F8 performs), which is the
- * sequence the stock runs once at boot before the first poll.  The chip answered
- * none of it when this was written, so each stage is reported separately: which
- * one (if any) acknowledges is the whole diagnostic. */
-unsigned battery_bus_scale_count(void);
-unsigned battery_bus_scale_value(unsigned index);
-unsigned battery_pd0_count(void);
-const char *battery_pd0_name(unsigned state);
-bool battery_scale_acked(unsigned state, unsigned index);
-unsigned battery_stage_count(void);
-const char *battery_stage_name(unsigned index);
-bool battery_stage_ok(unsigned index);
-unsigned battery_stage_acks(void);
-
-/* Whether each bus pin could be driven and read back at the level it was set to.
- * A pin owned by something else (the LSE oscillator on PC14, an alternate
- * function, a short) fails this, and then no bus speed will help. */
-bool battery_clk_pin_ok(void);
-bool battery_data_pin_ok(void);
-
-/* Whether the LSE was running (PC14 would then not be ours to drive).  Reported,
- * never changed: the stock drives PC14 without configuring it. */
-bool battery_lse_on(void);
-
-/* Read one 16-bit register, big-endian on the wire.  Returns false if the chip
- * did not acknowledge. */
-bool battery_read(uint8_t reg, uint16_t *value);
-
-/* Pack voltage in millivolts, computed the way the stock does: the 10-bit
- * reading from register 11 plus an offset (875 / 760 / 640, x 10 mV) selected by
- * the top two bits of register 5's low byte. */
-bool battery_voltage_mv(uint32_t *mv);
+/* Pack millivolts from the raw sample.  The divider ratio is not recoverable
+ * from the firmware, so this is provisional -- calibrate it on the radio:
+ *   mv = raw * BATTERY_MV_NUM / BATTERY_MV_DEN
+ * The default maps full scale (4095) to 8.4 V, i.e. ~2.05 mV per count. */
+bool battery_mv(uint32_t *mv);
 
 #endif /* DRIVER_BATTERY_H */

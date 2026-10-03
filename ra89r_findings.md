@@ -247,65 +247,24 @@ for the RA89G variant).  The pins themselves are recorded in
 
 The beep is a DAC tone on `PA4`: **see `ra89r_beeper.md`**.
 
-### Battery gauge -- a two-wire bus on PC14 (clock) and PB2 (data)
+### Battery -- ADC channel 9 (PB1)
 
-The pack voltage comes from a companion gauge chip, not from an ADC channel.  Its
-bus is bit-banged and I2C-shaped, but not standard I2C, so the stock's own
-functions are the specification:
+The pack is read by the MCU's own ADC, not a companion chip.  The stock scans six
+channels (`FUN_08004E58`): 2, 3, 6, 7, 8 are the keypad ladders, and **9 = PB1** is the
+battery sense, which `FUN_0800E514` / `FUN_08007664` read as a 0..255 level.  See
+`ra89r_battery.md`.
 
-| address | what it does |
-|---|---|
-| `0x08006EF0` | start: clock low, data high, clock high, then data **low** while the clock is high |
-| `0x08006F4C` | stop: clock low, data low, clock high, then data **high** |
-| `0x0800705C` | write a byte, MSB first; then release the line and poll it (up to 250 times) for the chip pulling it low -- its acknowledge |
-| `0x08006E78` | read a byte, MSB first, sampled while the clock is high |
-| `0x08007158` | read a register: start, `0x80`, then `(reg << 1) \| 1`, then 16-bit words (first byte = the high half, the master drives the acknowledge, the last word is acknowledged with the line high), stop |
-| `0x0800D138` | the data pin's direction: output (1) or released (0) |
-
-Registers the stock polls: `2`, `3`, `5`, `7`, `10` and `11`.  The pack voltage
-(`0x0800687C`) is:
-
-```
-raw    = reg11: ((first byte) & 3) << 8 | (second byte)      -- 10 bits
-gain   = reg5:  (second byte) >> 6
-offset = gain == 0 ? 875 : (gain == 1 or gain == 2) ? 760 : 640
-pack   = (raw + offset) * 10000 uV                           -- 10 mV per count
-```
-
-which spans 7.6-17.8 V over a full-scale reading, i.e. a pack range, with the
-offset selecting the divider or battery variant.
-
-**The data pin idles as an *output*, driven high.**  The stock's byte write ends by
-restoring the output direction (`FUN_0800D138(1)`) and its stop condition ends on
-data high; only a *read* releases the line.  Getting that wrong makes the bus
-silently deaf -- the start condition and the first byte go nowhere, the chip never
-answers, and every read comes back as a floating `0x3FF` with no acknowledge.
-
-Two more things the stock's poll does, which a plain read does not need but which
-are worth knowing:
-
-* **Registers 2 and 3 are read-modify-written**, to clear latched status:
-  `FUN_08006952` reads register 2 and sets bits 1, 2 and 0; `FUN_08006982` reads it
-  and clears bit 0; `FUN_080069A6` reads register 3 and clears bits 0-6.
-* **`PD0` is bidirectional, not a plain reset.**  `FUN_080066CC` *reads* it
-  (`GPIO_ReadInputDataBit(GPIOD, 1)`) and only pulses it while that reads high, so
-  it behaves like a status line with a handshake pulse; the pulse itself is
-  `FUN_08006850` (low, 10 ms, high).
-
-`App/driver/battery.c` mirrors the transfer and the data-pin behaviour above.  Its
-delay mirrors the stock's helper loop (`FUN_0802422A`, `(n+1) x 21` iterations)
-rather than a time, so the timings here are slower than the stock's because this
-firmware runs at 8 MHz -- the safe direction on a bus with no minimum rate.  **Not implemented:** the stock also
-*writes* configuration to the chip and pulses its reset line (`PD0`) at boot.  If a
-read comes back without an acknowledge, that reset pulse is the first thing to
-try.  `u` on the console dumps the six registers plus the voltage, and the boot
-log prints the voltage once.
+The bus on `PC14`/`PB2` that an earlier pass took for the gauge is the **BK1080 FM
+receiver**: the BK1080's I2C device ID is `0x80` (datasheet section 6.2.2) and the control
+word is `(reg << 1) | R/W`, exactly `FUN_08007034`/`FUN_08007158`; the register it reads,
+`0x0B`, is `REG11` = the FM RSSI, not a voltage.  There is no gauge IC on the board.
 
 ### Other chips on the board (from the same pass)
 
 | bus | pins | what it is |
 |---|---|---|
-| companion / PMIC | `PC14` clock, `PB2` data, `PD0` reset pulse | battery + charger gauge -- see "Battery gauge" above for the protocol; `FUN_0800687C` returns the pack voltage, registers 2/3/5/7/10/11, polled from the main loop by `FUN_08017BB4` |
+| BK1080 FM receiver | `PC14` clock, `PB2` data (device ID `0x80`, `FUN_08007034`/`FUN_08007158`) | I2C FM receiver; reg `0x0B` = RSSI.  An earlier pass mistook this for a battery gauge |
+| battery | `PB1` = ADC channel 9 | pack sense, read by `FUN_0800E514`/`FUN_08007664` -- see `ra89r_battery.md` |
 | BK4815/BK4829 | bit-banged | register layer is `FUN_080220A0(reg, val)` write / `FUN_080180F0(reg)` read (used by the T/R path `FUN_08016228`); reg `0x67` is the RSSI (squelch decision in `FUN_080052B8`, debug string `RSSI R67 %d`), `0x65`/`0x63` are read alongside it |
 | SPI NOR | 16-bit serial: `FUN_08017FE4` (read) / `FUN_08018060` (write) | external flash |
 | LCD panel | `PA8`-`PA11` + `PB15` | see `ra89r_lcd.md` |

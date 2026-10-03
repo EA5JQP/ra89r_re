@@ -61,6 +61,11 @@ void gpio_config_output(GPIO_TypeDef *port, uint32_t mask)
     configure(port, mask, 1u /* output */, 0u, 3u, 0u, 0u);
 }
 
+void gpio_config_output_ospeed(GPIO_TypeDef *port, uint32_t mask, uint32_t ospeed)
+{
+    configure(port, mask, 1u /* output */, 0u, ospeed, 0u, 0u);
+}
+
 void gpio_config_input(GPIO_TypeDef *port, uint32_t mask)
 {
     configure(port, mask, 0u /* input */, 0u, 0u, 0u, 0u);
