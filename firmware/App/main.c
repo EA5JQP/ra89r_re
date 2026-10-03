@@ -563,7 +563,21 @@ static void bk4815_bench(void)
     uart_printf("    meters: 0x43 (SNR)=0x%04X  0x44 (RSSI)=0x%04X -> RSSI %u\n",
                 (unsigned)snr, (unsigned)rssi, (unsigned)(rssi & 0x7fu));
     uart_puts("  if 0x71/0x72 hold the word the synth path landed; a 0x44 that\n"
-              "  moves with a carrier means it receives.\n");
+              "  moves with a carrier means it receives.\n"
+              "  sampling 0x44 for ~5 s -- key a transmitter on 145.7500 now:\n");
+
+    {
+        unsigned k;
+
+        for (k = 0; k < 25u; k++) {
+            uint16_t r = bk4815_read_reg(0x44);
+
+            uart_printf("    0x44 = 0x%04X   RSSI %u\n",
+                        (unsigned)r, (unsigned)(r & 0x7fu));
+            for (volatile unsigned d = 0; d < 400000u; d++)
+                ;
+        }
+    }
 }
 
 /* ------------------------------------------- cable-free audio-path bench
