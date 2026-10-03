@@ -199,6 +199,11 @@
 #define SPI_FLASH_MISO_PIN   (1u << 4)    /* PB4  */
 #define SPI_FLASH_MOSI_PIN   (1u << 5)    /* PB5  */
 
+/* Battery sense: the pack divider is on PB1, ADC channel 9 -- the one scanned
+ * channel the keypad ladders do not use (docs/ra89r_battery.md).  The bus on
+ * PC14/PB2, once taken for a companion gauge, is the BK1080 FM receiver's I2C. */
+#define BATTERY_ADC_PIN      (1u << 1)    /* PB1  */
+
 /* Not mapped yet: the USB-C port goes to the MCU's USB device peripheral, which
  * nothing in the stock firmware enables. */
 

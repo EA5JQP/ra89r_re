@@ -247,11 +247,24 @@ for the RA89G variant).  The pins themselves are recorded in
 
 The beep is a DAC tone on `PA4`: **see `ra89r_beeper.md`**.
 
+### Battery -- ADC channel 9 (PB1)
+
+The pack is read by the MCU's own ADC, not a companion chip.  The stock scans six
+channels (`FUN_08004E58`): 2, 3, 6, 7, 8 are the keypad ladders, and **9 = PB1** is the
+battery sense, which `FUN_0800E514` / `FUN_08007664` read as a 0..255 level.  See
+`ra89r_battery.md`.
+
+The bus on `PC14`/`PB2` that an earlier pass took for the gauge is the **BK1080 FM
+receiver**: the BK1080's I2C device ID is `0x80` (datasheet section 6.2.2) and the control
+word is `(reg << 1) | R/W`, exactly `FUN_08007034`/`FUN_08007158`; the register it reads,
+`0x0B`, is `REG11` = the FM RSSI, not a voltage.  There is no gauge IC on the board.
+
 ### Other chips on the board (from the same pass)
 
 | bus | pins | what it is |
 |---|---|---|
-| companion / PMIC | `PC14` clock, `PB2` data, `PD0` reset pulse | battery + charger gauge: `FUN_0800687C` returns the pack voltage (10-bit reading + 875/760/640, x 10000 uV), registers 2/3/5/7/10/11, polled from the main loop by `FUN_08017BB4` |
+| BK1080 FM receiver | `PC14` clock, `PB2` data (device ID `0x80`, `FUN_08007034`/`FUN_08007158`) | I2C FM receiver; reg `0x0B` = RSSI.  An earlier pass mistook this for a battery gauge |
+| battery | `PB1` = ADC channel 9 | pack sense, read by `FUN_0800E514`/`FUN_08007664` -- see `ra89r_battery.md` |
 | BK4815/BK4829 | bit-banged | register layer is `FUN_080220A0(reg, val)` write / `FUN_080180F0(reg)` read (used by the T/R path `FUN_08016228`); reg `0x67` is the RSSI (squelch decision in `FUN_080052B8`, debug string `RSSI R67 %d`), `0x65`/`0x63` are read alongside it |
 | SPI NOR | SPI1 remap: CS `PA15`, SCK `PB3`, MISO `PB4`, MOSI `PB5` | **Puya PY25Q16HB**, 2 MB — this is the CPS's EEPROM.  The `FUN_08017FE4`/`FUN_08018060` pair listed here before belongs to the BK4815/BK4829 bus, not to this chip |
 | LCD panel | `PA8`-`PA11` + `PB15` | see `ra89r_lcd.md` |

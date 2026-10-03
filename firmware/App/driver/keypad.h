@@ -86,6 +86,12 @@ const char *keypad_stock_name(int code);
 /* Last raw 12-bit sample of one line (for the console monitor). */
 uint16_t keypad_raw(unsigned line);
 
+/* The stock scans a sixth channel -- PB1, ADC channel 9 -- separately from the
+ * keypad and uses it as the battery level (FUN_0800E514 / FUN_08007664).  It is
+ * sampled into the same free-running DMA round; this returns its newest 12-bit
+ * value, which is what the battery driver reports. */
+uint16_t keypad_aux_raw(void);
+
 const char *keypad_line_name(unsigned line);
 
 /* The three codes a window can produce (short / held / long, 0xFF = none) for

@@ -316,6 +316,13 @@ uint16_t keypad_raw(unsigned line)
     return line < KEYPAD_LINE_COUNT ? s_raw[line] : 0;
 }
 
+/* The sixth scanned channel (PB1 / ADC channel 9) -- the battery sense.  The
+ * keypad does not use it; the battery driver does. */
+uint16_t keypad_aux_raw(void)
+{
+    return (uint16_t)(s_dma[KP_CHANNELS - 1u] & 0xFFFu);
+}
+
 const char *keypad_line_name(unsigned line)
 {
     return line < KEYPAD_LINE_COUNT ? lines[line].name : "?";

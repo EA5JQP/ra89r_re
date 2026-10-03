@@ -8,28 +8,28 @@
 #include <stdint.h>
 
 #include "board.h"
+#include "driver/battery.h"
 #include "helper/battery.h"
-
-/* A plausible pack: the K1's units are the raw 12-bit ADC of its divider, and
- * helper/battery.c turns that into 10 mV units with
- *     gBatteryVoltageAverage = (raw * 760) / gBatteryCalibration[3]
- * so 1850 with the K1's own 1900 fallback calibration reads as 7.40 V.
- *
- * Where the real number has to come from: this radio's gauge chip, whose
- * protocol is decoded but which never answers us (docs/ra89r_battery.md), or the
- * stock's own battery path.  Until one of those lands, the screens show a fixed
- * pack -- which is at least honest about being a placeholder.
- */
-#define BATTERY_ADC_PLACEHOLDER 1850u
 
 void BOARD_ADC_Init(void)
 {
+    /* Nothing to do: the pack is on ADC channel 9 (PB1), which the keypad
+     * driver's free-running DMA scan already converts (driver/keypad.c). */
 }
 
+/* The pack is on ADC channel 9 (PB1); driver/battery.c reads it from the keypad's
+ * scan.  The K1's helper/battery.c turns the returned value into 10 mV units with
+ *     gBatteryVoltageAverage = (value * 760) / gBatteryCalibration[3]
+ * so it wants the pack voltage in 10 mV -- which is battery_mv()/10, calibrated
+ * on this radio (3413 counts = 8.32 V on a multimeter).  There is no charge-
+ * current sense on this board, so the current is reported as zero. */
 void BOARD_ADC_GetBatteryInfo(uint16_t *pVoltage, uint16_t *pCurrent)
 {
+    uint32_t mv = 0;
+
+    battery_mv(&mv);
     if (pVoltage != 0)
-        *pVoltage = BATTERY_ADC_PLACEHOLDER;
+        *pVoltage = (uint16_t)(mv / 10u);
     if (pCurrent != 0)
         *pCurrent = 0;
 }
