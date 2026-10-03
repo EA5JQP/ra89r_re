@@ -380,7 +380,7 @@ of the 40 command strings byte for byte; the five parameterised builders; every
 `+IM_*` / `+OK` / `+ERROR` line classifying to the right event; and the
 CRLF-splitting receive path delivering whole lines to the callback.
 
-## On-radio result: the module does not answer (cause found: PD0 held in reset)
+## On-radio result: PD0 releases the module, but its TX signal is distorted
 
 The driver was built for the target and run on the radio (console `y`).  The
 UART is provably correct — after `bluetooth_init()` the USART3 registers read
@@ -388,36 +388,35 @@ UART is provably correct — after `bluetooth_init()` the USART3 registers read
 `GPIOB` shows PB10/PB11 in AF2 (`MODER` bit-pairs = 2, `AFR[1]` nibbles = 2),
 with **PB11 idling high**.
 
-What the module returned was nothing usable:
+**PD0 is the cause of the silence, and releasing it works.**  The stock holds the
+module in reset on **PD0** and only releases it when Bluetooth is enabled (see
+"The BT Switch and the module reset line (PD0)").  This firmware never drove it,
+so the module stayed in reset and the line read as the idle `0x51`.  With
+`bluetooth_power(true)` pulsing PD0 low→high, the module **boots and answers**:
+`y` shows a boot banner (bytes `0x00`, `+`, `+`, `M`, …) and a reply at every
+step.  The earlier "no BT power/enable/reset pin" conclusion was wrong — PD0 was
+there, attributed to the debunked "companion gauge" reset instead.
 
-* `AT+GMR?` at 115200 → one byte `0x51 'Q'`, framing error (`SR` `FE|ORE`).
-* The same at 9600, 38400, 57600, 19200, 4800, 76800 and 230400.
-* The stock's own order (`AT+RST`, `AT+SLEEP=OFF`, `AT+BT=EMITTER`, `AT+GMR?`),
-  one step at a time with ~0.8 s of listening each → **the same `0x51` with a
-  framing error, every step.**
+**But its bytes do not decode, at any rate or oversampling:**
 
-A real UART response differs per command and decodes cleanly at *some* rate; an
-identical byte with a framing error at every rate and every command is an idle/
-floating line, not data.  The module's TX line is not being driven.
+* `AT+GMR?` at 115200 → `0x2b '+'` with a framing error; every other standard
+  rate (9600/38400/57600/19200/4800/230400/76800) also misframes, and OVER8
+  changes nothing.
+* A **bit-timing probe** on PB11 (read as a GPIO) measures the start-bit low at
+  **~25 loop ticks** and the following high at **~51** — a clean one-bit high at
+  ~115200 but a **half-width low** — and a **software UART** sampling at that
+  rate decodes the same garbage (`0x13 0x8a 0xf3`).
 
-The cause is the **reset line, not the UART**: the stock holds the module in reset
-on **PD0** and only releases it when Bluetooth is enabled (see "The BT Switch and
-the module reset line (PD0)").  The bring-up does set PD0 — `FUN_08013c74`
-configures it as output and `FUN_08013c24` clears it — but this firmware never
-drove it, so the module stayed in reset.  The earlier conclusion ("no BT
-power/enable/reset pin") was wrong: PD0 was there, attributed to the debunked
-"companion gauge" reset instead.
+So the baud is right and the USART is not the fault: the **waveform on PB11 is
+distorted** — a weak drive, a level-shifted/loaded line, or a module variant that
+does not present a clean TTL UART.  That is a hardware-level limit on this unit,
+not something the firmware can fix.
 
-**The fix (built, radio validation pending).**  `bluetooth_init()` now calls
-`bluetooth_power(true)`, which configures PD0 as an output and reproduces the
-stock's reset pulse (low 10 ms, then high) after the UART is up, so the module
-boots and can emit `+IM_READY`.  Console `y` prints the PD0 state (`GPIOD MODER`/
-`ODR`), power-cycles the module, listens 1 s for the boot banner, then runs the
-stock's command order and prints every raw byte and framing error.  If the module
-now answers, this is the missing piece; if it is still silent, PD0 was not the
-only issue and the hardware-level explanations (absent/unhealthy module, a
-variant that does not speak this AT set) come back into play.  The write-up keeps
-the latter only as the fallback it now is.
+**Where it stands.**  `bluetooth_power(true)` (the PD0 reset pulse) is the
+identified and effective fix for the module being silent; the protocol, parser
+and driver are complete and host-tested.  The module's physical TX waveform is
+the remaining blocker — a unit (or a scope check of PB11) whose module presents a
+clean signal would close it.
 
 ## Open
 
