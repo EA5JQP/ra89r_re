@@ -126,3 +126,90 @@ void bk4815_configure(void)
     for (i = 0; i < bk4815_config_writes(); i++)
         bk4815_write_reg(bk4815_config[i].reg, bk4815_config[i].value);
 }
+
+/* ------------------------------------------------------------- synthesizer */
+
+/* The stock's VCO-band thresholds (FUN_0800EC70), in the codeplug's 10 Hz
+ * units: 187 / 270 / 383 MHz. */
+#define BK4815_VCO_LO  18700000u
+#define BK4815_VCO_MID 27000000u
+#define BK4815_VCO_HI  38300000u
+
+/* The 26 MHz crystal reference the fractional-N word is scaled by. */
+#define BK4815_REF_HZ  26000000u
+
+uint8_t bk4815_vco_band(uint32_t freq_10hz)
+{
+    if (freq_10hz <= BK4815_VCO_LO)
+        return 3u;
+    if (freq_10hz <= BK4815_VCO_MID)
+        return 1u;
+    if (freq_10hz <= BK4815_VCO_HI)
+        return 2u;
+    return 0u;
+}
+
+uint8_t bk4815_vco_divider(uint8_t band)
+{
+    /* Register 4 bits 8:7: 0:8, 1:16, 2:12, 3:24.  The stock's per-band
+     * (Ndiv, calibration) pairs are in FUN_0801703C. */
+    static const uint8_t div[4] = { 8u, 16u, 12u, 24u };
+
+    return div[band & 3u];
+}
+
+uint32_t bk4815_frequency_word(uint32_t freq_10hz, uint8_t band)
+{
+    uint64_t f_hz = (uint64_t)freq_10hz * 10u;
+    uint64_t word = f_hz * (uint64_t)bk4815_vco_divider(band)
+                    * ((uint64_t)1u << 24);
+
+    /* The stock's float form (freq_MHz * Ndiv * 2^24/26) truncates to the same
+     * integer for every channel the band table holds, so integer math is exact
+     * here. */
+    return (uint32_t)(word / BK4815_REF_HZ);
+}
+
+uint16_t bk4815_tone_word(uint32_t tone_hz)
+{
+    /* The datasheet's SELCALL word: (freq/18466)*65536.  18466 is 0x4822,
+     * the same divisor the stock's FUN_08005C34 hard-codes. */
+    return (uint16_t)((tone_hz << 16) / 18466u);
+}
+
+void bk4815_set_frequency(uint32_t freq_10hz, bool tx)
+{
+    /* The per-band calibration word FUN_0801703C writes to 0x7E/0x7F; band 0's
+     * is the boot configuration's 0xFFF5/0x3568, so these are the stock's own
+     * constants rather than a guess. */
+    static const uint32_t cal[4] = {
+        0xfff53568u, 0xffea6ad0u, 0xffefd01cu, 0xffdfa037u,
+    };
+    uint8_t band = bk4815_vco_band(freq_10hz);
+    uint32_t word = bk4815_frequency_word(freq_10hz, band);
+    uint8_t buf[6];
+    uint8_t calbuf[4];
+
+    /* FUN_0801703C's three writes, in its order. */
+    bk4815_write_reg(BK4815_REG_VCO,
+                     (uint16_t)(((uint16_t)band << 7) | 0xb041u));
+
+    buf[0] = tx ? 0xe0u : 0xa0u;
+    buf[1] = 0x00u;
+    buf[2] = (uint8_t)(word >> 24);
+    buf[3] = (uint8_t)(word >> 16);
+    buf[4] = (uint8_t)(word >> 8);
+    buf[5] = (uint8_t)word;
+    bk4815_write_block(BK4815_REG_OPCTRL, buf, (unsigned)sizeof buf);
+
+    calbuf[0] = (uint8_t)(cal[band] >> 24);
+    calbuf[1] = (uint8_t)(cal[band] >> 16);
+    calbuf[2] = (uint8_t)(cal[band] >> 8);
+    calbuf[3] = (uint8_t)cal[band];
+    bk4815_write_block(BK4815_REG_CAL, calbuf, (unsigned)sizeof calbuf);
+}
+
+void bk4815_set_tone(uint32_t tone_hz)
+{
+    bk4815_write_reg(BK4815_REG_TONE, bk4815_tone_word(tone_hz));
+}

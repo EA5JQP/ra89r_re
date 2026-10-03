@@ -285,6 +285,78 @@ static void test_bk4815_config(void)
           "three writes are known to be placeholders (0x4c, 0x55, 0x62)");
 }
 
+/* The BK4815's synthesizer.  The stock's frequency word is at 0x71/0x72 (not
+ * 0x38/0x39, and not 0x22); 0x22 is the SELCALL tone.  Expected word values
+ * are the datasheet formula freq_Hz * Ndiv * 2^24 / 26e6 computed independently
+ * of the driver. */
+static void test_bk4815_synth(void)
+{
+    uint16_t reg4, freq_hi, freq_lo, tone;
+
+    printf("bk4815 synthesizer (0x04 / 0x70-0x72 / 0x22)\n");
+
+    /* VCO bands: the stock's FUN_0800EC70 thresholds, 187/270/383 MHz. */
+    check_hex(bk4815_vco_band(14575000u), 3, "145.75 MHz is VCO band 3");
+    check_hex(bk4815_vco_band(10800000u), 3, "108 MHz is VCO band 3");
+    check_hex(bk4815_vco_band(17400000u), 3, "174 MHz is VCO band 3");
+    check_hex(bk4815_vco_band(23000000u), 1, "230 MHz is VCO band 1");
+    check_hex(bk4815_vco_band(32000000u), 2, "320 MHz is VCO band 2");
+    check_hex(bk4815_vco_band(44600625u), 0, "446.00625 MHz is VCO band 0");
+    check_hex(bk4815_vco_divider(0), 8, "band 0 divides by 8");
+    check_hex(bk4815_vco_divider(1), 16, "band 1 divides by 16");
+    check_hex(bk4815_vco_divider(2), 12, "band 2 divides by 12");
+    check_hex(bk4815_vco_divider(3), 24, "band 3 divides by 24");
+
+    check_hex(bk4815_frequency_word(14575000u, 3), 0x8689D89Du,
+              "145.75 MHz band 3 word");
+    check_hex(bk4815_frequency_word(44600625u, 0), 0x893B91B9u,
+              "446.00625 MHz band 0 word");
+    check_hex(bk4815_frequency_word(10800000u, 3), 0x63B13B13u,
+              "108 MHz band 3 word");
+    check_hex(bk4815_frequency_word(52000000u, 0), 0xA0000000u,
+              "520 MHz band 0 word");
+
+    /* 0x22 is a signalling tone, (freq/18466)*65536, not the RF word. */
+    check_hex(bk4815_tone_word(1000u), 0x0DDDu, "1000 Hz tone word");
+    check_hex(bk4815_tone_word(2000u), 0x1BBAu, "2000 Hz tone word");
+
+    /* The full tune path, in FUN_0801703C's write order. */
+    log_reset();
+    bk4815_set_frequency(14575000u, false);
+    check(log_len == 3, "set_frequency is three transfers");
+    check(xfer_is(&log_[0], BK4815_CS_PIN, 0x08), "first is register 4");
+    reg4 = (uint16_t)((log_[0].data[0] << 8) | log_[0].data[1]);
+    check_hex(reg4, 0xB1C1u, "reg 4 = 0xb041 | band 3 << 7");
+    check(xfer_is(&log_[1], BK4815_CS_PIN, 0xE0) && log_[1].len == 6,
+          "then the 6-byte block at reg 0x70 in one select");
+    check_hex(log_[1].data[0], 0xA0u, "reg 0x70 = 0xA000 (receive)");
+    freq_hi = (uint16_t)((log_[1].data[2] << 8) | log_[1].data[3]);
+    freq_lo = (uint16_t)((log_[1].data[4] << 8) | log_[1].data[5]);
+    check_hex(freq_hi, 0x8689u, "reg 0x71 = high word");
+    check_hex(freq_lo, 0xD89Du, "reg 0x72 = low word");
+    check(xfer_is(&log_[2], BK4815_CS_PIN, 0xFC) && log_[2].len == 4,
+          "last is the 4-byte calibration block at reg 0x7e");
+
+    log_reset();
+    bk4815_set_frequency(44600625u, true);
+    check(log_len == 3 && xfer_is(&log_[0], BK4815_CS_PIN, 0x08),
+          "446.00625 MHz tune: reg 4 first");
+    check_hex((uint16_t)((log_[0].data[0] << 8) | log_[0].data[1]), 0xB041u,
+              "reg 4 = 0xb041 (band 0)");
+    check_hex(log_[1].data[0], 0xE0u, "reg 0x70 = 0xE000 (transmit)");
+    check_hex((uint16_t)((log_[1].data[2] << 8) | log_[1].data[3]), 0x893Bu,
+              "446.00625 MHz reg 0x71");
+    check_hex((uint16_t)((log_[1].data[4] << 8) | log_[1].data[5]), 0x91B9u,
+              "446.00625 MHz reg 0x72");
+
+    log_reset();
+    bk4815_set_tone(1000u);
+    check(log_len == 1 && xfer_is(&log_[0], BK4815_CS_PIN, 0x44),
+          "set_tone writes reg 0x22 (0x22<<1)");
+    tone = (uint16_t)((log_[0].data[0] << 8) | log_[0].data[1]);
+    check_hex(tone, 0x0DDDu, "reg 0x22 = the 1000 Hz tone word");
+}
+
 /* The accessors the console's read-back verification walks.  If these are wrong
  * the verification lies, so they get their own check. */
 static void test_accessors(void)
@@ -458,6 +530,7 @@ int main(void)
     test_framing();
     test_bk4829_config();
     test_bk4815_config();
+    test_bk4815_synth();
     test_accessors();
     test_k1_interface();
     test_pa_rx_path();

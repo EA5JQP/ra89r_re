@@ -23,7 +23,7 @@ notes and quoted addresses use a shifted coordinate system.
 | [`ra89r_battery.md`](ra89r_battery.md) | the companion gauge chip: bus, protocol, voltage arithmetic, configuration block, and the full troubleshooting log |
 | [`ra89r_beeper.md`](ra89r_beeper.md) | the beeper: TIM4 plus a tone generator, its pin is `PA4` (`DAC_OUT1`) |
 | [`ra89r_bk4829.md`](ra89r_bk4829.md) | the RF transceiver on chip select `PB8`: identity (`0x4829`), boot sequence, differences from the UV-K1/K5V3 driver |
-| [`ra89r_bk4815.md`](ra89r_bk4815.md) | the second transceiver, on `PB13`: identity (`0x4816`), its differently framed register access, boot sequence, 18-register table |
+| [`ra89r_bk4815.md`](ra89r_bk4815.md) | the second transceiver, on `PB13`: identity (`0x4816`), its differently framed register access, boot sequence, 18-register table, the datasheet register map, the `0x71`/`0x72` frequency word, and its role as the > 134 MHz receive path |
 | [`ra89r_rfpath.md`](ra89r_rfpath.md) | the RF path the two share: the bit-banged bus, boot bring-up order, what powers the RF section, the transmit chain |
 | [`ra89r_rffeatures.md`](ra89r_rffeatures.md) | the stock's feature routines above the part: AF, AGC, the CTCSS/CDCSS/DTMF/scramble/VOX group, sleep/idle/mode-restore, by register |
 | [`ra89r_noisereduction.md`](ra89r_noisereduction.md) | the noise reduction ("denoise"): the CPS's Noise Cancellation side-key, the compander (`0x28`) and the noise/SNR detectors (`0x63`/`0x65`) |

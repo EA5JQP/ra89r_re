@@ -31,6 +31,24 @@
 #define BK4815_REG_ID 0x00u
 #define BK4815_ID     0x4816u
 
+/* The synthesizer/tone registers the stock's own routines touch, named against
+ * the BK4815N datasheet's decimal register table (see docs/ra89r_bk4815.md):
+ *   0x04 (4)    VCO-to-LO divider, bits 8:7 (0:8, 1:16, 2:12, 3:24)
+ *   0x22 (34)   SELCALL tone frequency, (freq/18466)*65536
+ *   0x43 (67)   FM demod: SNR indicator
+ *   0x44 (68)   RSSI/SNR: RSSI indicator (bits 6:0)
+ *   0x70 (112)  operation control, 0xA000 RX / 0xE000 TX
+ *   0x71 (113)  high 16 bits of the channel frequency word
+ *   0x72 (114)  low 16 bits of the channel frequency word
+ *   0x7E (126)  per-band calibration, written with 0x7F as one 32-bit block
+ */
+#define BK4815_REG_VCO       0x04u
+#define BK4815_REG_TONE      0x22u
+#define BK4815_REG_OPCTRL    0x70u
+#define BK4815_REG_FREQ_HI   0x71u
+#define BK4815_REG_FREQ_LO   0x72u
+#define BK4815_REG_CAL       0x7eu
+
 /* True when register 0 reads back the BK4815 id. */
 bool bk4815_detect(void);
 
@@ -59,5 +77,48 @@ void bk4815_config_entry(unsigned i, uint8_t *reg, uint16_t *value);
 
 /* The 36-byte block the stock sends to registers 2..19 (flash 0x08024E40). */
 const uint8_t *bk4815_config_block(unsigned *len);
+
+/* ------------------------------------------------------------ synthesizer ---
+ *
+ * The BK4815N tunes through a fractional-N synthesizer, not through the
+ * BK4829's 0x38/0x39 pair: the channel word goes to registers 0x71 (high 16)
+ * and 0x72 (low 16), under the operation-control register 0x70 (0xA000 RX /
+ * 0xE000 TX).  The stock's writer is FUN_0801703C, reached from the per-mode
+ * configs FUN_08016CEC (RX) and FUN_080171D0 (TX); it computes
+ *
+ *     word = (freq_10Hz / 100000) * Ndiv * 2^24 / 26
+ *          = freq_Hz * Ndiv * 2^24 / 26e6
+ *
+ * i.e. the datasheet's `Ndiv x fwanted / 26MHz x 2^24` with the 26 MHz crystal
+ * reference, and writes the per-VCO-band divider Ndiv (8/12/16/24) into
+ * register 4 bits 8:7.  The datasheet's RX form subtracts the IF; the stock's
+ * writer does not, and neither does this one -- do not treat the word as
+ * validated on the radio (docs/ra89r_bk4815.md).
+ *
+ * `freq_10hz` is the channel frequency in the codeplug's 10 Hz units, the same
+ * value the BK4829 path feeds to its 0x38/0x39. */
+
+/* VCO divider band, the stock's FUN_0800EC70: 3 for <= 187 MHz, 1 for
+ * 187..270, 2 for 270..383, 0 above 383 MHz. */
+uint8_t bk4815_vco_band(uint32_t freq_10hz);
+
+/* The VCO-to-LO divider for a band: 8 / 16 / 12 / 24 for bands 0/1/2/3. */
+uint8_t bk4815_vco_divider(uint8_t band);
+
+/* The 32-bit fractional-N word the synthesizer takes at 0x71/0x72. */
+uint32_t bk4815_frequency_word(uint32_t freq_10hz, uint8_t band);
+
+/* The stock's FUN_08005C34 SELCALL/tone word: (tone_hz / 18466) * 65536,
+ * written to register 0x22.  18466 is 0x4822, the datasheet's divisor. */
+uint16_t bk4815_tone_word(uint32_t tone_hz);
+
+/* Program the channel frequency: register 4 (VCO divider), then the 6-byte
+ * operation-control + frequency block at 0x70, then the per-band calibration
+ * block at 0x7E -- the three writes FUN_0801703C makes, in its order.  `tx`
+ * picks 0xE000 (transmit) over 0xA000 (receive) in register 0x70. */
+void bk4815_set_frequency(uint32_t freq_10hz, bool tx);
+
+/* Write one SELCALL/tone frequency to register 0x22. */
+void bk4815_set_tone(uint32_t tone_hz);
 
 #endif /* DRIVER_BK4815_H */
