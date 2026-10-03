@@ -570,11 +570,6 @@ static unsigned bt_listen(unsigned ms)
 
 static void bt_bench(void)
 {
-    static const char *const seq[] = {
-        "AT+RST\r\n", "AT+SLEEP=OFF\r\n", "AT+BT=EMITTER\r\n", "AT+GMR?\r\n",
-    };
-    unsigned s;
-
     /* bluetooth_init() brings up USART3 and releases the module from reset on
      * PD0 (the stock's BT Switch line -- docs/ra89r_bluetooth.md). */
     bluetooth_init();
@@ -605,16 +600,28 @@ static void bt_bench(void)
     if (bt_listen(1000u) == 0u)
         uart_puts("     (nothing)\n");
 
-    /* The stock's own order: reset, un-sleep, set the role, then ask. */
-    for (s = 0; s < sizeof seq / sizeof seq[0]; s++) {
-        uart_printf("  -> %s", seq[s]);
-        bluetooth_send(seq[s]);
-        if (bt_listen(800u) == 0u)
-            uart_puts("     (nothing)\n");
+    /* The module is out of reset now, so find its real baud: it answered every
+     * step with framing errors, which is a rate mismatch, not silence. */
+    {
+        static const uint32_t bauds[] = { 115200u, 9600u, 38400u, 57600u,
+                                          19200u, 4800u, 230400u, 76800u };
+        unsigned b;
+
+        for (b = 0; b < sizeof bauds / sizeof bauds[0]; b++) {
+            BOARD_BT_UART->BRR =
+                (BOARD_APB1_HZ + (bauds[b] / 2u)) / bauds[b];
+            while (BOARD_BT_UART->SR & USART_SR_RXNE)
+                (void)BOARD_BT_UART->DR;
+
+            uart_printf("  -- %u baud: -> AT+GMR?\n", (unsigned)bauds[b]);
+            bluetooth_send_cmd(BT_CMD_GMR);
+            if (bt_listen(600u) == 0u)
+                uart_puts("     (nothing)\n");
+        }
     }
 
-    uart_puts("  if every step is still silent, PD0 was not the missing line\n"
-              "  (or the module is unhealthy) -- docs/ra89r_bluetooth.md.\n");
+    uart_puts("  the baud whose bytes decode cleanly (no 'err SR=...') is the\n"
+              "  module's rate -- docs/ra89r_bluetooth.md.\n");
 }
 
 /* ------------------------------------------- cable-free audio-path bench
