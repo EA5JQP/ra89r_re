@@ -742,7 +742,8 @@ static void bt_probe_line(void)
     unsigned n = 0;
     int      c;
 
-    uart_printf("\n  (BT state=%u%s)\n", (unsigned)bt_state(),
+    uart_printf("\n  (BT state=%u rx=%u%s)\n", (unsigned)bt_state(),
+                bluetooth_rx_bytes(),
                 bt_enabled() ? "" : " -- press 'A' to enable first");
     uart_puts("\nAT> ");
     for (;;) {
