@@ -1,5 +1,6 @@
 #include "driver/tx.h"
 
+#include "app/bt.h"             /* the earpiece's PTT button */
 #include "driver/bk4815.h"
 #include "driver/bk4819.h"
 #include "driver/led.h"
@@ -84,7 +85,8 @@ tx_source_t tx_source(void) { return s_source; }
 void tx_poll_ptt(void)
 {
     const KEY_Code_t key  = KEYBOARD_GetKey();
-    const bool       down = (key == KEY_PTT) || (key == KEY_PTT2);
+    const bool       down = (key == KEY_PTT) || (key == KEY_PTT2) ||
+                            bt_ptt_down();      /* the earpiece's PTT button */
 
     if (down == tx_active())
         return;

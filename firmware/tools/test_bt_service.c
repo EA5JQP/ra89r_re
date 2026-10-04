@@ -160,6 +160,13 @@ int main(void)
     bt_set_scan(false);
     check(rec_last_is("AT+BT_SCAN=OFF\r\n"), "scan off -> AT+BT_SCAN=OFF");
 
+    /* The earpiece PTT button (`+IM_EAR_PTT_KEYDOWN/UP`) keys the transmitter. */
+    check(!bt_ptt_down(), "earpiece PTT starts up");
+    bt_service_event(BT_EV_EAR_PTT_DOWN, NULL, 0);
+    check(bt_ptt_down(), "EAR_PTT_KEYDOWN -> down");
+    bt_service_event(BT_EV_EAR_PTT_UP, NULL, 0);
+    check(!bt_ptt_down(), "EAR_PTT_KEYUP -> up");
+
     printf("\n%d failed\n", fails);
     return fails ? 1 : 0;
 }

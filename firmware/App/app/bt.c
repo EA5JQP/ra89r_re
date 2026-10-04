@@ -31,6 +31,7 @@ static unsigned   s_qidx;
 static unsigned   s_ticks;
 
 static bool       s_connected;
+static bool       s_ptt_down;   /* the earpiece's PTT button */
 static unsigned   s_retries;    /* PD0 re-pulses while waiting for +IM_READY */
 
 /* Devices the module reported as `+IM_EARDEV` since the scan started.  The
@@ -226,6 +227,14 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
             s_state = BT_STATE_IDLE;
         break;
 
+    case BT_EV_EAR_PTT_DOWN:            /* the earpiece's PTT button */
+        s_ptt_down = true;
+        break;
+
+    case BT_EV_EAR_PTT_UP:
+        s_ptt_down = false;
+        break;
+
     default:
         break;
     }
@@ -353,6 +362,13 @@ void bt_stop_connect(void)
 bool bt_connected(void)
 {
     return s_connected;
+}
+
+/* The earpiece's PTT button, set from `+IM_EAR_PTT_KEYDOWN/UP`.  tx.c ORs it
+ * into its PTT test, so the headset keys the measured transmit chain. */
+bool bt_ptt_down(void)
+{
+    return s_ptt_down;
 }
 
 unsigned bt_found_count(void)
