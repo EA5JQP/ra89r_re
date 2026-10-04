@@ -721,8 +721,9 @@ static void bt_probe_line(void)
     unsigned n = 0;
     int      c;
 
-    uart_printf("\n  (BT state=%u rx=%u%s)\n", (unsigned)bt_state(),
-                bluetooth_rx_bytes(),
+    uart_printf("\n  (BT state=%u linked=%u ptt=%u rx=%u%s)\n",
+                (unsigned)bt_state(), (unsigned)bt_connected(),
+                (unsigned)bt_ptt_down(), bluetooth_rx_bytes(),
                 bt_enabled() ? "" : " -- press 'A' to enable first");
     uart_puts("\nAT> ");
     for (;;) {
@@ -1709,9 +1710,10 @@ int main(void)
                 gEeprom.BT_Switch = !gEeprom.BT_Switch;
                 bt_set_enabled(gEeprom.BT_Switch);
                 gRequestSaveSettings = true;
-                uart_printf("\nBT: switch=%u state=%u version='%s' rx=%u\n",
+                uart_printf("\nBT: switch=%u state=%u linked=%u ptt=%u version='%s' rx=%u\n",
                             (unsigned)gEeprom.BT_Switch,
-                            (unsigned)bt_state(), bt_version(),
+                            (unsigned)bt_state(), (unsigned)bt_connected(),
+                            (unsigned)bt_ptt_down(), bt_version(),
                             bluetooth_rx_bytes());
                 uart_printf("  USART3 CR1=0x%04X CR2=0x%04X CR3=0x%04X BRR=0x%04X "
                             "(want 0x202c/0/0/0x1a1)\n",
