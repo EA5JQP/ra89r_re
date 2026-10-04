@@ -133,7 +133,7 @@ void UI_DisplayStatus()
         }
         else if (bt_enabled()) {
             UI_PrintStringSmallBufferNormal("BT", line + x);
-            x += 4u;   /* "BT" is 12 px; the leftmost slot is 8 */
+            x += 6u;   /* "BT" spans x+1..x+14; the slot is 8 */
         }
 #else
         // Power Save / Bluetooth indicator (the same leftmost slot)
@@ -142,7 +142,7 @@ void UI_DisplayStatus()
         }
         else if (bt_enabled()) {
             UI_PrintStringSmallBufferNormal("BT", line + x);
-            x += 4u;   /* "BT" is 12 px; the leftmost slot is 8 */
+            x += 6u;   /* "BT" spans x+1..x+14; the slot is 8 */
         }
 #endif
     }

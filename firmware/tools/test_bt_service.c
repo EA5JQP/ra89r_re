@@ -71,7 +71,7 @@ static void drive_config(const char *label)
     }
     bt_service_event(BT_EV_BLE_LOCAL, "AA:BB:CC", 8u);
     check(rec_last_is("AT+BT_SCANATCN=ON\r\n"), "  after BLE_LOCAL");
-    bt_service_event(BT_EV_BT_SCAN_STOP, NULL, 0);
+    bt_service_event(BT_EV_OK, NULL, 0);   /* +OK advances BT_SCANATCN=ON */
     check(rec_last_is("AT+CONN_STATE?\r\n"), "  after SCANATCN");
     bt_service_event(BT_EV_CONN_STATE, "0", 1u);
     check(rec_last_is("AT+BT_CONN_LAST\r\n"), "  after CONN_STATE");
@@ -109,7 +109,10 @@ int main(void)
         check(rec_n == before, "IDLE ignores stray events");
     }
 
-    /* With a name set, AT+WRITE_NAME is inserted after the mode. */
+    /* With a name set, AT+WRITE_NAME is inserted after the mode.  Re-arm the
+     * service (a real module sends +IM_READY once, after its reset). */
+    bt_set_enabled(false);
+    bt_set_enabled(true);
     rec_reset();
     bt_set_name("RA89R");
     bt_service_event(BT_EV_READY, NULL, 0);
@@ -126,6 +129,35 @@ int main(void)
     for (i = 0; i < 1000u; i++)
         bt_service_tick();
     check(bt_state() == BT_STATE_OFF, "silent module times out to OFF");
+
+    /* --- review fixes ---------------------------------------------------- */
+
+    /* A late +IM_READY (the module's boot banner) must not restart a service
+     * that is off. */
+    bt_set_enabled(false);
+    rec_reset();
+    bt_service_event(BT_EV_READY, NULL, 0);
+    check(rec_n == 0u && bt_state() == BT_STATE_OFF,
+          "READY while disabled is ignored");
+
+    /* +IM_BT_SCAN_STOP is unsolicited; it must not advance the config queue. */
+    bt_set_enabled(true);
+    rec_reset();
+    bt_service_event(BT_EV_READY, NULL, 0);
+    check(rec_n == 1u && rec_is(0, "AT+GMR?\r\n"), "READY queues AT+GMR?");
+    bt_service_event(BT_EV_BT_SCAN_STOP, NULL, 0);
+    check(rec_n == 1u, "SCAN_STOP does not advance the queue");
+
+    /* The gain/scan setters send the stock's own strings. */
+    rec_reset();
+    bt_set_spk_gain(2);
+    check(rec_last_is("AT+SPKGAIN=8\r\n"), "spk gain 2 -> AT+SPKGAIN=8");
+    bt_set_mic_gain(1);
+    check(rec_last_is("AT+MICGAIN=5\r\n"), "mic gain 1 -> AT+MICGAIN=5");
+    bt_set_scan(true);
+    check(rec_last_is("AT+BT_SCAN=ON\r\n"), "scan on -> AT+BT_SCAN=ON");
+    bt_set_scan(false);
+    check(rec_last_is("AT+BT_SCAN=OFF\r\n"), "scan off -> AT+BT_SCAN=OFF");
 
     printf("\n%d failed\n", fails);
     return fails ? 1 : 0;

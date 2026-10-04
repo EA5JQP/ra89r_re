@@ -106,7 +106,12 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
 {
     switch (ev) {
     case BT_EV_READY:
-        build_config_sequence();
+        /* Only start the sequence for an enabled service that is actually
+         * waiting for the module.  The module's boot banner can deliver a
+         * late +IM_READY after a disable or a reset timeout, which must not
+         * restart it. */
+        if (s_enabled && s_state == BT_STATE_RESET)
+            build_config_sequence();
         break;
 
     case BT_EV_OK:
@@ -138,7 +143,9 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
     case BT_EV_BT_RECEIVER:
     case BT_EV_NAME_EQUALLY:
     case BT_EV_CONN_STATE:
-    case BT_EV_BT_SCAN_STOP:
+        /* Terminal responses to a queued command.  +IM_BT_SCAN_STOP is NOT
+         * here: it is unsolicited (the boot banner carries it) and the stock
+         * does not advance on it. */
         if (s_state == BT_STATE_CONFIG)
             queue_advance();
         break;
@@ -152,6 +159,9 @@ void bt_service_tick(void)
 {
     if (s_state == BT_STATE_RESET) {
         if (++s_ticks >= BT_RESET_TICKS) {
+#ifndef BLUETOOTH_HOST_TEST
+            bluetooth_power(false);     /* give up: hold the module in reset */
+#endif
             s_state = BT_STATE_OFF;
             s_enabled = false;
             s_ticks = 0;
@@ -204,6 +214,38 @@ void bt_set_name(const char *name)
         s_name[0] = '\0';
         s_name_set = false;
     }
+}
+
+/* The stock's own gain value strings (`FUN_0802286c` mic, `FUN_080226d8`
+ * speaker); the level is an index into these. */
+static const char *const bt_mic_gain_str[] = { "0", "5", "6", "7", "8" };
+static const char *const bt_spk_gain_str[] = { "0", "4", "8", "16", "23", "31" };
+
+unsigned bt_spk_gain_levels(void)
+{
+    return (unsigned)(sizeof bt_spk_gain_str / sizeof bt_spk_gain_str[0]);
+}
+
+unsigned bt_mic_gain_levels(void)
+{
+    return (unsigned)(sizeof bt_mic_gain_str / sizeof bt_mic_gain_str[0]);
+}
+
+void bt_set_scan(bool on)
+{
+    bluetooth_send_cmd(on ? BT_CMD_BT_SCAN_ON : BT_CMD_BT_SCAN_OFF);
+}
+
+void bt_set_spk_gain(uint8_t level)
+{
+    if ((unsigned)level < bt_spk_gain_levels())
+        bluetooth_send_param(BT_CMD_SPKGAIN, bt_spk_gain_str[level]);
+}
+
+void bt_set_mic_gain(uint8_t level)
+{
+    if ((unsigned)level < bt_mic_gain_levels())
+        bluetooth_send_param(BT_CMD_MICGAIN, bt_mic_gain_str[level]);
 }
 
 bt_state_t bt_state(void)

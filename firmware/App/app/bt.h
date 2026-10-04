@@ -37,6 +37,14 @@ void       bt_set_enabled(bool on);
 bool       bt_enabled(void);
 void       bt_set_mode(uint8_t mode);        /* 0 = emitter, 1 = receiver */
 void       bt_set_name(const char *name);    /* NULL/"" = unset */
+
+/* Phase 1 item actions.  Scan is transient; the gains send the stock's own
+ * value strings (see the tables in driver/bluetooth.h). */
+void       bt_set_scan(bool on);
+void       bt_set_spk_gain(uint8_t level);
+void       bt_set_mic_gain(uint8_t level);
+unsigned   bt_spk_gain_levels(void);
+unsigned   bt_mic_gain_levels(void);
 bt_state_t bt_state(void);
 const char *bt_version(void);
 const char *bt_local_addr(void);

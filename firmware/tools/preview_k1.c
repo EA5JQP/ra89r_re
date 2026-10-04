@@ -572,6 +572,20 @@ int main(void)
         gScreenToDisplay = DISPLAY_BT;
         UI_DisplayBT();
         render("UI_DisplayBT(): the Bluetooth menu");
+
+        /* UI_DisplayBT must stay inside gFrameBuffer[0..6]: a 7th item row
+         * would run off the end into gStatusLine, and the inverse highlight
+         * must not write before the row (the old call corrupted [0][127]). */
+        memset(gStatusLine, 0xAA, sizeof gStatusLine);
+        memset(gFrameBuffer, 0xAA, sizeof gFrameBuffer);
+        UI_DisplayBT();
+        ok = (gFrameBuffer[0][127] == 0);
+        for (i = 0; i < sizeof gStatusLine; i++)
+            if (gStatusLine[i] != 0) { ok = false; break; }
+        printf("[bt] %s UI_DisplayBT stays inside gFrameBuffer[0..6]\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
         for (i = 0; i < BT_MenuCount(); i++)
             (void)BT_MenuName(i);
     }

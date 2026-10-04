@@ -721,6 +721,11 @@ static void bt_bench(void)
               "  AT+GMR? come back as whole +IM_* lines.  A non-115200 rate sets\n"
               "  FE (framing error) and yields only aliased bytes; ORE alone is\n"
               "  just this loop not draining fast enough.\n");
+
+    /* The bench overwrote the event callback and left USART3 on the last
+     * framing variant (8N2).  Re-init so the BT service keeps working after a
+     * diagnostic run. */
+    bt_init();
 }
 
 /* ------------------------------------------- cable-free audio-path bench
