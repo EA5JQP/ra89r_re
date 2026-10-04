@@ -61,8 +61,10 @@ void        bt_connect_dev(unsigned i); /* AT+EAR_CONN=<device> */
  * `+IM_EAR_SIDE_SINGLE1` click); tx.c keys the transmitter while it is set. */
 bool        bt_ptt_down(void);
 
-/* The name of the device we connected, or "None". */
+/* The name of the device we connected, or "None".  `bt_set_linked_name()`
+ * restores the persisted name at boot. */
 const char *bt_linked_name(void);
+void        bt_set_linked_name(const char *name);
 bt_state_t bt_state(void);
 const char *bt_version(void);
 const char *bt_local_addr(void);

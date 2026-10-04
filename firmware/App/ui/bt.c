@@ -1,11 +1,9 @@
 /* Bluetooth menu screen -- see ui/bt.h and docs/ra89r_bluetooth_design.md.
  *
- * Same layout as the K1 menu (UI_DisplayMenu, original layout): a three-row
- * left column (previous / current / next) with the current item inverted, a
- * dotted separator, the item value on the right and the index/count below.
- * The labels are kept to six characters so they fit the column, like the K1
- * menu's own names.  Only six item rows are ever drawn (the K1's window is
- * three), so nothing runs past gFrameBuffer[6]. */
+ * Same look and interaction as the K1 menu: the previous and next items in the
+ * small font, the current item big, the value on the right and the `nn/nn`
+ * index below.  Selecting follows the K1 model -- UP/DOWN move the cursor,
+ * MENU enters the item, then UP/DOWN change its value and MENU confirms. */
 #include "ui/bt.h"
 
 #include <string.h>
@@ -20,10 +18,10 @@
 
 /* Six characters max, like MenuList[].name. */
 static const char *const bt_items[] = {
-    "Switch",   /* BT Switch    -- the codeplug Bluetooth bool (byte 9 bit 0) */
-    "Pair",     /* Pairing      -- scan and auto-connect */
-    "Paired",   /* Paired Dev   -- the connected/last device */
-    "Hold",     /* Hold Time    -- byte 7 bits 0-3 */
+    "Switch",   /* BT Switch    -- the codeplug Bluetooth bool */
+    "Pair",     /* Pairing      -- scan and pick a device */
+    "Paired",   /* Paired Dev   -- the connected/saved device */
+    "Hold",     /* Hold Time    -- byte 7 */
     "Scan",     /* Scan         -- AT+BT_SCAN on/off */
     "Volume",   /* Spk Volume   -- byte 8 bits 0-3 */
     "Mic",      /* Mic Gain     -- byte 8 bits 4-7 */
@@ -32,6 +30,7 @@ static const char *const bt_items[] = {
 };
 
 static uint8_t s_cursor;
+static bool    s_editing;   /* MENU entered the item; UP/DOWN change its value */
 static bool    s_scan;      /* transient: the Scan item is an action, not a setting */
 static bool    s_pairing;   /* showing the found-device list */
 static uint8_t s_pair_cursor;
@@ -71,7 +70,14 @@ static const char *bt_ptt_str(uint8_t type)
     }
 }
 
-/* The value shown after an item's label, or "" for none. */
+/* The items MENU enters to change a value (the rest are actions or read-outs). */
+static bool bt_item_is_value(unsigned index)
+{
+    return index == 0u || index == 3u || index == 4u ||
+           index == 5u || index == 6u || index == 8u;
+}
+
+/* The value shown to the right of an item's label, or "" for none. */
 static const char *bt_item_value(unsigned index, char *buf, unsigned cap)
 {
     (void)cap;
@@ -82,9 +88,15 @@ static const char *bt_item_value(unsigned index, char *buf, unsigned cap)
     case 1:
         if (bt_connected())
             return "Linked";
-        return bt_state() == BT_STATE_SCAN ? "Scan" : "";
+        return (bt_state() == BT_STATE_SCAN) ? "Scanning" : "";
     case 2:
-        return bt_connected() ? bt_linked_name() : "None";
+        if (bt_connected())
+            sprintf(buf, "Linked %s", bt_linked_name());
+        else if (gEeprom.BT_PairedName[0] != '\0')
+            sprintf(buf, "Saved %s", gEeprom.BT_PairedName);
+        else
+            sprintf(buf, "None");
+        return buf;
     case 3:
         sprintf(buf, "%u", (unsigned)gEeprom.BT_HoldTime);
         return buf;
@@ -105,20 +117,13 @@ static const char *bt_item_value(unsigned index, char *buf, unsigned cap)
     }
 }
 
-/* The K1 menu is built with ENABLE_CUSTOM_MENU_LAYOUT, so its layout is the
- * "new" one in UI_DisplayMenu: the previous and next items in the small font
- * (lines 1 and 4), the current item big (line 2), the `%02u/%02u` index at
- * x=6 line 6, and no inverted bar.  This matches it exactly. */
 void UI_DisplayBT(void)
 {
     const int cnt = (int)BT_MenuCount();
     const int idx = (int)s_cursor;
-    char      String[16];
+    char      String[32];
     unsigned  i;
 
-    /* The K1 menu never clears the status line -- it blits it unchanged -- so
-     * neither do we: clearing it blanked the bar until the next status
-     * refresh. */
     UI_DisplayClear();
 
     UI_DrawLineBuffer(gFrameBuffer, (uint8_t)(8u * 6u), 0, (uint8_t)(8u * 6u), 55, 1);
@@ -131,7 +136,8 @@ void UI_DisplayBT(void)
         UI_PrintStringSmallNormal("Pairing", 0, 0, 0);
 
         if (n == 0u) {
-            UI_PrintStringSmallNormal("Scanning...", 0, 0, 3);
+            /* the scan status on the right, like an item value */
+            GUI_DisplaySmallest("Scanning...", 66, 9, false, true);
         } else {
             unsigned k;
             uint8_t  top = 0;
@@ -181,21 +187,28 @@ void UI_DisplayBT(void)
     sprintf(String, "%02u/%02u", 1u + (unsigned)idx, (unsigned)cnt);
     UI_PrintStringSmallNormal(String, 6, 0, 6);
 
-    /* the current item's value, on the right (big font, line 2) */
+    /* the current item's value, on the right */
     {
-        char        vbuf[16];
+        char        vbuf[32];
         const char *val = bt_item_value((unsigned)idx, vbuf, sizeof vbuf);
 
-        if (val[0] != '\0')
-            UI_PrintString(val, (8u * 6u) + 2u, LCD_WIDTH - 1u, 2, 8);
+        if (val[0] != '\0') {
+            if (idx == 2 || strlen(val) > 6u) {
+                /* long values (the paired device) use the smallest font */
+                GUI_DisplaySmallest(val, 52, 28, false, true);
+            } else {
+                UI_PrintString(val, 52, 127, 2, 8);
+            }
+        }
     }
 
     ST7565_BlitStatusLine();
     ST7565_BlitFullScreen();
 }
 
-/* Every item acts now; the value fields mirror the stock's codeplug fields. */
-static void bt_activate(void)
+/* Change the current item's value (in edit mode).  `dir` is +1 for UP, -1 for
+ * DOWN; toggles ignore it. */
+static void bt_change(int dir)
 {
     switch (s_cursor) {
     case 0:     /* BT Switch */
@@ -204,14 +217,8 @@ static void bt_activate(void)
         gRequestSaveSettings = true;
         break;
 
-    case 1:     /* Pairing: scan and list the found devices */
-        s_pairing     = true;
-        s_pair_cursor = 0;
-        bt_start_connect();
-        break;
-
-    case 3:     /* Hold Time: 0..15 (4S..15S, Infinite) */
-        gEeprom.BT_HoldTime = (uint8_t)((gEeprom.BT_HoldTime + 1u) & 0x0Fu);
+    case 3:     /* Hold Time: 0..15 */
+        gEeprom.BT_HoldTime = (uint8_t)((gEeprom.BT_HoldTime + (unsigned)(dir + 16)) % 16u);
         gRequestSaveSettings = true;
         break;
 
@@ -220,26 +227,26 @@ static void bt_activate(void)
         bt_set_scan(s_scan);
         break;
 
-    case 5:     /* Spk Volume: the stock's gain levels */
-        gEeprom.BT_SpkGain =
-            (uint8_t)((gEeprom.BT_SpkGain + 1u) % bt_spk_gain_levels());
+    case 5:     /* Spk Volume */
+        gEeprom.BT_SpkGain = (uint8_t)((gEeprom.BT_SpkGain +
+            (unsigned)(dir + (int)bt_spk_gain_levels())) % bt_spk_gain_levels());
         bt_set_spk_gain(gEeprom.BT_SpkGain);
         gRequestSaveSettings = true;
         break;
 
     case 6:     /* Mic Gain */
-        gEeprom.BT_MicGain =
-            (uint8_t)((gEeprom.BT_MicGain + 1u) % bt_mic_gain_levels());
+        gEeprom.BT_MicGain = (uint8_t)((gEeprom.BT_MicGain +
+            (unsigned)(dir + (int)bt_mic_gain_levels())) % bt_mic_gain_levels());
         bt_set_mic_gain(gEeprom.BT_MicGain);
         gRequestSaveSettings = true;
         break;
 
     case 8:     /* PTT Type: BT / local / both */
-        gEeprom.BT_PTTType = (uint8_t)((gEeprom.BT_PTTType + 1u) % 3u);
+        gEeprom.BT_PTTType = (uint8_t)((gEeprom.BT_PTTType + (unsigned)(dir + 3)) % 3u);
         gRequestSaveSettings = true;
         break;
 
-    default:    /* Paired Dev (2) and Blooth Inf (7) are read-outs */
+    default:
         break;
     }
 }
@@ -264,6 +271,10 @@ void BT_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
         case KEY_MENU:
             if (bKeyPressed && !bKeyHeld && bt_found_count() > 0u) {
                 bt_connect_dev(s_pair_cursor);
+                strncpy(gEeprom.BT_PairedName, bt_found_dev(s_pair_cursor),
+                        sizeof gEeprom.BT_PairedName - 1u);
+                gEeprom.BT_PairedName[sizeof gEeprom.BT_PairedName - 1u] = '\0';
+                gRequestSaveSettings = true;
                 gUpdateDisplay = true;
             }
             break;
@@ -284,29 +295,49 @@ void BT_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
     }
 
     switch (Key) {
-    case KEY_UP:            /* wrap, like the K1 menu */
-        if (bKeyPressed && !bKeyHeld)
-            s_cursor = (s_cursor == 0u) ? (uint8_t)(BT_MenuCount() - 1u)
-                                        : (uint8_t)(s_cursor - 1u);
+    case KEY_UP:
+        if (bKeyPressed && !bKeyHeld) {
+            if (s_editing)
+                bt_change(1);
+            else
+                s_cursor = (s_cursor == 0u) ? (uint8_t)(BT_MenuCount() - 1u)
+                                            : (uint8_t)(s_cursor - 1u);
+        }
         gUpdateDisplay = true;
         break;
 
     case KEY_DOWN:
-        if (bKeyPressed && !bKeyHeld)
-            s_cursor = (uint8_t)((s_cursor + 1u) % BT_MenuCount());
+        if (bKeyPressed && !bKeyHeld) {
+            if (s_editing)
+                bt_change(-1);
+            else
+                s_cursor = (uint8_t)((s_cursor + 1u) % BT_MenuCount());
+        }
         gUpdateDisplay = true;
         break;
 
     case KEY_MENU:
-        if (bKeyPressed && !bKeyHeld) {     /* act on press, not on hold-repeat */
-            bt_activate();
+        if (bKeyPressed && !bKeyHeld) {
+            if (s_editing) {
+                s_editing = false;          /* confirm */
+            } else if (s_cursor == 1u) {    /* Pair: scan and pick */
+                s_pairing     = true;
+                s_pair_cursor = 0;
+                bt_start_connect();
+            } else if (bt_item_is_value(s_cursor)) {
+                s_editing = true;           /* enter the item */
+            }
             gUpdateDisplay = true;
         }
         break;
 
     case KEY_EXIT:
-        if (bKeyPressed && !bKeyHeld)
-            gRequestDisplayScreen = DISPLAY_MAIN;
+        if (bKeyPressed && !bKeyHeld) {
+            if (s_editing)
+                s_editing = false;
+            else
+                gRequestDisplayScreen = DISPLAY_MAIN;
+        }
         break;
 
     default:

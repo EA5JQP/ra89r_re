@@ -1365,6 +1365,7 @@ int main(void)
     bt_init();
     bt_set_mode(gEeprom.BT_Mode);
     bt_set_name(gEeprom.BT_Name);
+    bt_set_linked_name(gEeprom.BT_PairedName);
     bt_set_enabled(gEeprom.BT_Switch);
 
     /* Sample the pack before any screen is drawn.  The status bar (and the

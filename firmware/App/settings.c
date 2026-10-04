@@ -197,6 +197,7 @@ void SettingsDefaults(void)
     gEeprom.BT_MicGain = 2;
     gEeprom.BT_PTTType = 0;
     gEeprom.BT_HoldTime = 0;
+    gEeprom.BT_PairedName[0] = '\0';
 }
 
 /* The first channel the codeplug has at or after `start`, or 0xFFFF. */

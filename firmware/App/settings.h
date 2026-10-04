@@ -305,6 +305,7 @@ typedef struct {
     uint8_t               BT_MicGain;     /* AT+MICGAIN level */
     uint8_t               BT_PTTType;     /* earpiece PTT behaviour */
     uint8_t               BT_HoldTime;    /* earpiece PTT hold time */
+    char                  BT_PairedName[24];  /* the last device connected */
 } EEPROM_Config_t;
 
 extern EEPROM_Config_t gEeprom;

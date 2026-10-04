@@ -415,6 +415,17 @@ const char *bt_linked_name(void)
     return (s_linked_name[0] != '\0') ? s_linked_name : "None";
 }
 
+/* Restore the persisted name at boot (the app owns `gEeprom`). */
+void bt_set_linked_name(const char *name)
+{
+    if (name != 0 && name[0] != '\0') {
+        strncpy(s_linked_name, name, sizeof s_linked_name - 1u);
+        s_linked_name[sizeof s_linked_name - 1u] = '\0';
+    } else {
+        s_linked_name[0] = '\0';
+    }
+}
+
 bt_state_t bt_state(void)
 {
     return s_state;
