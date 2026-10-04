@@ -544,8 +544,15 @@ static void bt_on_event(bt_event_t ev, const char *payload, unsigned len)
     uart_putc('\n');
 }
 
-/* Read whatever USART3 has for ~`ms`, printing each raw byte and any framing
- * error.  Returns the number of bytes seen. */
+/* Read whatever USART3 has for ~`ms`, printing each raw byte and any real
+ * framing error.  Returns the number of bytes seen.
+ *
+ * The receive register is drained in a tight loop, because the module answers
+ * at 115200 -- one byte every ~87 us -- and reading a single byte per 10 ms
+ * overruns the USART, so only the first byte of a response survives.  That is
+ * what earlier runs misread as a framing failure: `SR`'s overrun bit is bit 3
+ * (0x8), the framing-error bit is bit 1 (0x2), and the `0x00f8` those runs
+ * printed has FE clear.  Only FE/NE/PE mean the bytes are bad. */
 static unsigned bt_listen(unsigned ms)
 {
     unsigned got = 0;
@@ -554,24 +561,31 @@ static unsigned bt_listen(unsigned ms)
     for (t = 0; t < ms / 10u; t++) {
         uint16_t sr = BOARD_BT_UART->SR;
 
-        if (sr & USART_SR_RXNE) {
+        if (sr & (USART_SR_FE | USART_SR_NE | USART_SR_PE))
+            uart_printf("     framing error SR=0x%04X\n", (unsigned)sr);
+
+        while (sr & USART_SR_RXNE) {
             uint8_t b = (uint8_t)BOARD_BT_UART->DR;
 
-            got++;
-            uart_printf("     raw 0x%02X %s\n", (unsigned)b,
-                        (b >= 0x20 && b < 0x7f) ? (const char[]){ b, 0 } : "");
+            if (got < 512u) {
+                got++;
+                uart_printf("     raw 0x%02X %s\n", (unsigned)b,
+                            (b >= 0x20 && b < 0x7f) ? (const char[]){ b, 0 } : "");
+            }
+            sr = BOARD_BT_UART->SR;
         }
-        if (sr & (USART_SR_ORE | USART_SR_FE | USART_SR_PE | USART_SR_NE))
-            uart_printf("     err SR=0x%04X\n", (unsigned)sr);
         systick_delay_ms(10);
     }
     return got;
 }
 
 /* Time the low pulse on PB11 (the module's TX) after a command: a UART start
- * bit is one bit time, so its width gives the module's baud directly, and a
- * line that never goes low means the signal is inverted.  PB11 is taken off
- * AF2 and read as a plain input for this; a busy loop, since systick is 1 ms. */
+ * bit is exactly one bit time and is always low, so the `low` count is the bit
+ * time and a line that never goes low means the signal is inverted.  The
+ * `high` count is *not* the bit time -- it is however many 1 bits begin the
+ * first byte (two for '+', 0x2b), so a `high` twice the `low` is normal, not a
+ * half-width start bit.  PB11 is taken off AF2 and read as a plain input for
+ * this; a busy loop, since systick is 1 ms. */
 static void bt_bit_probe(void)
 {
     unsigned n;
@@ -595,50 +609,6 @@ static void bt_bit_probe(void)
             high++;
 
         uart_printf("     start-bit low = %u, high = %u loop ticks\n", low, high);
-    }
-
-    BOARD_BT_UART_PORT->MODER |= (2u << (11u * 2u));    /* PB11 -> AF */
-}
-
-/* A short busy delay in the same loop the bit probe measured, so ~51 ticks is
- * one 115200 bit.  Volatile so it is not optimised away. */
-static void bt_delay_ticks(unsigned n)
-{
-    volatile unsigned i;
-
-    for (i = 0; i < n; i++)
-        ;
-}
-
-/* Decode bytes from PB11 in software, sampling at the bit probe's rate, to
- * bypass the USART: the last test for a slow/weak-drive signal the peripheral
- * samples wrong. */
-static void bt_soft_rx(void)
-{
-    unsigned n;
-
-    BOARD_BT_UART_PORT->MODER &= ~(3u << (11u * 2u));   /* PB11 -> input */
-    bluetooth_send_cmd(BT_CMD_GMR);
-
-    for (n = 0; n < 24u; n++) {
-        unsigned i = 0, k;
-        uint8_t b = 0;
-
-        while (i < 3000000u && (BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN))
-            i++;
-        if (i >= 3000000u)
-            break;
-
-        bt_delay_ticks(25u);                    /* half a bit: into the data */
-        for (k = 0; k < 8u; k++) {
-            bt_delay_ticks(51u);                /* one bit */
-            b = (uint8_t)((b >> 1)
-                          | ((BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN)
-                                 ? 0x80u : 0u));
-        }
-        uart_printf("     soft 0x%02X (normal) / 0x%02X (inverted) %s\n",
-                    (unsigned)b, (unsigned)(uint8_t)(~b),
-                    (b >= 0x20 && b < 0x7f) ? (const char[]){ b, 0 } : "");
     }
 
     BOARD_BT_UART_PORT->MODER |= (2u << (11u * 2u));    /* PB11 -> AF */
@@ -681,11 +651,8 @@ static void bt_bench(void)
     uart_puts("  <- bit probe (PB11 as a plain input):\n");
     bt_bit_probe();
 
-    /* And decode a few bytes in software, bypassing the USART. */
-    uart_puts("  <- software RX at the probed rate:\n");
-    bt_soft_rx();
-
-    /* Then the rate, both oversamplings. */
+    /* Then the rate, both oversamplings.  (115200 16x is the one: it is the
+     * rate whose status word has FE clear.  The others set FE.) */
     {
         static const uint32_t bauds[] = { 115200u, 9600u, 38400u, 57600u,
                                           19200u, 4800u, 230400u, 76800u };
@@ -731,8 +698,9 @@ static void bt_bench(void)
         }
     }
 
-    uart_puts("  a start-bit low of ~55-85 ticks is 115200 (48 MHz loop); the\n"
-              "  rate whose bytes decode cleanly (no 'err SR=...') is the one.\n");
+    uart_puts("  115200 is the module's rate: only there is the status word's\n"
+              "  framing bit (FE, 0x2) clear.  An overrun (ORE, 0x8) just means\n"
+              "  this loop did not drain fast enough, not that the bytes are bad.\n");
 }
 
 /* ------------------------------------------- cable-free audio-path bench

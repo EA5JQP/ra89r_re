@@ -322,7 +322,12 @@ void bluetooth_init(void)
 
 void bluetooth_poll(void)
 {
-    uint8_t buf[32];
+    /* Drain the whole receive register in one tight loop.  The module answers
+     * at 115200 (one byte every ~87 us); a single byte per main-loop pass
+     * overruns the USART and drops the rest of the line, so the caller must
+     * pump this often enough that a full response (well under this buffer)
+     * arrives between calls.  This is what the console `y` bench got wrong. */
+    uint8_t buf[256];
     unsigned n = 0;
 
     while ((BOARD_BT_UART->SR & USART_SR_RXNE) && n < sizeof buf)
