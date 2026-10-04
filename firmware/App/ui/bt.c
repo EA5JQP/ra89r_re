@@ -188,17 +188,24 @@ void UI_DisplayBT(void)
     UI_PrintStringSmallNormal(String, 6, 0, 6);
 
     /* the current item's value, on the right */
-    {
+    if (idx == 2) {
+        /* Paired: the state on one line (small font) and the device on the
+         * next (the smallest font), like `Linked:` / `Ear Stick`. */
+        const char *name = bt_connected() ? bt_linked_name()
+                         : (gEeprom.BT_PairedName[0] != '\0' ? gEeprom.BT_PairedName
+                                                             : "None");
+
+        UI_PrintStringSmallNormal(bt_connected() ? "Linked:" : "Saved:", 52, 0, 2);
+        GUI_DisplaySmallest(name, 52, 34, false, true);
+    } else {
         char        vbuf[32];
         const char *val = bt_item_value((unsigned)idx, vbuf, sizeof vbuf);
 
         if (val[0] != '\0') {
-            if (idx == 2 || strlen(val) > 6u) {
-                /* long values (the paired device) use the smallest font */
+            if (strlen(val) > 6u)
                 GUI_DisplaySmallest(val, 52, 28, false, true);
-            } else {
+            else
                 UI_PrintString(val, 52, 127, 2, 8);
-            }
         }
     }
 
