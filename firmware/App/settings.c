@@ -188,6 +188,15 @@ void SettingsDefaults(void)
     gEeprom.ROGER = ROGER_MODE_OFF;
     gEeprom.BACKLIGHT_MIN = 1;
     gEeprom.BACKLIGHT_MAX = 5;
+
+    /* Bluetooth: off by default, as the stock leaves it. */
+    gEeprom.BT_Switch  = false;
+    gEeprom.BT_Mode    = 0;
+    gEeprom.BT_Name[0] = '\0';
+    gEeprom.BT_SpkGain = 0;
+    gEeprom.BT_MicGain = 0;
+    gEeprom.BT_PTTType = 0;
+    gEeprom.BT_HoldTime = 0;
 }
 
 /* The first channel the codeplug has at or after `start`, or 0xFFFF. */

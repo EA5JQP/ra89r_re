@@ -29,7 +29,7 @@
 #define BLOB_ADDR      0x1FF000u
 #define TEST_ADDR      0x1FE000u
 #define BLOB_MAGIC     0x52393852u   /* "R89R" */
-#define BLOB_VERSION   2u
+#define BLOB_VERSION   3u
 
 typedef struct {
     uint32_t magic;

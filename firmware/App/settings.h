@@ -295,6 +295,16 @@ typedef struct {
     uint8_t               S0_LEVEL;
     uint8_t               S9_LEVEL;
 #endif
+
+    /* Bluetooth (Jieli YBT100) -- port addition; see
+     * docs/ra89r_bluetooth_design.md. */
+    bool                  BT_Switch;      /* module on/off (PD0 + AT+BT_DISCN) */
+    uint8_t               BT_Mode;        /* 0 = emitter, 1 = receiver */
+    char                  BT_Name[16];    /* AT+WRITE_NAME value */
+    uint8_t               BT_SpkGain;     /* AT+SPKGAIN level */
+    uint8_t               BT_MicGain;     /* AT+MICGAIN level */
+    uint8_t               BT_PTTType;     /* earpiece PTT behaviour */
+    uint8_t               BT_HoldTime;    /* earpiece PTT hold time */
 } EEPROM_Config_t;
 
 extern EEPROM_Config_t gEeprom;

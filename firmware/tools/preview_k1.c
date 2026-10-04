@@ -216,6 +216,23 @@ int main(void)
                (unsigned)gEeprom.CHANNEL_DISPLAY_MODE);
         printf("[storage] write test=%d\n", storage_write_test(&bad));
 
+        /* BT fields round-trip through the same blob. */
+        {
+            bool ok;
+
+            gEeprom.BT_Switch = true;
+            gEeprom.BT_Mode   = 1;
+            saved = storage_save_settings();
+            gEeprom.BT_Switch = false;
+            gEeprom.BT_Mode   = 0;
+            loaded = storage_load_settings();
+
+            ok = saved && loaded && gEeprom.BT_Switch && gEeprom.BT_Mode == 1;
+            printf("[storage] bt save=%d load=%d -> switch=%d mode=%u (expected 1/1)\n",
+                   saved, loaded, (int)gEeprom.BT_Switch, (unsigned)gEeprom.BT_Mode);
+            if (!ok) failures++;
+        }
+
         /* Put the state back so the screens below render as before (a plain
          * SettingsDefaults() would clear the VFO pointers those screens
          * dereference -- port_state_init() re-establishes them). */
