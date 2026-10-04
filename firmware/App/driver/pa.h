@@ -67,14 +67,6 @@
                                      * (FUN_08016CEC sets it, FUN_08016DE8
                                      * clears it); the BK4829 leaves it clear */
 #define PA_REG33_TR       0x0002u   /* pin 5: T/R, the PA enable (FUN_08013A70) */
-#define PA_REG33_BT_AUDIO 0x0010u   /* pin 2: the audio path the stock turns on
-                                     * while a BT earpiece is linked (FUN_08015D44:
-                                     * `FUN_080137D4(4, 4)` when `bt_state[0xf]` and
-                                     * `config[0x38]` are set, `(4, 0)` otherwise).
-                                     * Same pin the stock drives around a tone
-                                     * (`FUN_08005638`); it is the only BT-gated
-                                     * chip output, so it is the transmit audio
-                                     * source select the port was missing. */
 
 /* Bring up the PWM pin and timer and park the band-path pins; compare 0, so the
  * PA is unbiased until a transmission asks for power. */
@@ -138,15 +130,5 @@ void pa_rx_enable(void);
 uint16_t pa_last_reg36(void);
 uint16_t pa_last_reg33(void);
 uint16_t pa_last_compare(void);
-
-/* The stock's BT audio path: chip output pin 2 (`0x33` bit `0x10`) is set while
- * a BT earpiece is linked and cleared when it drops (`FUN_08015D44`, reached
- * from the connect/disconnect handlers `FUN_0801AE8C`/`FUN_0801AEE8`).  The
- * port calls this from `app/bt.c` on the connect/disconnect events; it is the
- * transmit-audio source select that made the earpiece mic work on the stock.
- * Applying it immediately is a read-modify-write on `0x33`, and the TX/RX paths
- * keep the bit alive across a band change. */
-void pa_set_bt_audio(bool on);
-bool pa_bt_audio(void);
 
 #endif /* DRIVER_PA_H */

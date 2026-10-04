@@ -1725,15 +1725,6 @@ int main(void)
                             (unsigned)BOARD_BT_UART->CR3,
                             (unsigned)BOARD_BT_UART->BRR);
                 break;
-            case 'g':
-                /* BT audio path (chip `0x33` pin 2): the stock sets it while an
-                 * earpiece is linked (`FUN_08015D44`).  Toggle it here to settle
-                 * on the radio whether it is the transmit-audio source select. */
-                pa_set_bt_audio(!pa_bt_audio());
-                uart_printf("\nBT audio path (0x33 pin 2): %s, 0x33=0x%04X\n",
-                            pa_bt_audio() ? "on" : "off",
-                            (unsigned)pa_chip_path_reg());
-                break;
             case 'J':
                 /* Enable BT and capture the boot banner with the bench's tight
                  * drain, to compare against the service's own drain (`U`). */

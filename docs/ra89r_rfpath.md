@@ -283,7 +283,7 @@ in the image:
 |---|---|---|---|---|
 | `0x40` | `1` | `FUN_0801BDE8` | `(3,1)` | **TX band 0 (VHF)** |
 | `0x20` | `2` | `FUN_0801BDE8` | `(3,2)` | **TX band 1/2 (UHF)** |
-| `0x10` | `4` | `FUN_08005638` / `FUN_08015D44` / `FUN_08004E20` | `(4,4)` / `(4,0)` | the **audio input path**: set by the tone/voice player (`FUN_08005638`) and, `FUN_08015D44`, while a BT earpiece is linked (`bt_state[0xf] && config[0x38]`), cleared by `FUN_08004E20` and on disconnect.  The only BT-gated chip output -- see `ra89r_bluetooth.md` |
+| `0x10` | `4` | `FUN_08005638` / `FUN_08015D44` / `FUN_08004E20` | `(4,4)` / `(4,0)` | tone/CTCSS, plus a config-gated case |
 | `0x08` | `8` | `FUN_0800D35C` / `FUN_0800D434` | `(8,8)` / `(8,0)` | band byte `0x20003EE4` |
 | `0x04` | `0x10` | `FUN_08016CEC` / `FUN_08016DE8` | `(0x10,0x10)` / `(0x10,0)` | **BK4815 branch** (> 134 MHz) / **BK4829 branch** (<= 134 MHz) |
 | `0x02` | `0x20` | `FUN_08013A70` / `FUN_08013B12` | `(0x20,0x20)` / `(0x20,0)` | **T/R (PA enable)** |

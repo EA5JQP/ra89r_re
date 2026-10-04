@@ -513,7 +513,7 @@ for Jieli's own YBT100 documentation, not for this image.
 The module identifies itself as **`RETEVIS RA89R(BT)`** at `11:C3:EF:CD:DF:5A`
 (classic) and **`RETEVIS RA89R`** at `10:C3:EF:CD:DF:5A` (BLE).
 
-## The BT audio path (the mic source select is chip output 2)
+## The BT audio path (what the stock does; the mic side is still open)
 
 When an earpiece connects, the stock:
 
@@ -522,39 +522,26 @@ When an earpiece connects, the stock:
 - sets the module's gains from the codeplug (`FUN_080075A0`:
   `AT+MICGAIN=<config[0x3b]>`, `AT+SPKGAIN=<config[0x3c]>`);
 - drives **`PC13`** (`FUN_080177A8` raise, `FUN_08009C9C` lower -- GPIO mask
-  `0x2000`), the internal-speaker enable, gated on the BT bool and the
-  connection state;
-- turns on **chip output 2** -- the BK4829's `0x33` bit `0x10` -- through
-  **`FUN_08015D44`**: `if (bt_state[0xf] == 1 && config[0x38] == 1)
-  FUN_080137D4(4, 4) else FUN_080137D4(4, 0)`.  It is called from the connect
-  handler `FUN_0801AE8C` and the disconnect handler `FUN_0801AEE8`, and nowhere
-  else touches that bit for BT.  **This is the only BT-gated hardware output in
-  the image**, so it is the transmit-audio source select the port was missing:
-  `FUN_080137D4(4, 4)` is the same call `FUN_08005638` (the tone/voice player)
-  uses around an announcement, i.e. the pin gates the audio input path, and the
-  stock's transmit/receive paths (`FUN_08017280`, `FUN_08016228`, `FUN_08013A70`,
-  `FUN_0801BDE8`) only ever read-modify-write `0x33`, so the bit stays set for
-  the whole connection.  An earlier "where that pin lands is not in the
-  firmware" reading was wrong: the stock does drive it, on connect.
+  `0x2000`), the audio-path/amplifier enable, gated on the BT bool and the
+  connection state.
 
 On the radio, `AT+BT_CALL=ON` is enough for the **radio's receive audio to reach
 the earpiece** (heard on the device).  The reverse -- the earpiece's mic reaching
-the radio's **transmit** -- is the pin above: the radio samples its own mic at
-the BK4829's mic ADC (`0x30` bit 2), and the module's analog output (the SCO
-audio, where the earpiece mic appears) is switched into that node by chip output
-2.  The port now sets `pa_set_bt_audio(true)` on `BT_EV_BT_EAR_CONN` and
-`(false)` on the disconnect events, and keeps the bit alive across the band and
-T/R writes; console `g` toggles it and prints `0x33` for an on-radio check.
+the radio's **transmit** -- does not work yet: the radio still samples its own
+mic at the BK4829's mic ADC (`0x30` bit 2).  The module's analog output (the SCO
+audio, where the earpiece mic appears) is where that would come from, but where
+that pin lands on this board is not in the firmware -- the stock only sets the
+module's internal gains.  If it is summed into the BK4829's mic node the two
+would mix; if it is routed elsewhere (or through a switch) it needs a board
+probe.  The port sends `AT+BT_CALL=ON` and the gains on connect, matching the
+stock.
 
 ## Open
 
 1. **Port integration.**  The service, the F+MENU `DISPLAY_BT` screen and the
-   settings are in, and the link reaches `Ready` on the radio.  The earpiece PTT
-   keys the transmit chain and `AT+BT_CALL=ON` gives the receive audio.  The
-   transmit-audio source select is now implemented too (chip output 2 on
-   connect, console `g`); it still needs the on-radio check that the earpiece
-   mic reaches a second receiver.  Also open: the pairing per-device pick (the
-   binary `+IM_EARDEV` record) and the paired-list persistence.
+   settings are in, and the link reaches `Ready` on the radio.  Still open:
+   pairing per-device pick (needs the binary `+IM_EARDEV` record), the paired
+   list persistence, and the earpiece PTT/audio (phases 2-4 of the design).
 2. **The binary `RDTP` protocol.**  Frame layout, the meaning of the
    `fe fe ee ef` prefix, and the opcode list are open; the opcodes are only known
    from the two dispatch sites.

@@ -141,10 +141,6 @@ typedef enum BK4819_REGISTER_t BK4819_REGISTER_t;
 enum BK4819_GPIO_PIN_t {
     BK4819_GPIO0_PIN28_RX_ENABLE = 0,
     BK4819_GPIO1_PIN29_PA_ENABLE = 1,
-    /* Port addition: the stock's BT audio-path pin.  The K1 enum skips 2; the
-     * RA89R stock drives chip output 2 while a BT earpiece is linked
-     * (`FUN_08015D44`, `0x33` bit `0x10`), so the port needs the pin named. */
-    BK4819_GPIO2_PIN30_BT_AUDIO = 2,
     BK4819_GPIO3_PIN31_UHF_LNA = 3,
     BK4819_GPIO4_PIN32_VHF_LNA = 4,
     BK4819_GPIO6_PIN2_GREEN = 5,

@@ -450,35 +450,6 @@ static void test_pa_tx_path(void)
     check_hex(pa_last_compare(), PA_PWM_MAX_DUTY, "UHF TX: full power clamps the compare");
 }
 
-/* The stock's BT audio path: chip output pin 2 (`0x33` bit `0x10`) is set while
- * a BT earpiece is linked and cleared when it drops (`FUN_08015D44`, from
- * `FUN_0801AE8C`/`FUN_0801AEE8`), and it stays set across a band change or a
- * transmission.  It is the only BT-gated chip output, so it is the transmit
- * audio source select the port was missing. */
-static void test_pa_bt_audio(void)
-{
-    printf("pa BT audio path (0x33 pin 2)\n");
-
-    log_reset();
-    BK4819_Init();
-    log_reset();
-    pa_set_bt_audio(true);
-    check_hex(last_reg33(), 0x9010u, "linked: pin 2 set, 0x9000 survives");
-
-    log_reset();
-    pa_select_band(14550000u);  /* a receive band change must keep it */
-    check((last_reg33() & PA_REG33_BT_AUDIO) != 0u,
-          "a receive band change keeps pin 2");
-
-    log_reset();
-    pa_tx_enable(0x40u);
-    check_hex(pa_last_reg33(), 0x0052u, "VHF TX keeps pin 2: 0x40|0x02|0x10");
-
-    log_reset();
-    pa_set_bt_audio(false);
-    check((last_reg33() & PA_REG33_BT_AUDIO) == 0u, "dropped: pin 2 cleared");
-}
-
 int main(void)
 {
     printf("rf register-layer test (stub bus, no radio)\n\n");
@@ -491,7 +462,6 @@ int main(void)
     test_k1_interface();
     test_pa_rx_path();
     test_pa_tx_path();
-    test_pa_bt_audio();
 
     printf("\n%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
