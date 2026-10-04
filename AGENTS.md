@@ -182,9 +182,10 @@ cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver \
     tools/host/host_beeper.c \
     App/ui/main.c App/ui/menu.c App/ui/ui.c App/ui/status.c App/ui/welcome.c \
     App/ui/battery.c App/ui/scanner.c App/ui/helper.c App/ui/inputbox.c \
+    App/ui/fmradio.c \
     App/app/menu.c App/app/action.c App/app/app.c App/app/main.c \
     App/app/generic.c App/app/common.c App/app/chFrScanner.c App/app/dtmf.c \
-    App/app/scanner.c App/radio.c App/functions.c App/audio.c App/misc.c \
+    App/app/scanner.c App/app/fm.c App/radio.c App/functions.c App/audio.c App/misc.c \
     App/driver/py25q16.c \
     App/board.c App/settings.c App/version.c App/dcs.c App/frequencies.c \
     App/helper/battery.c App/helper/boot.c App/driver/system.c App/font.c App/bitmaps.c \

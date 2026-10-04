@@ -16,6 +16,9 @@
 #include <string.h>
 
 #include "app/dtmf.h"
+#ifdef ENABLE_FMRADIO
+    #include "app/fm.h"
+#endif
 #include "dcs.h"
 #include "driver/py25q16.h"
 #include "frequencies.h"
@@ -122,10 +125,13 @@ typedef struct {
     uint16_t version;
     uint16_t reserved;
     uint8_t  freq_channels[7 * 2 * 16];   /* codeplug_freq_snapshot() */
+#ifdef ENABLE_FMRADIO
+    uint16_t fm_channels[FM_CHANNELS_MAX]; /* the K1's FM memories (app/fm.c) */
+#endif
 } settings_extra_t;
 
 #define EXTRA_MAGIC   0x58545241u    /* "ARTX" */
-#define EXTRA_VERSION 1u
+#define EXTRA_VERSION 2u
 
 void SettingsDefaults(void)
 {
@@ -188,6 +194,18 @@ void SettingsDefaults(void)
     gEeprom.ROGER = ROGER_MODE_OFF;
     gEeprom.BACKLIGHT_MIN = 1;
     gEeprom.BACKLIGHT_MAX = 5;
+
+#ifdef ENABLE_FMRADIO
+    /* The FM broadcast feature (app/fm.c).  The K1 loads these from its flat
+     * EEPROM; this port's stock codeplug has no such field, so the defaults are
+     * the port's and the user's choices round-trip in the port's own blob.
+     * BAND 1 = 76-108 MHz, the K1's usual one; 87.5 MHz is its lower edge. */
+    gEeprom.FM_Band              = 1;
+    gEeprom.FM_SelectedFrequency = 875;
+    gEeprom.FM_FrequencyPlaying  = 875;
+    gEeprom.FM_SelectedChannel   = 0;
+    gEeprom.FM_IsMrMode          = false;
+#endif
 }
 
 /* The first channel the codeplug has at or after `start`, or 0xFFFF. */
@@ -236,6 +254,12 @@ void SETTINGS_InitEEPROM(void)
      * the stock firmware or its CPS already carries. */
     codeplug_shared_settings();
 
+#ifdef ENABLE_FMRADIO
+    /* The FM memories start empty -- 0xFFFF is the K1's "no channel" marker
+     * (`FM_CheckValidChannel`).  A blob, if there is one, replaces them below. */
+    memset(gFM_Channels, 0xFF, sizeof gFM_Channels);
+#endif
+
     /* Then the port's own blob, which wins where the two overlap: it is what
      * the user last set with this firmware. */
     if (storage_load_settings()) {
@@ -246,6 +270,9 @@ void SETTINGS_InitEEPROM(void)
             extra.magic == EXTRA_MAGIC &&
             extra.version == EXTRA_VERSION) {
             codeplug_freq_restore(extra.freq_channels, sizeof extra.freq_channels);
+#ifdef ENABLE_FMRADIO
+            memcpy(gFM_Channels, extra.fm_channels, sizeof gFM_Channels);
+#endif
         }
     } else {
         /* No blob yet: land the two VFOs on the first two channels the codeplug
@@ -277,6 +304,13 @@ void SETTINGS_InitEEPROM(void)
      * overwritten on every boot; force the type here, as DUAL_WATCH is.  The
      * BatTyp menu can still change it at runtime. */
     gEeprom.BATTERY_TYPE = BATTERY_TYPE_2800_MAH;
+
+#ifdef ENABLE_FMRADIO
+    /* The K1's own boot does this right after loading the FM memories: if the
+     * selected memory is empty it falls back, and FM_FrequencyPlaying is set
+     * from the selected frequency/memory. */
+    FM_ConfigureChannelState();
+#endif
 }
 
 void SETTINGS_LoadCalibration(void)
@@ -445,6 +479,9 @@ static bool settings_save_all(void)
     extra.magic = EXTRA_MAGIC;
     extra.version = EXTRA_VERSION;
     codeplug_freq_snapshot(extra.freq_channels, sizeof extra.freq_channels);
+#ifdef ENABLE_FMRADIO
+    memcpy(extra.fm_channels, gFM_Channels, sizeof extra.fm_channels);
+#endif
 
     if (!storage_set_extra(&extra, sizeof extra))
         return false;
@@ -458,6 +495,19 @@ void SETTINGS_SaveSettings(void)
     settings_dirty = false;
     (void)settings_save_all();
 }
+
+#ifdef ENABLE_FMRADIO
+void SETTINGS_SaveFM(void)
+{
+    /* The K1 writes its FM config and memories into its flat EEPROM at
+     * 0x00A020/0x00A028.  On this radio those addresses are inside the stock's
+     * codeplug, which the port never writes (docs/ra89r_port.md); the FM state
+     * -- the config fields are already part of gEeprom -- and the 48 memories
+     * go into the port's own blob instead, through the same save path as the
+     * rest of the settings. */
+    (void)settings_save_all();
+}
+#endif
 
 /* The VFO indices are the K1's *deferred* save: SETTINGS_SaveVfoIndices() asks
  * for one and SETTINGS_SaveVfoIndicesFlush() -- which APP_TimeSlice10ms() calls

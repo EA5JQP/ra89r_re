@@ -2,10 +2,17 @@
  *
  * Every constant here comes from the stock image and is named by function in
  * docs/ra89r_bk1080.md; the datasheet (docs/BK1080.pdf) supplies the field
- * names.  Nothing has been exercised on the radio. */
+ * names.  The K1/F4HWN API at the bottom is imported (see NOTICE); it shares
+ * the wire framing below but replays the K1's own register image.
+ *
+ * The stock path is exercised by the console's `j` bench and by
+ * tools/test_bk1080.c; the FM feature (app/fm.c, ui/fmradio.c) uses the K1 API.
+ */
 #include "driver/bk1080.h"
 
 #include "driver/i2c_bus.h"
+#include "driver/system.h"
+#include "misc.h"
 
 /* The stock's power-up block (`FUN_08007124`): 68 bytes written to register 0,
  * which the part takes as registers 0x00..0x21 in one transfer.  In the image
@@ -233,4 +240,103 @@ void bk1080_clear_tune(void)
 
     v &= (uint16_t)~BK1080_CHANNEL_TUNE;
     bk1080_write_reg(BK1080_REG_CHANNEL, v);
+}
+
+/* ===========================================================================
+ * The K1/F4HWN driver API -- imported from the UV-K1/K5V3 project's
+ * App/driver/bk1080.c (Copyright 2023 Dual Tachyon, Apache-2.0; see NOTICE).
+ *
+ * Adaptation: the K1 file's `I2C_Start`/`I2C_Write`/`I2C_ReadBuffer`/
+ * `I2C_Stop` calls become the validated `i2c_bus_*` primitives above.  The
+ * wire framing is identical -- start, 0x80, (reg << 1) | R/W, 16-bit words MSB
+ * first, master ACK then NACK -- so `BK1080_ReadRegister`/`BK1080_WriteRegister`
+ * are thin wrappers over `bk1080_read_reg`/`bk1080_write_reg`.  Nothing else in
+ * the K1 logic is changed.
+ *
+ * The K1 driver API is kept as-is, but `BK1080_Init` now applies the **RA89R
+ * stock's** power-up image (`bk1080_configure()`, the 68-byte block plus the
+ * two register-0x32 writes) rather than replaying the K1's 33-entry table.
+ * The K1 table is for the K1's own BK1080 -- it omits the 0x32 writes and its
+ * internal registers (0x19/0x1e/0x20) differ -- and the stock image is the one
+ * this chip was calibrated with (and the one the console `j` validated).
+ * Frequencies are the K1's 100 kHz units (875 = 87.5 MHz).
+ * ======================================================================== */
+
+uint16_t BK1080_BaseFrequency;
+uint16_t BK1080_FrequencyDeviation;
+
+void BK1080_Init0(void)
+{
+    BK1080_Init(0, 0);
+}
+
+void BK1080_Init(uint16_t freq, uint8_t band)
+{
+    if (freq) {
+        /* Apply the RA89R's own power-up image (`FUN_08007124`): the 68-byte
+         * vendor block plus the two register-0x32 writes.  This is the image
+         * the stock configures *this* BK1080 with, and the one the console `j`
+         * validated on the radio.  The K1's 33-entry table is for the K1's own
+         * BK1080: it omits the register-0x32 writes and its internal registers
+         * (0x19/0x1e/0x20) differ, so replaying it here is the likely cause of
+         * the FM feature's poor sensitivity.  See docs/ra89r_bk1080.md. */
+        bk1080_configure();
+
+        #ifdef ENABLE_FEAT_F4HWN
+            BK1080_WriteRegister(BK1080_REG_05_SYSTEM_CONFIGURATION2, gMute ? 0x0A10 : 0x0A1F);
+        #else
+            BK1080_WriteRegister(BK1080_REG_05_SYSTEM_CONFIGURATION2, 0x0A1F);
+        #endif
+        BK1080_SetFrequency(freq, band);
+    }
+    else {
+        BK1080_WriteRegister(BK1080_REG_02_POWER_CONFIGURATION, 0x0241);
+    }
+}
+
+uint16_t BK1080_ReadRegister(BK1080_Register_t Register)
+{
+    return bk1080_read_reg((uint8_t)Register);
+}
+
+void BK1080_WriteRegister(BK1080_Register_t Register, uint16_t Value)
+{
+    bk1080_write_reg((uint8_t)Register, Value);
+}
+
+void BK1080_Mute(bool Mute)
+{
+    BK1080_WriteRegister(BK1080_REG_02_POWER_CONFIGURATION, Mute ? 0x4201 : 0x0201);
+}
+
+void BK1080_SetFrequency(uint16_t frequency, uint8_t band)
+{
+    uint16_t channel = (uint16_t)(frequency - BK1080_GetFreqLoLimit(band));
+
+    uint16_t regval = BK1080_ReadRegister(BK1080_REG_05_SYSTEM_CONFIGURATION2);
+    regval = (uint16_t)((regval & ~(0x3u << 6)) | ((band & 0x3u) << 6));
+
+    BK1080_WriteRegister(BK1080_REG_05_SYSTEM_CONFIGURATION2, regval);
+
+    BK1080_WriteRegister(BK1080_REG_03_CHANNEL, channel);
+    SYSTEM_DelayMs(10);
+    BK1080_WriteRegister(BK1080_REG_03_CHANNEL, (uint16_t)(channel | 0x8000u));
+}
+
+void BK1080_GetFrequencyDeviation(uint16_t Frequency)
+{
+    BK1080_BaseFrequency        = Frequency;
+    BK1080_FrequencyDeviation   = BK1080_ReadRegister(BK1080_REG_07) / 16;
+}
+
+uint16_t BK1080_GetFreqLoLimit(uint8_t band)
+{
+    static const uint16_t lim[] = {875, 760, 760, 640};
+    return lim[band % 4];
+}
+
+uint16_t BK1080_GetFreqHiLimit(uint8_t band)
+{
+    static const uint16_t lim[] = {1080, 1080, 900, 760};
+    return lim[band % 4];
 }

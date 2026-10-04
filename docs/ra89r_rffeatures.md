@@ -36,12 +36,19 @@ was found by an immediate.
 
 ## AF / audio
 
-* **`FUN_08015F48`** picks which part carries audio.  On a channel-state test it
-  writes either the BK4829's `0x47` = `0x6040`/`0x6042` (chosen by the state bytes
-  at `+0x75`) or the BK4815's `0x49` = `0x9A02`, then clears a flag.  Both `0x47`
-  values put `0` in bits 8–11, i.e. AF source 0 — the mute/source-select field
-  `afOutRegSpec` describes — so this reads as "route audio to the active part and
-  mute the other", not as a general AF selector.
+* **`FUN_08015F48`** is the **mute** the stock uses around a locally-generated
+  tone.  It is called from the beep path (`FUN_08005BEC` -> it, and
+  `FUN_08004AA4`) and writes either the BK4829's `0x47` = `0x6040`/`0x6042`
+  (chosen by the state bytes at `+0x75`) or the BK4815's `0x49` = `0x9A02`,
+  then clears a flag.  Both `0x47` values put `0` in `REG_47<11:8>`, and the
+  BK4829 register table defines that field as **AF Output Selection: `0x0` =
+  Mute, `0x1` = Normal AF out, `0x2` = Tone out, `0x3` = Beep out, `0x6` =
+  CTCSS/CDCSS, `0x8` = FSK** (`1_BK4829.Registers.Table.pdf`).  So this is
+  *mute the RF chip while the MCU's DAC beep plays*, not "route audio to the
+  active part".  The field is the same `afOutRegSpec` the K1 driver calls
+  `BK4819_SetAF()`; the K1 names value 0 `BK4819_AF_MUTE` and value 1
+  `BK4819_AF_FM`, which matches the table.  The FM feature uses the same value
+  to mute the RF chip under the BK1080 (`ra89r_bk1080.md`, "The FM audio path").
 * **`FUN_08005D2C(value, frequency, enable)`** is the stock's **tone player**: it
   stores the first argument in a state struct and, when enabled, writes **`0x71`**
   after a soft-float scale (`FUN_08004528`/`FUN_08004344`/`FUN_08004542`).  Same

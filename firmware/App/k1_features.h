@@ -26,14 +26,25 @@
 #define ENABLE_VOX 1
 
 /* The K1's own `default` CMake preset, for the entries that only change how the
- * screens are drawn.  What that preset also turns on but the RA89R lacks (FM
- * broadcast, air copy, NOAA, USB, voice prompts, spectrum, password) stays off,
- * and so do the hardware features that need a module the port has not brought
- * in yet (UART console, TX1750, flashlight, DTMF calling). */
+ * screens are drawn.  What that preset also turns on but the RA89R lacks (air
+ * copy, NOAA, USB, voice prompts, spectrum, password) stays off, and so do the
+ * hardware features that need a module the port has not brought in yet (UART
+ * console, TX1750, flashlight, DTMF calling). */
 #define ENABLE_BIG_FREQ 1
 #define ENABLE_CUSTOM_MENU_LAYOUT 1
 #define ENABLE_KEEP_MEM_NAME 1
 #define ENABLE_WIDE_RX 1
+
+/* FM broadcast: the RA89R *does* carry a BK1080 FM receiver (docs/ra89r_bk1080.md),
+ * on its own bus (PC14/PB2, driver/i2c_bus.c).  The K1's own feature is imported
+ * (App/driver/bk1080.c, App/app/fm.c, App/ui/fmradio.c) and the K1 CMake's rule
+ * is followed: ENABLE_FMRADIO_EMBEDDED selects the resident state machine and
+ * the FM screen (the K1 sets it whenever ENABLE_FMRADIO is on and the overlay
+ * apps are not, which is this port's configuration).  The FM audio path (the
+ * BK1080's analogue output into the shared amplifier) is unverified -- see
+ * docs/ra89r_bk1080.md. */
+#define ENABLE_FMRADIO 1
+#define ENABLE_FMRADIO_EMBEDDED 1
 
 /* The port draws the K1's double-channel VFO layout without the K1's dual-watch
  * engine.  The K1 draws both rows only when DUAL_WATCH (or CROSS_BAND) is not

@@ -4,6 +4,7 @@
 #include "py32f4xx.h"
 
 #include "driver/backlight.h"
+#include "driver/bk1080.h"
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
 #include "driver/systick.h"
@@ -59,6 +60,30 @@ void BK4819_SetFilterBandwidth(const BK4819_FilterBandwidth_t Bandwidth,
 }
 
 void BK4819_SetRxAudioGain(void) { }
+
+/* FM broadcast: the host compiles no I2C bus, so the K1's BK1080 API is a set of
+ * no-ops here.  The FM screen's layout and the FM state machine still run (the
+ * ported app/fm.c is linked), which is what the preview exercises; the chip
+ * itself is only reachable on the radio (docs/ra89r_bk1080.md). */
+uint16_t BK1080_BaseFrequency;
+uint16_t BK1080_FrequencyDeviation;
+void     BK1080_Init0(void) { }
+void     BK1080_Init(uint16_t Frequency, uint8_t band) { (void)Frequency; (void)band; }
+uint16_t BK1080_ReadRegister(BK1080_Register_t Register) { (void)Register; return 0; }
+void     BK1080_WriteRegister(BK1080_Register_t Register, uint16_t Value) { (void)Register; (void)Value; }
+void     BK1080_Mute(bool Mute) { (void)Mute; }
+uint16_t BK1080_GetFreqLoLimit(uint8_t band) { static const uint16_t lim[] = {875, 760, 760, 640}; return lim[band % 4]; }
+uint16_t BK1080_GetFreqHiLimit(uint8_t band) { static const uint16_t lim[] = {1080, 1080, 900, 760}; return lim[band % 4]; }
+void     BK1080_SetFrequency(uint16_t frequency, uint8_t band) { (void)frequency; (void)band; }
+void     BK1080_GetFrequencyDeviation(uint16_t Frequency) { (void)Frequency; }
+
+/* The FM feature now brings the BK1080's two-wire bus up itself (the real
+ * driver's bk1080_init() -> i2c_bus_init()); the host compiles no bus. */
+void     bk1080_init(void) { }
+
+/* driver/rx.c's FM gate.  The preview never runs rx_service(), so the host only
+ * has to satisfy the reference. */
+void     rx_set_fm_active(bool active) { (void)active; }
 
 /* Keypad: the RA89R reads an ADC ladder, so the host stands in with a key the
  * preview sets by hand -- that is how the port's key loop (port_gui.c) is
@@ -285,7 +310,9 @@ void spi_flash_wait_ready(void) { }
  * the measured transmit chain (driver/tx.c).  Signatures match driver/bk4819.h.
  * ------------------------------------------------------------------------- */
 void     BK4819_SetFrequency(uint32_t Frequency) { (void)Frequency; }
-void     BK4819_SetAF(BK4819_AF_Type_t AF) { (void)AF; }
+static int s_host_last_af = -1;
+void     BK4819_SetAF(BK4819_AF_Type_t AF) { s_host_last_af = (int)AF; }
+int      host_bk4819_last_af(void) { return s_host_last_af; }
 void     BK4819_SetAGC(bool enable) { (void)enable; }
 void     BK4819_InitAGC(bool amModulation) { (void)amModulation; }
 void     BK4819_SetupSquelch(uint8_t SquelchOpenRSSIThresh, uint8_t SquelchCloseRSSIThresh,

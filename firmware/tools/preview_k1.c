@@ -13,8 +13,10 @@
 #include <stdio.h>
 
 #include "app/app.h"
+#include "app/fm.h"
 #include "audio.h"
 #include "driver/backlight.h"
+#include "driver/bk4819.h"
 #include "driver/gpio.h"
 #include "driver/keyboard.h"
 #include "driver/st7565.h"
@@ -519,6 +521,45 @@ int main(void)
         printf("\n[beep] %s the beep drives the amp on (%u/%u plays with the path on)\n",
                ok ? "ok  " : "FAIL",
                host_beeper_plays_path_on(), host_beeper_play_count());
+        if (!ok) failures++;
+    }
+
+    /* ---- entering FM must raise the amp and mute the RF chip's AF -------
+     *
+     * The stock's FM-on (`FUN_0800D35C`) raises PC13 and mutes the BK4829's
+     * AF (`FUN_08009CC4` writes `0x47 = 0x6042`, `REG_47<11:8> = 0` = Mute)
+     * because the BK4829's `EARO` and the BK1080's `LOUT`/`ROUT` share the
+     * amplifier input.  The imported K1 code raised the path but left the RF
+     * chip at Normal AF (`0x6142`), which is what made the first radio run
+     * silent.  See docs/ra89r_bk1080.md, "The FM audio path". */
+    {
+        bool ok;
+
+        gEeprom.FM_FrequencyPlaying = 1000u;   /* 100.0 MHz, K1 units */
+        gEeprom.FM_Band             = 1u;
+        gCurrentFunction            = FUNCTION_FOREGROUND;
+        GPIO_DisableAudioPath();
+        gEnableSpeaker              = false;
+
+        FM_Start();
+
+        ok = host_audio_path_is_on() &&
+             host_bk4819_last_af() == (int)BK4819_AF_MUTE;
+
+        printf("\n[fm] %s FM raises the amp and mutes the RF chip's AF "
+               "(path %s, last AF %d)\n",
+               ok ? "ok  " : "FAIL",
+               host_audio_path_is_on() ? "on" : "off",
+               host_bk4819_last_af());
+        if (!ok) failures++;
+
+        FM_TurnOff();
+
+        ok = !host_audio_path_is_on();
+
+        printf("\n[fm] %s FM off lowers the amp (path %s)\n",
+               ok ? "ok  " : "FAIL",
+               host_audio_path_is_on() ? "on" : "off");
         if (!ok) failures++;
     }
 

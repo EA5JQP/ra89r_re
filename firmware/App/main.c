@@ -239,6 +239,7 @@ static void print_help(void)
               "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
               "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
               "          j BK1080 FM: init, id probe, tune 100.0 MHz, read status\n"
+              "          a FM audio route: toggle the BK4829 AF mute (0x47) under FM\n"
               "          n BK4815 (PB13): boot config, tune 145.7500, read meters\n"
               "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
@@ -1587,6 +1588,23 @@ int main(void)
             case 'j':
                 fm_bench();
                 break;
+            case 'a': {
+                /* The FM audio route: the stock's FM-on mutes the BK4829's AF
+                 * output (`FUN_08009CC4` writes `0x47 = 0x6042`, and
+                 * `REG_47<11:8> = 0` = Mute in the BK4829 register table)
+                 * because this board's BK4829 `EARO` and BK1080 `LOUT`/`ROUT`
+                 * reach the same amplifier input.  Toggle it here while FM is
+                 * playing: the broadcast audio should be heard with the RF chip
+                 * muted and lost with it at Normal AF.  See
+                 * docs/ra89r_bk1080.md, "The FM audio path". */
+                static bool rf_af_muted;
+                rf_af_muted = !rf_af_muted;
+                BK4819_SetAF(rf_af_muted ? BK4819_AF_MUTE : BK4819_AF_FM);
+                uart_printf("\nFM route: BK4829 0x47 -> %s (read back 0x%04X)\n",
+                            rf_af_muted ? "Mute (0x6042)" : "Normal AF (0x6142)",
+                            (unsigned)BK4819_ReadRegister(BK4819_REG_47));
+                break;
+            }
             case 'n':
                 bk4815_bench();
                 break;
