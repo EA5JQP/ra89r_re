@@ -48,10 +48,14 @@ void       bt_set_mic_gain(uint8_t level);
 unsigned   bt_spk_gain_levels(void);
 unsigned   bt_mic_gain_levels(void);
 
-/* Pairing: scan and auto-connect (the stock's `FUN_08007FD0`). */
-void       bt_start_connect(void);
-bool       bt_connected(void);
-unsigned   bt_found_count(void);        /* +IM_EARDEV devices seen since the scan */
+/* Pairing: scan (`AT+BT_SCAN=ON`, the stock's Pairing item) and the devices it
+ * reports as `+IM_EARDEV`. */
+void        bt_start_connect(void);
+void        bt_stop_connect(void);
+bool        bt_connected(void);
+unsigned    bt_found_count(void);
+const char *bt_found_dev(unsigned i);   /* the device's address/name text */
+void        bt_connect_dev(unsigned i); /* AT+EAR_CONN=<device> */
 bt_state_t bt_state(void);
 const char *bt_version(void);
 const char *bt_local_addr(void);

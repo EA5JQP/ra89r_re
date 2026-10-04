@@ -31,8 +31,13 @@ static unsigned   s_qidx;
 static unsigned   s_ticks;
 
 static bool       s_connected;
-static unsigned   s_found;      /* +IM_EARDEV devices seen since the scan started */
 static unsigned   s_retries;    /* PD0 re-pulses while waiting for +IM_READY */
+
+/* Devices the module reported as `+IM_EARDEV` since the scan started. */
+#define BT_FOUND_MAX 8u
+#define BT_FOUND_LEN 32u
+static char       s_found[BT_FOUND_MAX][BT_FOUND_LEN];
+static unsigned   s_found_n;
 
 static void text_copy(char *dst, unsigned cap, const char *src, unsigned len)
 {
@@ -155,10 +160,19 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
             queue_advance();
         break;
 
-    case BT_EV_EARDEV:                  /* +IM_EARDEV: a device was found */
-        if (s_found < 8u)
-            s_found++;
+    case BT_EV_EARDEV: {                /* +IM_EARDEV: a device was found */
+        unsigned n = len;
+
+        if (s_found_n < BT_FOUND_MAX) {
+            if (n > BT_FOUND_LEN - 1u)
+                n = BT_FOUND_LEN - 1u;
+            if (n != 0u && payload != 0)
+                memcpy(s_found[s_found_n], payload, n);
+            s_found[s_found_n][n] = '\0';
+            s_found_n++;
+        }
         break;
+    }
 
     case BT_EV_BT_EAR_CONN:             /* earpiece connected */
     case BT_EV_SCO_CONN:                /* audio link up */
@@ -289,12 +303,20 @@ void bt_set_mic_gain(uint8_t level)
         bluetooth_send_param(BT_CMD_MICGAIN, bt_mic_gain_str[level]);
 }
 
-/* Pairing: the stock's scan-and-auto-connect (`FUN_08007FD0`). */
+/* Pairing: the stock's Pairing item queues `AT+BT_SCAN=ON`; the module then
+ * reports found earpieces as `+IM_EARDEV:<text>`. */
 void bt_start_connect(void)
 {
-    s_found = 0;
+    s_found_n = 0;
     s_state = BT_STATE_SCAN;
-    bluetooth_send_cmd(BT_CMD_BT_SCANATCN_ON);
+    bluetooth_send_cmd(BT_CMD_BT_SCAN_ON);
+}
+
+void bt_stop_connect(void)
+{
+    bluetooth_send_cmd(BT_CMD_BT_SCAN_OFF);
+    if (s_state == BT_STATE_SCAN)
+        s_state = BT_STATE_IDLE;
 }
 
 bool bt_connected(void)
@@ -304,7 +326,18 @@ bool bt_connected(void)
 
 unsigned bt_found_count(void)
 {
-    return s_found;
+    return s_found_n;
+}
+
+const char *bt_found_dev(unsigned i)
+{
+    return (i < s_found_n) ? s_found[i] : "";
+}
+
+void bt_connect_dev(unsigned i)
+{
+    if (i < s_found_n)
+        bluetooth_send_param(BT_CMD_EAR_CONN, s_found[i]);
 }
 
 bt_state_t bt_state(void)

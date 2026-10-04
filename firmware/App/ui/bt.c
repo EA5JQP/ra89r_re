@@ -33,6 +33,8 @@ static const char *const bt_items[] = {
 
 static uint8_t s_cursor;
 static bool    s_scan;      /* transient: the Scan item is an action, not a setting */
+static bool    s_pairing;   /* showing the found-device list */
+static uint8_t s_pair_cursor;
 
 unsigned BT_MenuCount(void)
 {
@@ -123,6 +125,43 @@ void UI_DisplayBT(void)
     for (i = 0; i < (8u * 6u); i += 2u)
         gFrameBuffer[5][i] = 0x40;
 
+    if (s_pairing) {
+        const unsigned n = bt_found_count();
+        uint8_t        top = 0;
+
+        if (n == 0u) {
+            UI_PrintStringSmallNormal("Scanning...", 0, 0, 2);
+        } else {
+            unsigned k;
+
+            if (s_pair_cursor >= 6u)
+                top = (uint8_t)(s_pair_cursor - 5u);
+            for (k = 0; k < 6u && (unsigned)top + k < n; k++) {
+                const char *dev = bt_found_dev((unsigned)top + k);
+                char        disp[18];
+                const uint8_t line = (uint8_t)(k + 1u);
+
+                strncpy(disp, dev, 16);      /* keep the inverse box in bounds */
+                disp[16] = '\0';
+
+                if ((unsigned)top + k == (unsigned)s_pair_cursor) {
+                    const unsigned len = (unsigned)strlen(disp);
+                    const uint8_t  start = (uint8_t)((127u - len * 7u + 1u) / 2u);
+
+                    UI_PrintStringSmallNormalInverse(disp, start, 0, line);
+                } else {
+                    UI_PrintStringSmallNormal(disp, 0, 0, line);
+                }
+            }
+            sprintf(String, "%02u/%02u", 1u + (unsigned)s_pair_cursor, n);
+            UI_PrintStringSmallNormal(String, 6, 0, 6);
+        }
+
+        ST7565_BlitStatusLine();
+        ST7565_BlitFullScreen();
+        return;
+    }
+
     {
         int prev = idx - 1;
         int next = idx + 1;
@@ -163,7 +202,9 @@ static void bt_activate(void)
         gRequestSaveSettings = true;
         break;
 
-    case 1:     /* Pairing: scan and auto-connect */
+    case 1:     /* Pairing: scan and list the found devices */
+        s_pairing     = true;
+        s_pair_cursor = 0;
         bt_start_connect();
         break;
 
@@ -203,6 +244,43 @@ static void bt_activate(void)
 
 void BT_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 {
+    if (s_pairing) {
+        switch (Key) {
+        case KEY_UP:
+            if (bKeyPressed && !bKeyHeld && s_pair_cursor > 0u)
+                s_pair_cursor--;
+            gUpdateDisplay = true;
+            break;
+
+        case KEY_DOWN:
+            if (bKeyPressed && !bKeyHeld &&
+                (unsigned)s_pair_cursor + 1u < bt_found_count())
+                s_pair_cursor++;
+            gUpdateDisplay = true;
+            break;
+
+        case KEY_MENU:
+            if (bKeyPressed && !bKeyHeld && bt_found_count() > 0u) {
+                bt_connect_dev(s_pair_cursor);
+                gUpdateDisplay = true;
+            }
+            break;
+
+        case KEY_EXIT:
+            if (bKeyPressed && !bKeyHeld) {
+                bt_stop_connect();
+                s_pairing     = false;
+                s_pair_cursor = 0;
+                gUpdateDisplay = true;
+            }
+            break;
+
+        default:
+            break;
+        }
+        return;
+    }
+
     switch (Key) {
     case KEY_UP:            /* wrap, like the K1 menu */
         if (bKeyPressed && !bKeyHeld)
