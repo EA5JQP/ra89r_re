@@ -10,6 +10,11 @@ static uint16_t s_reg36;
 static uint16_t s_reg33 = 0x9000u;
 static uint16_t s_compare;
 
+/* The stock's BT audio path bit (`0x33` pin 2).  Set while a BT earpiece is
+ * linked (`FUN_08015D44`); kept alive across the TX/RX paths, which is why it is
+ * a flag here and not a one-shot write. */
+static bool s_bt_audio;
+
 /* The band state pa_select_band() applied.  s_uhf is the VHF/UHF band index (the
  * codeplug's 108-174 / 400-520 bands, split at 280 MHz); s_main is the stock's
  * >134 MHz transceiver split. */
@@ -74,6 +79,25 @@ void pa_set_chip_path_mode(uint8_t mode)
 
 uint16_t pa_chip_path_reg(void) { return BK4819_ReadRegister(BK4819_REG_33); }
 
+/* Toggle the stock's BT audio path bit (chip output pin 2) through the driver's
+ * output shadow, exactly as the LNA pins above do, so the band/T-R bits and the
+ * `0x9000` base survive.  `FUN_080137D4(4, v)` also clears the paired bit
+ * `14 - 2`, but the port's validated receive baseline keeps `0x9000` (bit 12
+ * set) with the bit clear, so only the output bit is moved -- the pair's role is
+ * not established. */
+static void pa_apply_bt_audio(void)
+{
+    BK4819_ToggleGpioOut(BK4819_GPIO2_PIN30_BT_AUDIO, s_bt_audio);
+}
+
+void pa_set_bt_audio(bool on)
+{
+    s_bt_audio = on;
+    pa_apply_bt_audio();
+}
+
+bool pa_bt_audio(void) { return s_bt_audio; }
+
 /* Apply the chip-side receive path.  AUTO is the K1 application's rule (and the
  * one the radio received with); the other modes are the 'F' experiment, which
  * walks the individual LNA pins so the radio can settle the stock's own pin-4
@@ -109,6 +133,9 @@ static void pa_apply_chip_path(void)
         default:                /* LEAVE: touch nothing */
             break;
     }
+    /* The LNA writes above go through the K1 shadow, which does not know the BT
+     * audio bit; re-apply it so a band change in receive keeps it alive. */
+    pa_apply_bt_audio();
 }
 
 void pa_select_band(uint32_t freq_10hz)
@@ -172,6 +199,8 @@ void pa_tx_enable(uint8_t power)
     const uint8_t gain = s_uhf ? PA_REG36_GAIN_UHF : PA_REG36_GAIN_VHF;
 
     s_reg33 = (uint16_t)((s_uhf ? PA_REG33_BAND_UHF : PA_REG33_BAND_VHF) | PA_REG33_TR);
+    if (s_bt_audio)
+        s_reg33 |= PA_REG33_BT_AUDIO;      /* the stock keeps pin 2 set in TX */
     BK4819_WriteRegister(BK4819_REG_33, s_reg33);
 
     /* The K1's BK4819_SetupPowerAmplifier: 0x36 = (bias << 8) | PA-CTL | gain.

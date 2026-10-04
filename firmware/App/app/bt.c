@@ -10,6 +10,10 @@
 
 #include <string.h>
 
+#ifndef BLUETOOTH_HOST_TEST
+#include "driver/pa.h"          /* the chip audio-path bit the stock sets on connect */
+#endif
+
 #define BT_QUEUE_MAX    8u
 #define BT_RESET_TICKS  200u    /* 2 s at the 10 ms tick */
 #define BT_RESET_RETRIES 5u     /* re-pulse PD0 and listen again, like the stock */
@@ -221,6 +225,12 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
         s_connected = true;
         if (s_state == BT_STATE_SCAN || s_state == BT_STATE_CONNECT)
             s_state = BT_STATE_CONNECTED;
+#ifndef BLUETOOTH_HOST_TEST
+        /* The stock's BT audio path: chip output pin 2 is set while an earpiece
+         * is linked (`FUN_08015D44`, from `FUN_0801AE8C`).  This is the
+         * transmit-audio source select the port was missing. */
+        pa_set_bt_audio(true);
+#endif
         /* Open the audio (SCO) link, as the stock does (`FUN_08007540`):
          * without it the radio's audio does not reach the earpiece and its
          * button is not reported. */
@@ -237,6 +247,9 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
     case BT_EV_SCO_DISCONNECT:
     case BT_EV_CALL_DISCONNECTED:
         s_connected = false;
+#ifndef BLUETOOTH_HOST_TEST
+        pa_set_bt_audio(false);         /* `FUN_0801AEE8` -> `FUN_08015D44` off */
+#endif
         if (s_call_on) {
             s_call_on = false;
             bluetooth_send_cmd(BT_CMD_BT_CALL_OFF);
