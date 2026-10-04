@@ -482,44 +482,49 @@ command; Paired and Info are read-outs.  Pairing uses the scan-and-auto-connect
 path; the per-device pick still needs the binary `+IM_EARDEV` record captured on
 the radio.
 
-## Probing for a data (SPP / BLE-GATT) path
+## Probing for a data (SPP / BLE-GATT) path -- result
 
 The stock's AT set is audio/control only; there is no command in the image that
 moves a data payload, and the framed `RDTP` path is call/PTT control, not a data
 pipe.  Whether the module's firmware exposes a **serial (SPP)** or **BLE GATT**
-data service is not in the image, so it has to be asked directly.  Console `N`
-sends an arbitrary AT line to the module and prints its reply; the lines to try,
-in order:
+data service is not in the image, so it was probed live with console `N` (which
+sends an arbitrary AT line and prints the reply).  Result on the radio
+(2026-10):
 
-```
-AT+?
-AT+HELP
-AT+SPP?            (or AT+SPP / AT+SPP=ON)
-AT+BLE_GATT?
-AT+BLE_SERVICE?
-AT+BLE_ADV?
-AT+BT_LOCAL?
-AT+BLE_LOCAL?
-```
+| sent | reply |
+|---|---|
+| `AT+HELP` | `+NOT_AT` |
+| `AT+SPP`, `AT+SPP?` | `+NOT_AT` |
+| `AT+BLE_GATT`, `AT+BLE_GATT?` | `+NOT_AT` |
+| `AT+BLE_SERVICE` | `+NOT_AT` |
+| `AT+BLE_ADV` | `+NOT_AT` |
+| `AT+BT_LOCAL?` | `+IM_BT_LOCAL=11:C3:EF:CD:DF:5A,RETEVIS RA89R(BT)` then `+OK` |
+| `AT+BLE_LOCAL?` | `+IM_BLE_LOCAL=10:C3:EF:CD:DF:5A,RETEVIS RA89R` |
 
-A reply that is not `+ERROR` is the lead; anything that names a service, a
-characteristic or a baud/serial mode means a data path is possible.  Nothing in
-this list is decoded from the image — it is a live probe, and the result is the
-evidence.
+So the module answers an unknown command with **`+NOT_AT`**, and its AT firmware
+exposes **no SPP or GATT data command**.  It does have a BLE stack -- the
+`AT+BLE_MASTER/SLAVE/SCAN` role commands work and `AT+BLE_LOCAL?` reports an
+address -- so a phone can pair over BLE, but there is no AT-level way to move a
+data payload.  Whether the BLE side carries a GATT data service is a question
+for Jieli's own YBT100 documentation, not for this image.
+
+The module identifies itself as **`RETEVIS RA89R(BT)`** at `11:C3:EF:CD:DF:5A`
+(classic) and **`RETEVIS RA89R`** at `10:C3:EF:CD:DF:5A` (BLE).
 
 ## Open
 
-1. **Port integration.**  The link is validated, but nothing in the port's app
-   loop calls `bluetooth_poll()` yet, and there is no BT menu/pairing/earpiece
-   wiring.  The stock's own command set, parser and BT menu state machine are
-   transcribed above; the remaining work is the application side (call
-   `bluetooth_poll()` regularly, drive `AT+BT=EMITTER`/pairing/scan, route
-   earpiece PTT into the K1 key path).
+1. **Port integration.**  The service, the F+MENU `DISPLAY_BT` screen and the
+   settings are in, and the link reaches `Ready` on the radio.  Still open:
+   pairing per-device pick (needs the binary `+IM_EARDEV` record), the paired
+   list persistence, and the earpiece PTT/audio (phases 2-4 of the design).
 2. **The binary `RDTP` protocol.**  Frame layout, the meaning of the
    `fe fe ee ef` prefix, and the opcode list are open; the opcodes are only known
    from the two dispatch sites.
 3. **The DMA bring-up.**  The stock's TX/RX DMA channels and the `0x420`-byte RX
-   buffer are transcribed above but the driver's polled transport is a stand-in.
+   buffer are transcribed above.  The port receives by **interrupt** into a
+   256-byte ring (`USART3_IRQHandler`) instead of DMA, because a polled drain
+   from the main loop lost bytes (the main loop spends milliseconds in panel
+   blits); the stock's DMA is the equivalent hardware path.
 4. **The gain encoding.**  The mic/speaker gain tables are transcribed, but the
    two-byte entries are not interpreted (`"0"`, `"5"`, ... are what is sent; how
    the chip maps them to dB is not in this image).

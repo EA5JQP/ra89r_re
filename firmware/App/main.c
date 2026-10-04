@@ -1714,7 +1714,7 @@ int main(void)
                             (unsigned)bt_state(), bt_version(),
                             bluetooth_rx_bytes());
                 uart_printf("  USART3 CR1=0x%04X CR2=0x%04X CR3=0x%04X BRR=0x%04X "
-                            "(want 0x200c/0/0/0x1a1)\n",
+                            "(want 0x202c/0/0/0x1a1)\n",
                             (unsigned)BOARD_BT_UART->CR1,
                             (unsigned)BOARD_BT_UART->CR2,
                             (unsigned)BOARD_BT_UART->CR3,
