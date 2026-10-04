@@ -18,7 +18,6 @@
 #include "driver/bk4815.h"
 #include "driver/battery.h"
 #include "driver/bluetooth.h"
-#include "driver/bt_capture.h"
 #include "app/bt.h"
 #include "helper/battery.h"
 #include "driver/bk4819.h"
@@ -550,55 +549,33 @@ static void bt_on_event(bt_event_t ev, const char *payload, unsigned len)
     uart_putc('\n');
 }
 
-static uint32_t bt_capture_millis(void *context)
-{
-    (void)context;
-    return systick_millis();
-}
-
-static uint32_t bt_capture_status(void *context)
-{
-    (void)context;
-    return BOARD_BT_UART->SR;
-}
-
-static uint8_t bt_capture_read_data(void *context)
-{
-    (void)context;
-    return (uint8_t)BOARD_BT_UART->DR;
-}
-
-/* Capture USART3 continuously for `ms` without printing or sleeping in the
- * receive loop.  A 115200-baud frame takes about 87 us, so console output or a
- * 10 ms delay here loses the rest of a multi-byte reply.  Bytes and aggregated
- * SR error flags are printed only after capture completes. */
+/* Collect USART3 bytes for `ms` from the interrupt's receive ring and print
+ * them.  The ring is filled by `USART3_IRQHandler`, so this can be as slow as
+ * it likes and never loses a byte (the earlier polled capture did). */
 static unsigned bt_listen(unsigned ms)
 {
-    uint8_t bytes[256];
-    bt_capture_result_t result;
-    const bt_capture_io_t io = {
-        0, bt_capture_millis, bt_capture_status, bt_capture_read_data
-    };
+    uint8_t  bytes[256];
+    unsigned got = 0;
+    uint32_t start = systick_millis();
     unsigned i;
 
-    bt_capture_collect(&io, bytes, sizeof bytes, ms, &result);
+    while ((uint32_t)(systick_millis() - start) < ms && got < sizeof bytes) {
+        const unsigned n =
+            bluetooth_rx_drain(bytes + got, (unsigned)sizeof bytes - got);
 
-    if (result.errors != 0u)
-        uart_printf("     USART error flags SR&0x000F=0x%04X\n",
-                    (unsigned)result.errors);
-    for (i = 0; i < result.stored; i++) {
-        uint8_t b = bytes[i];
+        if (n != 0u) {
+            bluetooth_feed(bytes + got, n);   /* exercise the parser too */
+            got += n;
+        }
+    }
+
+    for (i = 0; i < got; i++) {
+        const uint8_t b = bytes[i];
 
         uart_printf("     raw 0x%02X %s\n", (unsigned)b,
                     (b >= 0x20 && b < 0x7f) ? (const char[]){ b, 0 } : "");
     }
-    if (result.dropped != 0u)
-        uart_printf("     capture buffer dropped %u bytes\n", result.dropped);
-
-    /* Run the same bytes through the stock parser so the event classification
-     * is exercised on real lines, not just the host fixture. */
-    bluetooth_feed(bytes, result.stored);
-    return result.stored;
+    return got;
 }
 
 /* Time the low pulse on PB11 (the module's TX) after a command: a UART start

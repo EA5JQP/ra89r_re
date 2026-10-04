@@ -150,4 +150,9 @@ unsigned bluetooth_rx_bytes(void);
  * (oldest first) and return how many.  For the console diagnostic. */
 unsigned bluetooth_rx_log(uint8_t *out, unsigned cap);
 
+/* Target only: move up to `cap` bytes out of the receive ring (filled by the
+ * USART3 interrupt) and return how many.  `bluetooth_poll()` uses it; the
+ * console bench uses it too so it does not race the interrupt. */
+unsigned bluetooth_rx_drain(uint8_t *out, unsigned cap);
+
 #endif /* DRIVER_BLUETOOTH_H */

@@ -294,6 +294,32 @@ void bluetooth_hw_write(const uint8_t *data, unsigned len)
         ;
 }
 
+/* Receive into a ring buffer from the USART3 interrupt.  A polled drain cannot
+ * keep up: the main loop spends milliseconds in panel blits, and the module's
+ * boot banner is ~100 bytes in ~9 ms, so a poll between those blits loses and
+ * corrupts bytes (the stock uses DMA for the same reason).  The interrupt runs
+ * on every byte, so nothing is missed however slow the main loop is. */
+#define BT_RX_RING 256u
+static volatile uint8_t  s_rx_ring[BT_RX_RING];
+static volatile unsigned s_rx_head;
+static volatile unsigned s_rx_tail;
+
+void USART3_IRQHandler(void)
+{
+    const uint32_t sr = BOARD_BT_UART->SR;
+
+    if (sr & (USART_SR_RXNE | USART_SR_ORE | USART_SR_FE |
+              USART_SR_NE | USART_SR_PE)) {
+        const uint8_t b = (uint8_t)BOARD_BT_UART->DR;  /* read clears the flags */
+        const unsigned next = (s_rx_head + 1u) % BT_RX_RING;
+
+        if (next != s_rx_tail) {
+            s_rx_ring[s_rx_head] = b;
+            s_rx_head = next;
+        }
+    }
+}
+
 void bluetooth_init(void)
 {
     /* PB10/PB11 as USART3 AF2, pull-up on the idle-high RX line. */
@@ -303,7 +329,7 @@ void bluetooth_init(void)
     RCC->APB1ENR |= RCC_APB1ENR_USART3EN;
     (void)RCC->APB1ENR;
 
-    /* 8N1, no flow control, no DMA -- the stock's CR1 value is 0xc (RE|TE). */
+    /* 8N1, no flow control; receive interrupt on. */
     BOARD_BT_UART->CR1 = 0;
     BOARD_BT_UART->CR2 = 0;
     BOARD_BT_UART->CR3 = 0;
@@ -311,10 +337,16 @@ void bluetooth_init(void)
     (void)BOARD_BT_UART->DR;
 
     BOARD_BT_UART->BRR = (BOARD_APB1_HZ + (BT_UART_BAUD / 2u)) / BT_UART_BAUD;
-    BOARD_BT_UART->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
+    BOARD_BT_UART->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE
+                       | USART_CR1_RXNEIE;
 
     while (BOARD_BT_UART->SR & USART_SR_RXNE)
         (void)BOARD_BT_UART->DR;
+
+    s_rx_head = 0;
+    s_rx_tail = 0;
+    NVIC_SetPriority(USART3_IRQn, 2u);
+    NVIC_EnableIRQ(USART3_IRQn);
 
     /* Release the module from reset *after* the UART is up, so its boot banner
      * (`+IM_READY`) is not lost.  Without this the module stays in reset -- the
@@ -349,18 +381,24 @@ unsigned bluetooth_rx_log(uint8_t *out, unsigned cap)
     return n;
 }
 
-void bluetooth_poll(void)
+unsigned bluetooth_rx_drain(uint8_t *out, unsigned cap)
 {
-    /* Drain the whole receive register in one tight loop.  The module answers
-     * at 115200 (one byte every ~87 us); a single byte per main-loop pass
-     * overruns the USART and drops the rest of the line, so the caller must
-     * pump this often enough that a full response (well under this buffer)
-     * arrives between calls.  This is what the console `y` bench got wrong. */
-    uint8_t buf[256];
     unsigned n = 0;
 
-    while ((BOARD_BT_UART->SR & USART_SR_RXNE) && n < sizeof buf)
-        buf[n++] = (uint8_t)BOARD_BT_UART->DR;
+    while (s_rx_tail != s_rx_head && n < cap) {
+        out[n++] = s_rx_ring[s_rx_tail];
+        s_rx_tail = (s_rx_tail + 1u) % BT_RX_RING;
+    }
+    return n;
+}
+
+void bluetooth_poll(void)
+{
+    /* Move whatever the interrupt has collected into the parser.  The interrupt
+     * runs on every byte, so this can be as slow as the main loop needs. */
+    uint8_t buf[256];
+    unsigned n = bluetooth_rx_drain(buf, sizeof buf);
+
     if (n) {
         unsigned i;
 
