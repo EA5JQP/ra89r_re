@@ -127,18 +127,20 @@ void UI_DisplayBT(void)
 
     if (s_pairing) {
         const unsigned n = bt_found_count();
-        uint8_t        top = 0;
+
+        UI_PrintStringSmallNormal("Pairing", 0, 0, 0);
 
         if (n == 0u) {
-            UI_PrintStringSmallNormal("Scanning...", 0, 0, 2);
+            UI_PrintStringSmallNormal("Scanning...", 0, 0, 3);
         } else {
             unsigned k;
+            uint8_t  top = 0;
 
             if (s_pair_cursor >= 6u)
                 top = (uint8_t)(s_pair_cursor - 5u);
             for (k = 0; k < 6u && (unsigned)top + k < n; k++) {
-                const char *dev = bt_found_dev((unsigned)top + k);
-                char        disp[18];
+                const char   *dev = bt_found_dev((unsigned)top + k);
+                char          disp[18];
                 const uint8_t line = (uint8_t)(k + 1u);
 
                 strncpy(disp, dev, 16);      /* keep the inverse box in bounds */
@@ -154,7 +156,7 @@ void UI_DisplayBT(void)
                 }
             }
             sprintf(String, "%02u/%02u", 1u + (unsigned)s_pair_cursor, n);
-            UI_PrintStringSmallNormal(String, 6, 0, 6);
+            UI_PrintStringSmallNormal(String, 92, 0, 0);
         }
 
         ST7565_BlitStatusLine();

@@ -573,6 +573,12 @@ int main(void)
         UI_DisplayBT();
         render("UI_DisplayBT(): the Bluetooth menu");
 
+        /* Enter Pairing (item 1) and render the scan/device screen. */
+        BT_ProcessKeys(KEY_DOWN, true, false);   /* cursor -> Pair */
+        BT_ProcessKeys(KEY_MENU, true, false);   /* enter Pairing */
+        UI_DisplayBT();
+        render("UI_DisplayBT(): Pairing (scanning)");
+
         /* UI_DisplayBT must stay inside gFrameBuffer[0..6]: a 7th item row
          * would run off the end into gStatusLine, and the inverse highlight
          * must not write before the row (the old call corrupted [0][127]). */
