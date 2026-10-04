@@ -1883,6 +1883,19 @@ int main(void)
             systick_delay_ms(1);
         }
 
+        /* Drain USART3 on every pass, whatever the panel mode: the module's
+         * boot banner is ~100 bytes in ~9 ms, so a 10 ms poll lets the 1-byte
+         * receive register overrun and drops `+IM_READY`.  Only USART3 is
+         * touched, so the no-NOR rule holds.  `bt_service_tick()` (the state
+         * machine's clock) stays on the 10 ms slice in the K1-app branch. */
+        static uint32_t bt_tick10;
+
+        bt_poll();
+        if ((uint32_t)(now - bt_tick10) >= 10u) {
+            bt_tick10 = now;
+            bt_service_tick();
+        }
+
         if (bench_panel) {
             if ((uint32_t)(now - last_tick) >= 1000u) {
                 last_tick = now;
@@ -1916,19 +1929,12 @@ int main(void)
              * times a second leaves the application almost no CPU at all. */
             APP_Update();
 
-            /* Drain USART3 on every pass, not once per 10 ms slice: the
-             * module's boot banner is ~100 bytes sent in ~9 ms, so a 10 ms
-             * poll lets the 1-byte receive register overrun and loses
-             * `+IM_READY`.  Only USART3 is touched, so the no-NOR rule holds. */
-            bt_poll();
-
             if ((uint32_t)(now - slice10) >= 10u) {
                 slice10 = now;
                 APP_TimeSlice10ms();
 
                 tx_poll_ptt();
                 rx_service();
-                bt_service_tick();  /* the state machine's 10 ms clock */
             }
             if ((uint32_t)(now - slice500) >= 500u) {
                 slice500 = now;
