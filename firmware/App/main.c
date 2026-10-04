@@ -243,6 +243,7 @@ static void print_help(void)
               "          A Bluetooth service: show state/version, toggle on/off\n"
               "          N Bluetooth probe: send an arbitrary AT line, print the reply\n"
               "          U dump the last USART3 bytes the module sent (hex)\n"
+              "          J enable BT and tight-drain the boot banner (compare with U)\n"
               "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
@@ -1735,6 +1736,21 @@ int main(void)
                             (unsigned)gEeprom.BT_Switch,
                             (unsigned)bt_state(), bt_version(),
                             bluetooth_rx_bytes());
+                uart_printf("  USART3 CR1=0x%04X CR2=0x%04X CR3=0x%04X BRR=0x%04X "
+                            "(want 0x200c/0/0/0x1a1)\n",
+                            (unsigned)BOARD_BT_UART->CR1,
+                            (unsigned)BOARD_BT_UART->CR2,
+                            (unsigned)BOARD_BT_UART->CR3,
+                            (unsigned)BOARD_BT_UART->BRR);
+                break;
+            case 'J':
+                /* Enable BT and capture the boot banner with the bench's tight
+                 * drain, to compare against the service's own drain (`U`). */
+                gEeprom.BT_Switch = true;
+                bt_set_enabled(true);
+                uart_puts("\nBT enabled; tight-drain listen 2 s:\n");
+                if (bt_listen(2000u) == 0u)
+                    uart_puts("  (nothing)\n");
                 break;
             case 'N':
                 /* Probe the module for a data (SPP/BLE-GATT) path. */
