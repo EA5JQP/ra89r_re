@@ -170,7 +170,11 @@ void UI_DisplayBT(void)
         return;
     }
 
-    {
+    if (s_editing) {
+        /* Entering an item moves its name to the top, the way the K1 menu
+         * shows a selected item. */
+        UI_PrintString(bt_items[idx], 0, 0, 0, 8);
+    } else {
         int prev = idx - 1;
         int next = idx + 1;
 
