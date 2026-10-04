@@ -85,41 +85,58 @@ static const char *bt_item_value(unsigned index, char *buf, unsigned cap)
     }
 }
 
+/* Same layout as the K1 menu (UI_DisplayMenu, original layout): a three-row
+ * left column (previous / current / next) with the current item inverted, a
+ * dotted separator, the item value on the right and the index/count below. */
+#define BT_LIST_CHARS   6u
+#define BT_ITEM_X1      ((8u * BT_LIST_CHARS) + 2u)     /* 50 */
+#define BT_ITEM_X2      (LCD_WIDTH - 1u)
+
 void UI_DisplayBT(void)
 {
-    uint8_t  top = 0;
-    unsigned i;
-
-    if (s_cursor >= 6u)
-        top = (uint8_t)(s_cursor - 5u);
+    const unsigned n = BT_MenuCount();
+    char           String[16];
+    unsigned       i;
 
     UI_StatusClear();
     UI_DisplayClear();
-    UI_PrintStringSmallNormal("BT Menu", 0, 127, 0);
 
-    for (i = 0; i < 6u && (unsigned)top + i < BT_MenuCount(); i++) {
-        const unsigned idx = (unsigned)top + i;
-        const uint8_t  line = (uint8_t)(i + 1u);
-        char           vbuf[16];
-        char           text[32];
-        const char    *val = bt_item_value(idx, vbuf, sizeof vbuf);
+    /* the vertical separating line, and the dotted bottom row */
+    UI_DrawLineBuffer(gFrameBuffer, (uint8_t)(8u * BT_LIST_CHARS), 0,
+                      (uint8_t)(8u * BT_LIST_CHARS), 55, 1);
+    for (i = 0; i < (8u * BT_LIST_CHARS); i += 2u)
+        gFrameBuffer[5][i] = 0x40;
+
+    /* the three visible items: previous (line 0), current (line 2), next (4) */
+    for (i = 0; i < 3u; i++) {
+        if (s_cursor == 0u && i == 0u)
+            continue;
+        if (s_cursor + 1u == n && i == 2u)
+            continue;
+        {
+            const unsigned idx = (unsigned)((int)s_cursor + (int)i - 1);
+            if (idx < n)
+                UI_PrintString(bt_items[idx], 0, 0, (uint8_t)(i * 2u), 8);
+        }
+    }
+
+    /* invert the current item's pixels (the big-font row pair) */
+    for (i = 0; i < (8u * BT_LIST_CHARS); i++) {
+        gFrameBuffer[2][i] ^= 0xFF;
+        gFrameBuffer[3][i] ^= 0xFF;
+    }
+
+    /* the index/count, bottom left */
+    sprintf(String, "%2u.%u", 1u + s_cursor, n);
+    UI_PrintStringSmallNormal(String, 2, 0, 6);
+
+    /* the current item's value, on the right */
+    {
+        char        vbuf[16];
+        const char *val = bt_item_value(s_cursor, vbuf, sizeof vbuf);
 
         if (val[0] != '\0')
-            sprintf(text, "%s %s", bt_items[idx], val);
-        else
-            sprintf(text, "%s", bt_items[idx]);
-
-        if (idx == (unsigned)s_cursor) {
-            /* Center the inverse highlight around the text: the inverse
-             * helper inverts from the Start it is given, so pass the centered
-             * Start and End = 0 (every other caller does). */
-            const unsigned len = (unsigned)strlen(text);
-            const uint8_t  start = (uint8_t)((127u - len * 7u + 1u) / 2u);
-
-            UI_PrintStringSmallNormalInverse(text, start, 0, line);
-        } else {
-            UI_PrintStringSmallNormal(text, 0, 127, line);
-        }
+            UI_PrintString(val, BT_ITEM_X1, BT_ITEM_X2, 2, 8);
     }
 
     ST7565_BlitStatusLine();
