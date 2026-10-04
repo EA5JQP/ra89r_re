@@ -18,6 +18,7 @@
 #include "driver/bk4815.h"
 #include "driver/battery.h"
 #include "driver/bluetooth.h"
+#include "driver/bt_capture.h"
 #include "helper/battery.h"
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
@@ -544,39 +545,51 @@ static void bt_on_event(bt_event_t ev, const char *payload, unsigned len)
     uart_putc('\n');
 }
 
-/* Read whatever USART3 has for ~`ms`, printing each raw byte and any real
- * framing error.  Returns the number of bytes seen.
- *
- * The receive register is drained in a tight loop, because the module answers
- * at 115200 -- one byte every ~87 us -- and reading a single byte per 10 ms
- * overruns the USART, so only the first byte of a response survives.  That is
- * what earlier runs misread as a framing failure: `SR`'s overrun bit is bit 3
- * (0x8), the framing-error bit is bit 1 (0x2), and the `0x00f8` those runs
- * printed has FE clear.  Only FE/NE/PE mean the bytes are bad. */
+static uint32_t bt_capture_millis(void *context)
+{
+    (void)context;
+    return systick_millis();
+}
+
+static uint32_t bt_capture_status(void *context)
+{
+    (void)context;
+    return BOARD_BT_UART->SR;
+}
+
+static uint8_t bt_capture_read_data(void *context)
+{
+    (void)context;
+    return (uint8_t)BOARD_BT_UART->DR;
+}
+
+/* Capture USART3 continuously for `ms` without printing or sleeping in the
+ * receive loop.  A 115200-baud frame takes about 87 us, so console output or a
+ * 10 ms delay here loses the rest of a multi-byte reply.  Bytes and aggregated
+ * SR error flags are printed only after capture completes. */
 static unsigned bt_listen(unsigned ms)
 {
-    unsigned got = 0;
-    unsigned t;
+    uint8_t bytes[256];
+    bt_capture_result_t result;
+    const bt_capture_io_t io = {
+        0, bt_capture_millis, bt_capture_status, bt_capture_read_data
+    };
+    unsigned i;
 
-    for (t = 0; t < ms / 10u; t++) {
-        uint16_t sr = BOARD_BT_UART->SR;
+    bt_capture_collect(&io, bytes, sizeof bytes, ms, &result);
 
-        if (sr & (USART_SR_FE | USART_SR_NE | USART_SR_PE))
-            uart_printf("     framing error SR=0x%04X\n", (unsigned)sr);
+    if (result.errors != 0u)
+        uart_printf("     USART error flags SR&0x000F=0x%04X\n",
+                    (unsigned)result.errors);
+    for (i = 0; i < result.stored; i++) {
+        uint8_t b = bytes[i];
 
-        while (sr & USART_SR_RXNE) {
-            uint8_t b = (uint8_t)BOARD_BT_UART->DR;
-
-            if (got < 512u) {
-                got++;
-                uart_printf("     raw 0x%02X %s\n", (unsigned)b,
-                            (b >= 0x20 && b < 0x7f) ? (const char[]){ b, 0 } : "");
-            }
-            sr = BOARD_BT_UART->SR;
-        }
-        systick_delay_ms(10);
+        uart_printf("     raw 0x%02X %s\n", (unsigned)b,
+                    (b >= 0x20 && b < 0x7f) ? (const char[]){ b, 0 } : "");
     }
-    return got;
+    if (result.dropped != 0u)
+        uart_printf("     capture buffer dropped %u bytes\n", result.dropped);
+    return result.stored;
 }
 
 /* Time the low pulse on PB11 (the module's TX) after a command: a UART start

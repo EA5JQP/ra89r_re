@@ -12,10 +12,11 @@ Bluetooth is enabled, so a firmware that never drives PD0 sees the same idle byt
 floating line, not a response.  `bluetooth_init()` now configures PD0 as an
 output and releases the module (the stock's own low→high reset pulse) before the
 first command, and console `y` prints the PD0 state and listens for the module's
-boot banner.  On the radio PD0 releases the module and it answers at 115200; the
-earlier "distorted waveform" was an overrun in the bench's slow receive loop,
-now fixed.  See "On-radio result" and "The BT Switch and the module reset line
-(PD0)".
+boot banner.  On the radio PD0 releases the module and bytes appear on USART3,
+but complete AT replies have not yet been captured reliably.  The diagnostic
+bench had a 10 ms polling gap and printed synchronously while receiving; both
+can lose a 115200-baud burst.  See "On-radio result" and "The BT Switch and the
+module reset line (PD0)".
 
 The owner's teardown says the board carries a **Jieli** Bluetooth audio chip; the
 firmware agrees and adds the detail: it is a Jieli **"AT" module**, the firmware
@@ -382,7 +383,19 @@ of the 40 command strings byte for byte; the five parameterised builders; every
 `+IM_*` / `+OK` / `+ERROR` line classifying to the right event; and the
 CRLF-splitting receive path delivering whole lines to the callback.
 
-## On-radio result: PD0 releases the module; the "garbage" was an overrun
+The bench's timed capture logic has a separate host regression test:
+
+```sh
+cd firmware && gcc -std=c11 -I App -I App/driver \
+    tools/test_bt_capture.c App/driver/bt_capture.c -o /tmp/test_bt_capture \
+    && /tmp/test_bt_capture
+```
+
+It feeds a reply as bytes that become ready on separate polls, with idle polls
+between them, and checks that the full sequence and accumulated error flags are
+retained.
+
+## On-radio result: PD0 releases the module; reply capture still open
 
 The driver was built for the target and run on the radio (console `y`).  The
 UART is provably correct — after `bluetooth_init()` the USART3 registers read
@@ -394,40 +407,42 @@ with **PB11 idling high**.
 module in reset on **PD0** and only releases it when Bluetooth is enabled (see
 "The BT Switch and the module reset line (PD0)").  This firmware never drove it,
 so the module stayed in reset and the line read as the idle `0x51`.  With
-`bluetooth_power(true)` pulsing PD0 low→high, the module **boots and answers**:
-`y` shows a boot banner (bytes `0x00`, `+`, `+`, `M`, …) and a reply at every
-step.  The earlier "no BT power/enable/reset pin" conclusion was wrong — PD0 was
-there, attributed to the debunked "companion gauge" reset instead.
+`bluetooth_power(true)` pulsing PD0 low→high, bytes appear on PB11 after reset
+(including `0x00` and `'+'`).  The full boot banner and command replies were not
+captured reliably by the old bench.  The earlier "no BT power/enable/reset pin"
+conclusion was wrong — PD0 was there, attributed to the debunked "companion
+gauge" reset instead.
 
-**The earlier "distorted waveform" reading is withdrawn — it was an overrun.**
-The bench (`bt_listen`) read a **single byte per 10 ms**, so at 115200 — one
-byte every ~87 us — the USART overran and only the *first* byte of each response
-survived.  The `err SR=0x00f8` it printed is **not** a framing error: bit 1
-(`USART_SR_FE`, `0x2`) is clear; bit 3 (`USART_SR_ORE`, `0x8`) is the overrun.
-The first byte is `0x2b '+'`, the start of `+IM_...`/`+OK`, so the module is
-answering correctly at 115200.  Every other rate *does* set FE (`0x00fe`,
-`0x00f2`), which is exactly how the bench knew 115200 was the right one.
+**The "distorted waveform" conclusion is not supported by the current bench.**
+In one earlier run `SR=0x00f8` had `FE` (bit 1) clear and `ORE` (bit 3) set,
+so that particular status was an overrun, not a framing error.  However, a later
+run reported `SR=0x00b2` with byte `0x00`, which *does* include `FE`.  Other
+sampled values (`'+'` at 115200 and occasional printable bytes at other rates)
+are too few to establish a complete response or rule out framing faults.  The
+existing 10 ms polling cadence and per-byte console printing both make the
+measurement lossy: a byte takes about 87 us at 115200, while each diagnostic
+line takes much longer to transmit on USART1.
 
-The bit probe was misread too.  Its `low` count is the start bit (one bit time),
-but its `high` count is **not** a bit time — it is however many 1 bits begin the
-first byte, and `'+'` = `0x2b` begins `1,1`, so `low 25 / high 51` is normal, not
-a half-width start bit.  The software RX then sampled at `high` (twice the true
-bit time) and decoded garbage for that reason, not because the line was bad.
+The bit probe's `low 25 / high 51` is consistent with a 115200-baud start bit
+followed by the two leading one-bits in `'+'` (`0x2b`, LSB first), but it is not
+a substitute for capturing and decoding the full response.  The prior software
+RX used the `high` run as its bit delay and was therefore not a valid independent
+decoder.
 
-**The fix.**  `bt_listen` now drains the whole receive register in a tight loop
-(`bluetooth_poll` already did, with a larger buffer), so a full response is
-captured; the misleading software-RX and bit-probe "half-width" note are gone.
-The module answers at **115200 8N1**.  The hardware-level limit the previous
-version of this section claimed does not exist; what remains is to drive the
-module and read its real replies (and, for the port, to call `bluetooth_poll()`
-from the app loop).
+**The diagnostic capture fix.**  `bt_listen` now continuously polls USART3 for
+the requested interval, buffers received bytes and accumulated `PE/FE/NE/ORE`
+flags, and prints only after capture ends.  It no longer waits 10 ms between
+polls or blocks on USART1 output while bytes are arriving.  A host regression
+test exercises a delayed multi-byte reply across idle polls.  This fixes the
+measurement path, but does not itself prove that the module's complete reply is
+valid; that requires another radio run of console `y`.
 
 ## Open
 
-1. **Radio validation of the full replies.**  PD0 driven high is observed, the
-   module boots, and its first response byte is `'+'` at 115200.  Re-run console
-   `y` with the draining `bt_listen` and confirm the whole reply is captured
-   (`+IM_READY`/`+IM_VERSION:`/`+OK`, no `framing error` line).  Then, for the
+1. **Radio validation of the full replies.**  PD0 driven high is observed and
+   bytes appear, but clean full AT lines are still unconfirmed.  Re-run console
+   `y` with the buffered capture and inspect the complete boot banner and the
+   response to `AT+GMR?`, along with the accumulated error flags.  Then, for the
    port, call `bluetooth_poll()` from the app loop so the parser sees the lines.
 2. **The binary `RDTP` protocol.**  Frame layout, the meaning of the
    `fe fe ee ef` prefix, and the opcode list are open; the opcodes are only known
