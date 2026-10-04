@@ -33,6 +33,16 @@ void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source)
     BK4819_SetFrequency(freq_10hz);
     BK4819_WriteRegister(BK4819_REG_7D, TX_REG7D_POWER);
     BK4819_PrepareTransmit();               /* 0x37 = 0x9D1F, 0x30 = 0xC1FE */
+
+    /* Experiment (docs/ra89r_bluetooth.md): with a BT earpiece connected the
+     * stock still enables the radio's own mic ADC.  If the earpiece's mic
+     * shares that node, clearing the mic-ADC bit here leaves only the earpiece
+     * mic on transmit; if it is a separate path, the radio's mic just goes
+     * quiet. */
+    if (bt_connected())
+        BK4819_WriteRegister(BK4819_REG_30,
+            (uint16_t)(0xC1FEu & ~(1u << BK4819_REG_30_SHIFT_ENABLE_MIC_ADC)));
+
     BK4819_SetAF(BK4819_AF_MUTE);
 
     if (source == TX_SOURCE_TONE) {
