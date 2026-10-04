@@ -241,6 +241,7 @@ static void print_help(void)
               "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
               "          y Bluetooth (USART3): send AT+GMR?, print the reply\n"
               "          A Bluetooth service: show state/version, toggle on/off\n"
+              "          N Bluetooth probe: send an arbitrary AT line, print the reply\n"
               "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
@@ -726,6 +727,60 @@ static void bt_bench(void)
      * framing variant (8N2).  Re-init so the BT service keeps working after a
      * diagnostic run. */
     bt_init();
+}
+
+/* Console 'N': send an arbitrary AT line to the module and print its reply.
+ *
+ * This is the probe for a data path.  The stock's AT set is audio/control only,
+ * so ask the module's own firmware whether it has a data profile: try
+ * `AT+SPP?`, `AT+BLE_GATT?`, `AT+BLE_SERVICE?`, `AT+?`, or a vendor
+ * `AT+HELP`.  A reply that is not `+ERROR` is the lead.  See
+ * docs/ra89r_bluetooth.md. */
+static void bt_probe_line(void)
+{
+    char     line[64];
+    unsigned n = 0;
+    int      c;
+
+    uart_puts("\nAT> ");
+    for (;;) {
+        c = uart_getc_timeout(2000u);
+        if (c < 0) {
+            uart_puts("\n(timeout)\n");
+            return;
+        }
+        if (c == '\r' || c == '\n')
+            break;
+        if ((c == 8 || c == 127) && n > 0u) {   /* backspace */
+            n--;
+            uart_puts("\b \b");
+            continue;
+        }
+        if (n + 1u < sizeof line) {
+            line[n++] = (char)c;
+            uart_putc((char)c);
+        }
+    }
+    line[n] = '\0';
+    uart_puts("\n");
+    if (n == 0u)
+        return;
+
+    {
+        char     tx[72];
+        unsigned i;
+
+        for (i = 0; i < n && i < sizeof tx - 3u; i++)
+            tx[i] = line[i];
+        tx[i++] = '\r';
+        tx[i++] = '\n';
+        tx[i]   = '\0';
+        bluetooth_send(tx);
+    }
+
+    uart_puts("  <- reply:\n");
+    if (bt_listen(1500u) == 0u)
+        uart_puts("     (nothing)\n");
 }
 
 /* ------------------------------------------- cable-free audio-path bench
@@ -1675,6 +1730,10 @@ int main(void)
                 uart_printf("\nBT: switch=%u state=%u version='%s'\n",
                             (unsigned)gEeprom.BT_Switch,
                             (unsigned)bt_state(), bt_version());
+                break;
+            case 'N':
+                /* Probe the module for a data (SPP/BLE-GATT) path. */
+                bt_probe_line();
                 break;
             case 'e': {
                 /* The external SPI NOR flash: identity, then a hexdump. */

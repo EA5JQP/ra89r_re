@@ -447,6 +447,66 @@ flags, prints only after capture ends, and feeds the bytes through the stock
 parser so the event classification runs on real lines.  A host regression test
 exercises a delayed multi-byte reply across idle polls.
 
+## The BT menu items (stock reversal)
+
+The stock's `BT Menu` descriptor (`0x080256AC`, title `BT Menu` at
+`0x080271E0`) has nine items; `FUN_0800C588` dispatches each by an item **type**
+(`DAT_0800c958[step - 1]`) to a handler.  The handlers write the codeplug
+settings block and mirror it to the external flash (`FUN_080193E4`); the fields
+are the ones `ra89r_codeplug.md` names.  The handler → field mapping is certain;
+the menu-position → handler mapping is inferred (the type array lives in RAM):
+
+| handler | writes | field |
+|---|---|---|
+| `FUN_08009660(value)` | `config[0x38]` → byte 9 bit 0 | Bluetooth on/off |
+| `FUN_08019B4C(value)` | `config[0x3c]` → byte 8 bits 0–3 | speaker gain |
+| `FUN_08019BDC(value)` | `config[0x3b]` → byte 8 bits 4–7 | mic gain |
+| `FUN_08019BAC(value)` | `config[0x39]` → byte 9 bits 5–7 | byte 9 bit 5 speaker switch |
+| `FUN_08019B7C(value)` | `config[0x3a]` → byte 9 bits 1–3 | PTT type (BT / local / both) |
+| `FUN_08019B00(value)` | `config[0x3f]` → byte 7 bits 4–7 | byte 7 (the doc's hold time is bits 0–3; the handler's field is bits 4–7) |
+
+Pairing (`FUN_0800C588` case 1) is a scan: when the module is ready it queues
+`AT+BT_SCAN=ON` (index `0x1e`) and the module reports found earpieces as
+`+IM_EARDEV:<record>`.  `+IM_EARDEV` is **binary**: `FUN_0800f9b0` stores a
+13-byte record per device (`state+0x18 + i*0xd`) plus a 64-byte name
+(`state+0x80 + i*0x40`), and `AT+EAR_CONN=<record>` takes that record — so a
+"pick a device" needs the raw record, not a printable address.  `FUN_08007FD0`
+(the `+IM_READY` path) instead does scan-and-auto-connect with
+`AT+BT_SCANATCN=ON` and `AT+BT_CONN_LAST`.
+
+The port's BT screen (`App/ui/bt.c`) now renders in the K1 menu's own layout
+(three-row left column, inverted current item, value on the right,
+index/count below) with six-character labels, and every item acts: BT Switch,
+Pair, Hold, Scan, Volume, Mic and PTT set their fields and/or send the stock's
+command; Paired and Info are read-outs.  Pairing uses the scan-and-auto-connect
+path; the per-device pick still needs the binary `+IM_EARDEV` record captured on
+the radio.
+
+## Probing for a data (SPP / BLE-GATT) path
+
+The stock's AT set is audio/control only; there is no command in the image that
+moves a data payload, and the framed `RDTP` path is call/PTT control, not a data
+pipe.  Whether the module's firmware exposes a **serial (SPP)** or **BLE GATT**
+data service is not in the image, so it has to be asked directly.  Console `N`
+sends an arbitrary AT line to the module and prints its reply; the lines to try,
+in order:
+
+```
+AT+?
+AT+HELP
+AT+SPP?            (or AT+SPP / AT+SPP=ON)
+AT+BLE_GATT?
+AT+BLE_SERVICE?
+AT+BLE_ADV?
+AT+BT_LOCAL?
+AT+BLE_LOCAL?
+```
+
+A reply that is not `+ERROR` is the lead; anything that names a service, a
+characteristic or a baud/serial mode means a data path is possible.  Nothing in
+this list is decoded from the image — it is a live probe, and the result is the
+evidence.
+
 ## Open
 
 1. **Port integration.**  The link is validated, but nothing in the port's app

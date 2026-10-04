@@ -193,8 +193,8 @@ void SettingsDefaults(void)
     gEeprom.BT_Switch  = false;
     gEeprom.BT_Mode    = 0;
     gEeprom.BT_Name[0] = '\0';
-    gEeprom.BT_SpkGain = 0;
-    gEeprom.BT_MicGain = 0;
+    gEeprom.BT_SpkGain = 2;     /* the codeplug's default (byte 8) */
+    gEeprom.BT_MicGain = 2;
     gEeprom.BT_PTTType = 0;
     gEeprom.BT_HoldTime = 0;
 }

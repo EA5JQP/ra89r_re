@@ -45,6 +45,11 @@ void       bt_set_spk_gain(uint8_t level);
 void       bt_set_mic_gain(uint8_t level);
 unsigned   bt_spk_gain_levels(void);
 unsigned   bt_mic_gain_levels(void);
+
+/* Pairing: scan and auto-connect (the stock's `FUN_08007FD0`). */
+void       bt_start_connect(void);
+bool       bt_connected(void);
+unsigned   bt_found_count(void);        /* +IM_EARDEV devices seen since the scan */
 bt_state_t bt_state(void);
 const char *bt_version(void);
 const char *bt_local_addr(void);

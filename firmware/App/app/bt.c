@@ -29,6 +29,9 @@ static unsigned   s_qlen;
 static unsigned   s_qidx;
 static unsigned   s_ticks;
 
+static bool       s_connected;
+static unsigned   s_found;      /* +IM_EARDEV devices seen since the scan started */
+
 static void text_copy(char *dst, unsigned cap, const char *src, unsigned len)
 {
     if (len >= cap)
@@ -150,6 +153,32 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
             queue_advance();
         break;
 
+    case BT_EV_EARDEV:                  /* +IM_EARDEV: a device was found */
+        if (s_found < 8u)
+            s_found++;
+        break;
+
+    case BT_EV_BT_EAR_CONN:             /* earpiece connected */
+    case BT_EV_SCO_CONN:                /* audio link up */
+    case BT_EV_CALL_CONNECTED:
+        s_connected = true;
+        if (s_state == BT_STATE_SCAN || s_state == BT_STATE_CONNECT)
+            s_state = BT_STATE_CONNECTED;
+        break;
+
+    case BT_EV_BT_DISCONNECT:
+    case BT_EV_SCO_DISCONNECT:
+    case BT_EV_CALL_DISCONNECTED:
+        s_connected = false;
+        if (s_state == BT_STATE_CONNECTED)
+            s_state = BT_STATE_IDLE;
+        break;
+
+    case BT_EV_BT_SCAN_STOP:            /* scan finished */
+        if (s_state == BT_STATE_SCAN)
+            s_state = BT_STATE_IDLE;
+        break;
+
     default:
         break;
     }
@@ -246,6 +275,24 @@ void bt_set_mic_gain(uint8_t level)
 {
     if ((unsigned)level < bt_mic_gain_levels())
         bluetooth_send_param(BT_CMD_MICGAIN, bt_mic_gain_str[level]);
+}
+
+/* Pairing: the stock's scan-and-auto-connect (`FUN_08007FD0`). */
+void bt_start_connect(void)
+{
+    s_found = 0;
+    s_state = BT_STATE_SCAN;
+    bluetooth_send_cmd(BT_CMD_BT_SCANATCN_ON);
+}
+
+bool bt_connected(void)
+{
+    return s_connected;
+}
+
+unsigned bt_found_count(void)
+{
+    return s_found;
 }
 
 bt_state_t bt_state(void)

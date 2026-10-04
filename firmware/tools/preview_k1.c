@@ -564,7 +564,7 @@ int main(void)
         if (!ok) failures++;
 
         ok = (BT_MenuCount() == 9u) &&
-             (strcmp(BT_MenuName(0), "BT Switch") == 0);
+             (strcmp(BT_MenuName(0), "Switch") == 0);
         printf("[bt] %s menu has %u items, first '%s'\n",
                ok ? "ok  " : "FAIL", BT_MenuCount(), BT_MenuName(0));
         if (!ok) failures++;

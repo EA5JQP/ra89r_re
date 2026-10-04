@@ -1,10 +1,11 @@
 /* Bluetooth menu screen -- see ui/bt.h and docs/ra89r_bluetooth_design.md.
  *
- * The nine items are the stock's `BT Menu` descriptor (0x080256AC).  Phase 1
- * acts on BT Switch, Scan, Spk Volume, Mic Gain, PTT Type and Blooth Inf; the
- * pairing items are shown but inert until Phase 2.  Only six item rows are
- * drawn (lines 1..6): gFrameBuffer has seven pages (0..6), so a seventh row
- * would run off the end into gStatusLine. */
+ * Same layout as the K1 menu (UI_DisplayMenu, original layout): a three-row
+ * left column (previous / current / next) with the current item inverted, a
+ * dotted separator, the item value on the right and the index/count below.
+ * The labels are kept to six characters so they fit the column, like the K1
+ * menu's own names.  Only six item rows are ever drawn (the K1's window is
+ * three), so nothing runs past gFrameBuffer[6]. */
 #include "ui/bt.h"
 
 #include <string.h>
@@ -17,16 +18,17 @@
 #include "ui/helper.h"
 #include "ui/ui.h"
 
+/* Six characters max, like MenuList[].name. */
 static const char *const bt_items[] = {
-    "BT Switch",
-    "Pairing",
-    "Paired Dev",
-    "Hold Time",
-    "Scan",
-    "Spk Volume",
-    "Mic Gain",
-    "Blooth Inf",
-    "PTT Type",
+    "Switch",   /* BT Switch    -- the codeplug Bluetooth bool (byte 9 bit 0) */
+    "Pair",     /* Pairing      -- scan and auto-connect */
+    "Paired",   /* Paired Dev   -- the connected/last device */
+    "Hold",     /* Hold Time    -- byte 7 bits 0-3 */
+    "Scan",     /* Scan         -- AT+BT_SCAN on/off */
+    "Volume",   /* Spk Volume   -- byte 8 bits 0-3 */
+    "Mic",      /* Mic Gain     -- byte 8 bits 4-7 */
+    "Info",     /* Blooth Inf   -- module state */
+    "PTT",      /* PTT Type     -- byte 9 bits 1-2 */
 };
 
 static uint8_t s_cursor;
@@ -58,12 +60,29 @@ static const char *bt_state_str(bt_state_t state)
     return "?";
 }
 
+static const char *bt_ptt_str(uint8_t type)
+{
+    switch (type) {
+    case 0:  return "BT";
+    case 1:  return "Local";
+    default: return "Both";
+    }
+}
+
 /* The value shown after an item's label, or "" for none. */
 static const char *bt_item_value(unsigned index, char *buf, unsigned cap)
 {
+    (void)cap;
+
     switch (index) {
     case 0:
         return gEeprom.BT_Switch ? "On" : "Off";
+    case 1:
+        if (bt_connected())
+            return "Linked";
+        return bt_state() == BT_STATE_SCAN ? "Scan" : "";
+    case 2:
+        return bt_connected() ? "Linked" : "None";
     case 3:
         sprintf(buf, "%u", (unsigned)gEeprom.BT_HoldTime);
         return buf;
@@ -78,19 +97,11 @@ static const char *bt_item_value(unsigned index, char *buf, unsigned cap)
     case 7:
         return bt_state_str(bt_state());
     case 8:
-        return gEeprom.BT_PTTType ? "Type 2" : "Type 1";
+        return bt_ptt_str(gEeprom.BT_PTTType);
     default:
-        (void)cap;
         return "";
     }
 }
-
-/* Same layout as the K1 menu (UI_DisplayMenu, original layout): a three-row
- * left column (previous / current / next) with the current item inverted, a
- * dotted separator, the item value on the right and the index/count below. */
-#define BT_LIST_CHARS   6u
-#define BT_ITEM_X1      ((8u * BT_LIST_CHARS) + 2u)     /* 50 */
-#define BT_ITEM_X2      (LCD_WIDTH - 1u)
 
 void UI_DisplayBT(void)
 {
@@ -102,9 +113,8 @@ void UI_DisplayBT(void)
     UI_DisplayClear();
 
     /* the vertical separating line, and the dotted bottom row */
-    UI_DrawLineBuffer(gFrameBuffer, (uint8_t)(8u * BT_LIST_CHARS), 0,
-                      (uint8_t)(8u * BT_LIST_CHARS), 55, 1);
-    for (i = 0; i < (8u * BT_LIST_CHARS); i += 2u)
+    UI_DrawLineBuffer(gFrameBuffer, (uint8_t)(8u * 6u), 0, (uint8_t)(8u * 6u), 55, 1);
+    for (i = 0; i < (8u * 6u); i += 2u)
         gFrameBuffer[5][i] = 0x40;
 
     /* the three visible items: previous (line 0), current (line 2), next (4) */
@@ -121,7 +131,7 @@ void UI_DisplayBT(void)
     }
 
     /* invert the current item's pixels (the big-font row pair) */
-    for (i = 0; i < (8u * BT_LIST_CHARS); i++) {
+    for (i = 0; i < (8u * 6u); i++) {
         gFrameBuffer[2][i] ^= 0xFF;
         gFrameBuffer[3][i] ^= 0xFF;
     }
@@ -136,14 +146,14 @@ void UI_DisplayBT(void)
         const char *val = bt_item_value(s_cursor, vbuf, sizeof vbuf);
 
         if (val[0] != '\0')
-            UI_PrintString(val, BT_ITEM_X1, BT_ITEM_X2, 2, 8);
+            UI_PrintString(val, (8u * 6u) + 2u, LCD_WIDTH - 1u, 2, 8);
     }
 
     ST7565_BlitStatusLine();
     ST7565_BlitFullScreen();
 }
 
-/* Phase 1: the non-pairing items act; pairing is inert until Phase 2. */
+/* Every item acts now; the value fields mirror the stock's codeplug fields. */
 static void bt_activate(void)
 {
     switch (s_cursor) {
@@ -153,17 +163,21 @@ static void bt_activate(void)
         gRequestSaveSettings = true;
         break;
 
-    case 3:     /* Hold Time */
-        gEeprom.BT_HoldTime = (uint8_t)((gEeprom.BT_HoldTime + 1u) % 10u);
+    case 1:     /* Pairing: scan and auto-connect */
+        bt_start_connect();
+        break;
+
+    case 3:     /* Hold Time: 0..15 (4S..15S, Infinite) */
+        gEeprom.BT_HoldTime = (uint8_t)((gEeprom.BT_HoldTime + 1u) & 0x0Fu);
         gRequestSaveSettings = true;
         break;
 
-    case 4:     /* Scan */
+    case 4:     /* Scan: AT+BT_SCAN on/off */
         s_scan = !s_scan;
         bt_set_scan(s_scan);
         break;
 
-    case 5:     /* Spk Volume */
+    case 5:     /* Spk Volume: the stock's gain levels */
         gEeprom.BT_SpkGain =
             (uint8_t)((gEeprom.BT_SpkGain + 1u) % bt_spk_gain_levels());
         bt_set_spk_gain(gEeprom.BT_SpkGain);
@@ -177,12 +191,12 @@ static void bt_activate(void)
         gRequestSaveSettings = true;
         break;
 
-    case 8:     /* PTT Type */
-        gEeprom.BT_PTTType = (uint8_t)((gEeprom.BT_PTTType + 1u) % 2u);
+    case 8:     /* PTT Type: BT / local / both */
+        gEeprom.BT_PTTType = (uint8_t)((gEeprom.BT_PTTType + 1u) % 3u);
         gRequestSaveSettings = true;
         break;
 
-    default:
+    default:    /* Paired Dev (2) and Blooth Inf (7) are read-outs */
         break;
     }
 }
