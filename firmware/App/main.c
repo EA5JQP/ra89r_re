@@ -1729,9 +1729,10 @@ int main(void)
                 gEeprom.BT_Switch = !gEeprom.BT_Switch;
                 bt_set_enabled(gEeprom.BT_Switch);
                 gRequestSaveSettings = true;
-                uart_printf("\nBT: switch=%u state=%u version='%s'\n",
+                uart_printf("\nBT: switch=%u state=%u version='%s' rx=%u\n",
                             (unsigned)gEeprom.BT_Switch,
-                            (unsigned)bt_state(), bt_version());
+                            (unsigned)bt_state(), bt_version(),
+                            bluetooth_rx_bytes());
                 break;
             case 'N':
                 /* Probe the module for a data (SPP/BLE-GATT) path. */
@@ -1898,13 +1899,19 @@ int main(void)
              * times a second leaves the application almost no CPU at all. */
             APP_Update();
 
+            /* Drain USART3 on every pass, not once per 10 ms slice: the
+             * module's boot banner is ~100 bytes sent in ~9 ms, so a 10 ms
+             * poll lets the 1-byte receive register overrun and loses
+             * `+IM_READY`.  Only USART3 is touched, so the no-NOR rule holds. */
+            bt_poll();
+
             if ((uint32_t)(now - slice10) >= 10u) {
                 slice10 = now;
                 APP_TimeSlice10ms();
 
                 tx_poll_ptt();
                 rx_service();
-                bt_poll();      /* drains USART3 only; no NOR access */
+                bt_service_tick();  /* the state machine's 10 ms clock */
             }
             if ((uint32_t)(now - slice500) >= 500u) {
                 slice500 = now;

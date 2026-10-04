@@ -323,6 +323,13 @@ void bluetooth_init(void)
     bluetooth_power(true);
 }
 
+static unsigned s_rx_bytes;
+
+unsigned bluetooth_rx_bytes(void)
+{
+    return s_rx_bytes;
+}
+
 void bluetooth_poll(void)
 {
     /* Drain the whole receive register in one tight loop.  The module answers
@@ -335,8 +342,10 @@ void bluetooth_poll(void)
 
     while ((BOARD_BT_UART->SR & USART_SR_RXNE) && n < sizeof buf)
         buf[n++] = (uint8_t)BOARD_BT_UART->DR;
-    if (n)
+    if (n) {
+        s_rx_bytes += n;
         bluetooth_feed(buf, n);
+    }
 }
 
 #endif /* !BLUETOOTH_HOST_TEST */

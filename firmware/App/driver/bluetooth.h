@@ -142,4 +142,8 @@ void bluetooth_feed(const uint8_t *data, unsigned len);
 /* Target only: drain USART3's receive register into bluetooth_feed(). */
 void bluetooth_poll(void);
 
+/* Target only: total bytes drained since boot (a diagnostic: proves the
+ * module is transmitting). */
+unsigned bluetooth_rx_bytes(void);
+
 #endif /* DRIVER_BLUETOOTH_H */

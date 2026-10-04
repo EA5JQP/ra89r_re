@@ -26,10 +26,12 @@ typedef enum {
 
 /* Target only: bring up the transport and register the event callback. */
 void bt_init(void);
-/* Target only: drain USART3 then advance the service.  Call every 10 ms. */
+/* Target only: drain USART3.  Call on every pass of the main loop -- the
+ * module's boot banner is ~100 bytes in ~9 ms and would overrun a 10 ms poll. */
 void bt_poll(void);
 
-/* Pure, host-testable. */
+/* Pure, host-testable.  Call on the 10 ms slice: it is the state machine's
+ * clock (reset retry, per-command timeout). */
 void bt_service_tick(void);
 void bt_service_event(bt_event_t ev, const char *payload, unsigned len);
 

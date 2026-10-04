@@ -204,16 +204,16 @@ static void bt_activate(void)
 void BT_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 {
     switch (Key) {
-    case KEY_UP:
-        if (bKeyPressed && !bKeyHeld && s_cursor > 0u)
-            s_cursor--;
+    case KEY_UP:            /* wrap, like the K1 menu */
+        if (bKeyPressed && !bKeyHeld)
+            s_cursor = (s_cursor == 0u) ? (uint8_t)(BT_MenuCount() - 1u)
+                                        : (uint8_t)(s_cursor - 1u);
         gUpdateDisplay = true;
         break;
 
     case KEY_DOWN:
-        if (bKeyPressed && !bKeyHeld &&
-            (unsigned)s_cursor + 1u < BT_MenuCount())
-            s_cursor++;
+        if (bKeyPressed && !bKeyHeld)
+            s_cursor = (uint8_t)((s_cursor + 1u) % BT_MenuCount());
         gUpdateDisplay = true;
         break;
 

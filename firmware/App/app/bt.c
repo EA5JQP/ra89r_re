@@ -334,9 +334,12 @@ void bt_init(void)
     bluetooth_set_event_cb(bt_on_event);
 }
 
+/* Drain USART3 only.  Call this on every pass of the main loop: the module's
+ * boot banner is ~100 bytes sent in ~9 ms, so draining once per 10 ms slice
+ * lets the 1-byte USART buffer overrun and drops `+IM_READY`.  The state
+ * machine's clock is `bt_service_tick()`, which stays on the 10 ms slice. */
 void bt_poll(void)
 {
     bluetooth_poll();
-    bt_service_tick();
 }
 #endif /* !BLUETOOTH_HOST_TEST */
