@@ -581,7 +581,7 @@ int main(void)
         UI_DisplayBT();
         ok = (gFrameBuffer[0][127] == 0);
         for (i = 0; i < sizeof gStatusLine; i++)
-            if (gStatusLine[i] != 0) { ok = false; break; }
+            if (gStatusLine[i] != 0xAA) { ok = false; break; }   /* untouched */
         printf("[bt] %s UI_DisplayBT stays inside gFrameBuffer[0..6]\n",
                ok ? "ok  " : "FAIL");
         if (!ok) failures++;

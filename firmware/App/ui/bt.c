@@ -114,7 +114,9 @@ void UI_DisplayBT(void)
     char      String[16];
     unsigned  i;
 
-    UI_StatusClear();
+    /* The K1 menu never clears the status line -- it blits it unchanged -- so
+     * neither do we: clearing it blanked the bar until the next status
+     * refresh. */
     UI_DisplayClear();
 
     UI_DrawLineBuffer(gFrameBuffer, (uint8_t)(8u * 6u), 0, (uint8_t)(8u * 6u), 55, 1);

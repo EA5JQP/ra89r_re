@@ -11,7 +11,8 @@
 #include <string.h>
 
 #define BT_QUEUE_MAX    8u
-#define BT_RESET_TICKS  300u    /* 3 s at the 10 ms tick */
+#define BT_RESET_TICKS  200u    /* 2 s at the 10 ms tick */
+#define BT_RESET_RETRIES 5u     /* re-pulse PD0 and listen again, like the stock */
 #define BT_CMD_TICKS    500u    /* 5 s per command before forcing progress */
 #define BT_TEXT_MAX     32u
 
@@ -31,6 +32,7 @@ static unsigned   s_ticks;
 
 static bool       s_connected;
 static unsigned   s_found;      /* +IM_EARDEV devices seen since the scan started */
+static unsigned   s_retries;    /* PD0 re-pulses while waiting for +IM_READY */
 
 static void text_copy(char *dst, unsigned cap, const char *src, unsigned len)
 {
@@ -188,12 +190,21 @@ void bt_service_tick(void)
 {
     if (s_state == BT_STATE_RESET) {
         if (++s_ticks >= BT_RESET_TICKS) {
-#ifndef BLUETOOTH_HOST_TEST
-            bluetooth_power(false);     /* give up: hold the module in reset */
-#endif
-            s_state = BT_STATE_OFF;
-            s_enabled = false;
             s_ticks = 0;
+            if (s_retries < BT_RESET_RETRIES) {
+                /* The stock re-pulses PD0 while the module has not reported
+                 * ready (`FUN_080066CC`): a missed boot banner is retried. */
+                s_retries++;
+#ifndef BLUETOOTH_HOST_TEST
+                bluetooth_power(true);
+#endif
+            } else {
+#ifndef BLUETOOTH_HOST_TEST
+                bluetooth_power(false); /* give up: hold the module in reset */
+#endif
+                s_state = BT_STATE_OFF;
+                s_enabled = false;
+            }
         }
     } else if (s_state == BT_STATE_CONFIG) {
         if (++s_ticks >= BT_CMD_TICKS)
@@ -210,6 +221,7 @@ void bt_set_enabled(bool on)
     s_ticks = 0;
 
     if (on) {
+        s_retries = 0;
 #ifndef BLUETOOTH_HOST_TEST
         bluetooth_power(true);
 #endif

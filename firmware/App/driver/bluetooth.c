@@ -270,8 +270,11 @@ void bluetooth_power(bool on)
     gpio_config_output(BOARD_BT_RESET_PORT, BT_RESET_PIN);
 
     if (on) {
+        /* Hold reset long enough for the module to latch it: the bench that
+         * first saw the boot banner held it low ~100 ms, and the stock's
+         * bring-up keeps it low across its flash reads. */
         gpio_write(BOARD_BT_RESET_PORT, BT_RESET_PIN, !BT_RESET_LEVEL); /* reset */
-        systick_delay_ms(10);
+        systick_delay_ms(100);
         gpio_write(BOARD_BT_RESET_PORT, BT_RESET_PIN, BT_RESET_LEVEL);  /* release */
     } else {
         gpio_write(BOARD_BT_RESET_PORT, BT_RESET_PIN, !BT_RESET_LEVEL);

@@ -124,9 +124,10 @@ int main(void)
     check(bt_state() == BT_STATE_OFF, "disable -> OFF");
     check(rec_last_is("AT+BT_DISCN\r\n"), "disable sends AT+BT_DISCN");
 
-    /* A silent module must not spin forever: the reset attempt is bounded. */
+    /* A silent module must not spin forever: the reset attempt is bounded
+     * (a few PD0 re-pulses, then OFF). */
     bt_set_enabled(true);
-    for (i = 0; i < 1000u; i++)
+    for (i = 0; i < 3000u; i++)
         bt_service_tick();
     check(bt_state() == BT_STATE_OFF, "silent module times out to OFF");
 
