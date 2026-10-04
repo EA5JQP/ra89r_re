@@ -589,6 +589,10 @@ static unsigned bt_listen(unsigned ms)
     }
     if (result.dropped != 0u)
         uart_printf("     capture buffer dropped %u bytes\n", result.dropped);
+
+    /* Run the same bytes through the stock parser so the event classification
+     * is exercised on real lines, not just the host fixture. */
+    bluetooth_feed(bytes, result.stored);
     return result.stored;
 }
 
@@ -711,9 +715,10 @@ static void bt_bench(void)
         }
     }
 
-    uart_puts("  115200 is the module's rate: only there is the status word's\n"
-              "  framing bit (FE, 0x2) clear.  An overrun (ORE, 0x8) just means\n"
-              "  this loop did not drain fast enough, not that the bytes are bad.\n");
+    uart_puts("  The module is a Jieli YBT100 at 115200 8N1: the boot banner and\n"
+              "  AT+GMR? come back as whole +IM_* lines.  A non-115200 rate sets\n"
+              "  FE (framing error) and yields only aliased bytes; ORE alone is\n"
+              "  just this loop not draining fast enough.\n");
 }
 
 /* ------------------------------------------- cable-free audio-path bench
