@@ -742,9 +742,11 @@ static void bt_probe_line(void)
     unsigned n = 0;
     int      c;
 
+    if (!bt_enabled())
+        uart_puts("\n  (BT is off: press 'A' first, or the module is held in reset)\n");
     uart_puts("\nAT> ");
     for (;;) {
-        c = uart_getc_timeout(2000u);
+        c = uart_getc_timeout(15000u);
         if (c < 0) {
             uart_puts("\n(timeout)\n");
             return;

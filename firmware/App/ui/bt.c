@@ -103,47 +103,45 @@ static const char *bt_item_value(unsigned index, char *buf, unsigned cap)
     }
 }
 
+/* The K1 menu is built with ENABLE_CUSTOM_MENU_LAYOUT, so its layout is the
+ * "new" one in UI_DisplayMenu: the previous and next items in the small font
+ * (lines 1 and 4), the current item big (line 2), the `%02u/%02u` index at
+ * x=6 line 6, and no inverted bar.  This matches it exactly. */
 void UI_DisplayBT(void)
 {
-    const unsigned n = BT_MenuCount();
-    char           String[16];
-    unsigned       i;
+    const int cnt = (int)BT_MenuCount();
+    const int idx = (int)s_cursor;
+    char      String[16];
+    unsigned  i;
 
     UI_StatusClear();
     UI_DisplayClear();
 
-    /* the vertical separating line, and the dotted bottom row */
     UI_DrawLineBuffer(gFrameBuffer, (uint8_t)(8u * 6u), 0, (uint8_t)(8u * 6u), 55, 1);
     for (i = 0; i < (8u * 6u); i += 2u)
         gFrameBuffer[5][i] = 0x40;
 
-    /* the three visible items: previous (line 0), current (line 2), next (4) */
-    for (i = 0; i < 3u; i++) {
-        if (s_cursor == 0u && i == 0u)
-            continue;
-        if (s_cursor + 1u == n && i == 2u)
-            continue;
-        {
-            const unsigned idx = (unsigned)((int)s_cursor + (int)i - 1);
-            if (idx < n)
-                UI_PrintString(bt_items[idx], 0, 0, (uint8_t)(i * 2u), 8);
-        }
+    {
+        int prev = idx - 1;
+        int next = idx + 1;
+
+        if (prev < 0)
+            prev = cnt - 1;
+        if (next >= cnt)
+            next = 0;
+
+        UI_PrintStringSmallNormal(bt_items[prev], 0, 0, 1);   /* previous */
+        UI_PrintString(bt_items[idx], 0, 0, 2, 8);            /* current  */
+        UI_PrintStringSmallNormal(bt_items[next], 0, 0, 4);   /* next     */
     }
 
-    /* invert the current item's pixels (the big-font row pair) */
-    for (i = 0; i < (8u * 6u); i++) {
-        gFrameBuffer[2][i] ^= 0xFF;
-        gFrameBuffer[3][i] ^= 0xFF;
-    }
+    sprintf(String, "%02u/%02u", 1u + (unsigned)idx, (unsigned)cnt);
+    UI_PrintStringSmallNormal(String, 6, 0, 6);
 
-    /* the index/count, bottom left */
-    sprintf(String, "%2u.%u", 1u + s_cursor, n);
-    UI_PrintStringSmallNormal(String, 2, 0, 6);
-
-    /* the current item's value, on the right */
+    /* the current item's value, on the right (big font, line 2) */
     {
         char        vbuf[16];
-        const char *val = bt_item_value(s_cursor, vbuf, sizeof vbuf);
+        const char *val = bt_item_value((unsigned)idx, vbuf, sizeof vbuf);
 
         if (val[0] != '\0')
             UI_PrintString(val, (8u * 6u) + 2u, LCD_WIDTH - 1u, 2, 8);
