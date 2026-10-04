@@ -178,6 +178,9 @@ void bt_set_enabled(bool on)
     } else {
         bluetooth_send_cmd(BT_CMD_BT_DISCN);
         queue_clear();
+#ifndef BLUETOOTH_HOST_TEST
+        bluetooth_power(false);        /* hold the module in reset */
+#endif
         s_state = BT_STATE_OFF;
     }
 }

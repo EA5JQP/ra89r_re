@@ -44,6 +44,7 @@ set(APP_SOURCES
     App/driver/uart.c
     App/driver/bluetooth.c
     App/driver/bt_capture.c
+    App/app/bt.c
     App/driver/systick.c
     App/driver/lcd_st7565.c
     App/driver/keypad.c

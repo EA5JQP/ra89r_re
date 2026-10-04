@@ -19,6 +19,7 @@
 #include "driver/battery.h"
 #include "driver/bluetooth.h"
 #include "driver/bt_capture.h"
+#include "app/bt.h"
 #include "helper/battery.h"
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
@@ -239,6 +240,7 @@ static void print_help(void)
               "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
               "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
               "          y Bluetooth (USART3): send AT+GMR?, print the reply\n"
+              "          A Bluetooth service: show state/version, toggle on/off\n"
               "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
@@ -1314,6 +1316,14 @@ int main(void)
     RADIO_SelectVfos();
     SETTINGS_FixupVfoPointers();
 
+    /* Bluetooth service: bring the transport up (after settings, so the saved
+     * switch/mode/name are known) and apply the saved switch.  The 10 ms slice
+     * below pumps it. */
+    bt_init();
+    bt_set_mode(gEeprom.BT_Mode);
+    bt_set_name(gEeprom.BT_Name);
+    bt_set_enabled(gEeprom.BT_Switch);
+
     /* Sample the pack before any screen is drawn.  The status bar (and the
      * welcome screen) would otherwise show level 0 until the first 500 ms
      * slice, which reads as the battery jumping from 0% to the real value.
@@ -1652,6 +1662,15 @@ int main(void)
             case 'y':
                 bt_bench();
                 break;
+            case 'A':
+                /* BT service: show the state, then toggle the saved switch. */
+                gEeprom.BT_Switch = !gEeprom.BT_Switch;
+                bt_set_enabled(gEeprom.BT_Switch);
+                gRequestSaveSettings = true;
+                uart_printf("\nBT: switch=%u state=%u version='%s'\n",
+                            (unsigned)gEeprom.BT_Switch,
+                            (unsigned)bt_state(), bt_version());
+                break;
             case 'e': {
                 /* The external SPI NOR flash: identity, then a hexdump. */
                 uint16_t man_dev = 0;
@@ -1819,6 +1838,7 @@ int main(void)
 
                 tx_poll_ptt();
                 rx_service();
+                bt_poll();      /* drains USART3 only; no NOR access */
             }
             if ((uint32_t)(now - slice500) >= 500u) {
                 slice500 = now;
