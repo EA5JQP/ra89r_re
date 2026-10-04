@@ -13,6 +13,7 @@
 #include <stdio.h>
 
 #include "app/app.h"
+#include "app/bt.h"
 #include "audio.h"
 #include "driver/backlight.h"
 #include "driver/gpio.h"
@@ -573,6 +574,23 @@ int main(void)
         render("UI_DisplayBT(): the Bluetooth menu");
         for (i = 0; i < BT_MenuCount(); i++)
             (void)BT_MenuName(i);
+    }
+
+    /* The status line shows a BT indicator while the module is on. */
+    {
+        bool    ok;
+        uint8_t before[LCD_WIDTH];
+
+        bt_set_enabled(false);
+        UI_DisplayStatus();
+        memcpy(before, gStatusLine, sizeof before);
+
+        bt_set_enabled(true);
+        UI_DisplayStatus();
+        ok = (memcmp(before, gStatusLine, sizeof before) != 0);
+        printf("[bt] %s the status line shows BT when the module is on\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
     }
 
     printf("\n%d failures\n", failures);

@@ -17,6 +17,7 @@
 #include <string.h>
 
 #include "app/app.h"
+#include "app/bt.h"
 #include "app/chFrScanner.h"
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
 #include "app/rxtx_log.h"
@@ -130,10 +131,18 @@ void UI_DisplayStatus()
         else if (gCurrentFunction == FUNCTION_POWER_SAVE) {
             memcpy(line + x, gFontPowerSave, sizeof(gFontPowerSave));
         }
+        else if (bt_enabled()) {
+            UI_PrintStringSmallBufferNormal("BT", line + x);
+            x += 4u;   /* "BT" is 12 px; the leftmost slot is 8 */
+        }
 #else
-        // Power Save indicator
+        // Power Save / Bluetooth indicator (the same leftmost slot)
         if (gCurrentFunction == FUNCTION_POWER_SAVE) {
             memcpy(line + x, gFontPowerSave, sizeof(gFontPowerSave));
+        }
+        else if (bt_enabled()) {
+            UI_PrintStringSmallBufferNormal("BT", line + x);
+            x += 4u;   /* "BT" is 12 px; the leftmost slot is 8 */
         }
 #endif
     }
