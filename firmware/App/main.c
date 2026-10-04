@@ -242,6 +242,7 @@ static void print_help(void)
               "          y Bluetooth (USART3): send AT+GMR?, print the reply\n"
               "          A Bluetooth service: show state/version, toggle on/off\n"
               "          N Bluetooth probe: send an arbitrary AT line, print the reply\n"
+              "          U dump the last USART3 bytes the module sent (hex)\n"
               "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
@@ -1739,6 +1740,21 @@ int main(void)
                 /* Probe the module for a data (SPP/BLE-GATT) path. */
                 bt_probe_line();
                 break;
+            case 'U': {
+                /* Dump the most recently received USART3 bytes. */
+                uint8_t  log[128];
+                unsigned n = bluetooth_rx_log(log, sizeof log);
+                unsigned i;
+
+                uart_printf("\nBT rx log (%u bytes):", n);
+                for (i = 0; i < n; i++) {
+                    uart_printf(" %02X", (unsigned)log[i]);
+                    if ((i & 15u) == 15u)
+                        uart_puts("\n ");
+                }
+                uart_puts("\n");
+                break;
+            }
             case 'e': {
                 /* The external SPI NOR flash: identity, then a hexdump. */
                 uint16_t man_dev = 0;

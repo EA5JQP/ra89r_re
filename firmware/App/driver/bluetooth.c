@@ -330,6 +330,25 @@ unsigned bluetooth_rx_bytes(void)
     return s_rx_bytes;
 }
 
+/* A rolling log of the most recent received bytes, for the console diagnostic:
+ * it shows what the module actually transmits (the boot banner, a reply, or
+ * nothing but a glitch). */
+#define BT_RX_LOG_SIZE 128u
+static uint8_t  s_rx_log[BT_RX_LOG_SIZE];
+static unsigned s_rx_log_n;
+
+unsigned bluetooth_rx_log(uint8_t *out, unsigned cap)
+{
+    unsigned n = (s_rx_log_n < BT_RX_LOG_SIZE) ? s_rx_log_n : BT_RX_LOG_SIZE;
+    unsigned i;
+
+    if (n > cap)
+        n = cap;
+    for (i = 0; i < n; i++)
+        out[i] = s_rx_log[(s_rx_log_n - n + i) % BT_RX_LOG_SIZE];
+    return n;
+}
+
 void bluetooth_poll(void)
 {
     /* Drain the whole receive register in one tight loop.  The module answers
@@ -343,6 +362,10 @@ void bluetooth_poll(void)
     while ((BOARD_BT_UART->SR & USART_SR_RXNE) && n < sizeof buf)
         buf[n++] = (uint8_t)BOARD_BT_UART->DR;
     if (n) {
+        unsigned i;
+
+        for (i = 0; i < n; i++)
+            s_rx_log[s_rx_log_n++ % BT_RX_LOG_SIZE] = buf[i];
         s_rx_bytes += n;
         bluetooth_feed(buf, n);
     }

@@ -146,4 +146,8 @@ void bluetooth_poll(void);
  * module is transmitting). */
 unsigned bluetooth_rx_bytes(void);
 
+/* Target only: copy up to `cap` of the most recently received bytes into `out`
+ * (oldest first) and return how many.  For the console diagnostic. */
+unsigned bluetooth_rx_log(uint8_t *out, unsigned cap);
+
 #endif /* DRIVER_BLUETOOTH_H */
