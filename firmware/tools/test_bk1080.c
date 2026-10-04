@@ -346,26 +346,20 @@ static void test_k1_api(void)
     check_hex((txns[2].wr[2] << 8) | txns[2].wr[3], 0x00f0, "  reg 3 channel 240");
     check_hex((txns[3].wr[2] << 8) | txns[3].wr[3], 0x80f0, "  reg 3 TUNE|channel");
 
-    /* The full K1 power-up image: 34 registers (0x00..0x21), then two writes to
-     * reg 0x19, reg 5 = 0x0A1F, then the tune.  Only the first init runs (the
-     * driver latches gIsInitBK1080), so this is the one call that walks the
-     * table. */
+    /* The RA89R stock power-up image: the 68-byte block, two register-0x32
+     * writes, reg 5 = 0x0A1F, then the tune.  `BK1080_Init` applies the stock
+     * image on every call, as the stock re-writes it each time FM is enabled. */
     bus_reset();
     queue_read(0x0a, 0x1f);            /* reg 5 read inside SetFrequency */
     BK1080_Init(1000, 1);
-    check(ntxn == 41, "K1 init: 34 table writes + 2 reg 0x19 + reg 5 + 4 tune");
-    check(txn_wr(&txns[0], 1, 0x00), "  table starts at reg 0");
+    check(ntxn == 8, "stock init: block + 2 reg 0x32 + reg 5 + 4 tune");
+    check(txn_wr(&txns[0], 1, 0x00), "  block starts at reg 0");
     check_hex((txns[0].wr[2] << 8) | txns[0].wr[3], 0x0008, "  reg 0 = 0x0008");
-    check_hex((txns[1].wr[2] << 8) | txns[1].wr[3], 0x1080, "  reg 1 = chip id 0x1080");
-    check_hex((txns[5].wr[2] << 8) | txns[5].wr[3], 0x0a1f, "  reg 5 = 0x0A1F");
-    check(txn_wr(&txns[34], 1, 0x32) && txns[34].wr[2] == 0xa8 && txns[34].wr[3] == 0x3c,
-          "  then reg 0x19 = 0xA83C");
-    check(txn_wr(&txns[35], 1, 0x32) && txns[35].wr[2] == 0xa8 && txns[35].wr[3] == 0xbc,
-          "  then reg 0x19 = 0xA8BC");
-    check(txn_wr(&txns[36], 1, 0x0a) &&
-          ((txns[36].wr[2] << 8) | txns[36].wr[3]) == 0x0a1f,
-          "  then reg 5 = 0x0A1F");
-    check_hex((txns[40].wr[2] << 8) | txns[40].wr[3], 0x80f0,
+    check_hex((txns[0].wr[4] << 8) | txns[0].wr[5], 0x1080, "  reg 1 = chip id 0x1080");
+    check_hex((txns[1].wr[2] << 8) | txns[1].wr[3], 0x285c, "  reg 0x32 = 0x285c");
+    check_hex((txns[2].wr[2] << 8) | txns[2].wr[3], 0x28dc, "  reg 0x32 = 0x28dc");
+    check_hex((txns[3].wr[2] << 8) | txns[3].wr[3], 0x0a1f, "  then reg 5 = 0x0A1F");
+    check_hex((txns[7].wr[2] << 8) | txns[7].wr[3], 0x80f0,
               "  and the 100.0 MHz tune (reg 3 TUNE|240)");
 
     /* Power-down: BK1080_Init0() writes reg 2 = 0x0241. */

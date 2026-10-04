@@ -253,24 +253,14 @@ void bk1080_clear_tune(void)
  * are thin wrappers over `bk1080_read_reg`/`bk1080_write_reg`.  Nothing else in
  * the K1 logic is changed.
  *
- * Note the different register image: the K1's 33-entry table (registers
- * 0x00..0x20 plus two writes to 0x19) replaces the RA89R stock's 68-byte block
- * (registers 0x00..0x21 plus two writes to 0x32).  The K1 image is what the
- * imported app/fm.c expects; the stock image stays available through
- * `bk1080_configure()` for the console `j` bench.  Frequencies are the K1's
- * 100 kHz units (875 = 87.5 MHz).
+ * The K1 driver API is kept as-is, but `BK1080_Init` now applies the **RA89R
+ * stock's** power-up image (`bk1080_configure()`, the 68-byte block plus the
+ * two register-0x32 writes) rather than replaying the K1's 33-entry table.
+ * The K1 table is for the K1's own BK1080 -- it omits the 0x32 writes and its
+ * internal registers (0x19/0x1e/0x20) differ -- and the stock image is the one
+ * this chip was calibrated with (and the one the console `j` validated).
+ * Frequencies are the K1's 100 kHz units (875 = 87.5 MHz).
  * ======================================================================== */
-
-static const uint16_t BK1080_RegisterTable[] =
-{
-    0x0008, 0x1080, 0x0201, 0x0000, 0x40C0, 0x0A1F, 0x002E, 0x02FF,
-    0x5B11, 0x0000, 0x411E, 0x0000, 0xCE00, 0x0000, 0x0000, 0x1000,
-    0x3197, 0x0000, 0x13FF, 0x9852, 0x0000, 0x0000, 0x0008, 0x0000,
-    0x51E1, 0xA8BC, 0x2645, 0x00E4, 0x1CD8, 0x3A50, 0xEAE0, 0x3000,
-    0x0200, 0x0000,
-};
-
-static bool gIsInitBK1080;
 
 uint16_t BK1080_BaseFrequency;
 uint16_t BK1080_FrequencyDeviation;
@@ -282,25 +272,15 @@ void BK1080_Init0(void)
 
 void BK1080_Init(uint16_t freq, uint8_t band)
 {
-    unsigned int i;
-
     if (freq) {
-        if (!gIsInitBK1080) {
-            for (i = 0; i < ARRAY_SIZE(BK1080_RegisterTable); i++)
-                BK1080_WriteRegister((BK1080_Register_t)i, BK1080_RegisterTable[i]);
-
-            SYSTEM_DelayMs(250);
-
-            BK1080_WriteRegister(BK1080_REG_25_INTERNAL, 0xA83C);
-            BK1080_WriteRegister(BK1080_REG_25_INTERNAL, 0xA8BC);
-
-            SYSTEM_DelayMs(60);
-
-            gIsInitBK1080 = true;
-        }
-        else {
-            BK1080_WriteRegister(BK1080_REG_02_POWER_CONFIGURATION, 0x0201);
-        }
+        /* Apply the RA89R's own power-up image (`FUN_08007124`): the 68-byte
+         * vendor block plus the two register-0x32 writes.  This is the image
+         * the stock configures *this* BK1080 with, and the one the console `j`
+         * validated on the radio.  The K1's 33-entry table is for the K1's own
+         * BK1080: it omits the register-0x32 writes and its internal registers
+         * (0x19/0x1e/0x20) differ, so replaying it here is the likely cause of
+         * the FM feature's poor sensitivity.  See docs/ra89r_bk1080.md. */
+        bk1080_configure();
 
         #ifdef ENABLE_FEAT_F4HWN
             BK1080_WriteRegister(BK1080_REG_05_SYSTEM_CONFIGURATION2, gMute ? 0x0A10 : 0x0A1F);
