@@ -92,6 +92,8 @@ typedef enum {
     BT_EV_EAR_PTT_UP,       /* "+IM_EAR_PTT_KEYUP" */
     BT_EV_BLE_LOCAL,        /* "+IM_BLE_LOCAL<v>"   -- BLE address/name */
     BT_EV_BT_LOCAL,         /* "+IM_BT_LOCAL<v>"    -- BT address/name */
+    BT_EV_EAR_SIDE_SINGLE,  /* "+IM_EAR_SIDE_SINGLE1" -- earpiece button click */
+    BT_EV_EAR_VOL,          /* "+IM_EAR_VOL=<n>"    -- earpiece volume */
 } bt_event_t;
 
 /* The exact string the stock sends for a fixed command, or NULL for the five

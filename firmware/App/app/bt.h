@@ -57,9 +57,12 @@ unsigned    bt_found_count(void);
 const char *bt_found_dev(unsigned i);   /* the device's address/name text */
 void        bt_connect_dev(unsigned i); /* AT+EAR_CONN=<device> */
 
-/* The earpiece's PTT button (`+IM_EAR_PTT_KEYDOWN/UP`); tx.c keys the
- * transmitter while it is held. */
+/* The earpiece's PTT button (`+IM_EAR_PTT_KEYDOWN/UP` or the earpiece's own
+ * `+IM_EAR_SIDE_SINGLE1` click); tx.c keys the transmitter while it is set. */
 bool        bt_ptt_down(void);
+
+/* The name of the device we connected, or "None". */
+const char *bt_linked_name(void);
 bt_state_t bt_state(void);
 const char *bt_version(void);
 const char *bt_local_addr(void);

@@ -32,6 +32,8 @@ static unsigned   s_ticks;
 
 static bool       s_connected;
 static bool       s_ptt_down;   /* the earpiece's PTT button */
+static bool       s_call_on;    /* AT+BT_CALL=ON has been sent (SCO up) */
+static char       s_linked_name[24];  /* the device we connected */
 static unsigned   s_retries;    /* PD0 re-pulses while waiting for +IM_READY */
 
 /* Devices the module reported as `+IM_EARDEV` since the scan started.  The
@@ -212,14 +214,29 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
         s_connected = true;
         if (s_state == BT_STATE_SCAN || s_state == BT_STATE_CONNECT)
             s_state = BT_STATE_CONNECTED;
+        /* Open the audio (SCO) link, as the stock does (`FUN_08007540`):
+         * without it the radio's audio does not reach the earpiece and its
+         * button is not reported. */
+        if (!s_call_on) {
+            s_call_on = true;
+            bluetooth_send_cmd(BT_CMD_BT_CALL_ON);
+        }
         break;
 
     case BT_EV_BT_DISCONNECT:
     case BT_EV_SCO_DISCONNECT:
     case BT_EV_CALL_DISCONNECTED:
         s_connected = false;
+        if (s_call_on) {
+            s_call_on = false;
+            bluetooth_send_cmd(BT_CMD_BT_CALL_OFF);
+        }
         if (s_state == BT_STATE_CONNECTED)
             s_state = BT_STATE_IDLE;
+        break;
+
+    case BT_EV_EAR_SIDE_SINGLE:         /* the earpiece's button */
+        s_ptt_down = !s_ptt_down;       /* a click toggles transmit */
         break;
 
     case BT_EV_BT_SCAN_STOP:            /* scan finished */
@@ -385,8 +402,17 @@ const char *bt_found_dev(unsigned i)
 
 void bt_connect_dev(unsigned i)
 {
-    if (i < s_found_n)
-        bluetooth_send_param(BT_CMD_EAR_CONN, s_found[i]);
+    if (i >= s_found_n)
+        return;
+
+    strncpy(s_linked_name, bt_found_dev(i), sizeof s_linked_name - 1u);
+    s_linked_name[sizeof s_linked_name - 1u] = '\0';
+    bluetooth_send_param(BT_CMD_EAR_CONN, s_found[i]);
+}
+
+const char *bt_linked_name(void)
+{
+    return (s_linked_name[0] != '\0') ? s_linked_name : "None";
 }
 
 bt_state_t bt_state(void)

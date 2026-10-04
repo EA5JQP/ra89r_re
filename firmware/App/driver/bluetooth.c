@@ -133,6 +133,8 @@ static const struct bt_event_spec bt_events[] = {
     { "+IM_EAR_PTT_KEYUP",  BT_EV_EAR_PTT_UP,       0 },
     { "+IM_BLE_LOCAL",      BT_EV_BLE_LOCAL,        1 },
     { "+IM_BT_LOCAL",       BT_EV_BT_LOCAL,         1 },
+    { "+IM_EAR_SIDE_SINGLE1", BT_EV_EAR_SIDE_SINGLE, 0 },
+    { "+IM_EAR_VOL=",       BT_EV_EAR_VOL,          1 },
 };
 
 bt_event_t bt_parse_line(const char *line, unsigned len,

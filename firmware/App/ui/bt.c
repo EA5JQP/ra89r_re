@@ -84,7 +84,7 @@ static const char *bt_item_value(unsigned index, char *buf, unsigned cap)
             return "Linked";
         return bt_state() == BT_STATE_SCAN ? "Scan" : "";
     case 2:
-        return bt_connected() ? "Linked" : "None";
+        return bt_connected() ? bt_linked_name() : "None";
     case 3:
         sprintf(buf, "%u", (unsigned)gEeprom.BT_HoldTime);
         return buf;

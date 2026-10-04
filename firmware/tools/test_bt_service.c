@@ -167,6 +167,12 @@ int main(void)
     bt_service_event(BT_EV_EAR_PTT_UP, NULL, 0);
     check(!bt_ptt_down(), "EAR_PTT_KEYUP -> up");
 
+    /* The earpiece's own button click (`+IM_EAR_SIDE_SINGLE1`) toggles it. */
+    bt_service_event(BT_EV_EAR_SIDE_SINGLE, NULL, 0);
+    check(bt_ptt_down(), "EAR_SIDE_SINGLE toggles PTT on");
+    bt_service_event(BT_EV_EAR_SIDE_SINGLE, NULL, 0);
+    check(!bt_ptt_down(), "EAR_SIDE_SINGLE toggles PTT off");
+
     printf("\n%d failed\n", fails);
     return fails ? 1 : 0;
 }
