@@ -777,6 +777,17 @@ static void MAIN_Key_EXIT(bool bKeyPressed, bool bKeyHeld)
 
 static void MAIN_Key_MENU(bool bKeyPressed, bool bKeyHeld)
 {
+    /* F + MENU opens the Bluetooth menu; MENU alone still opens the main menu,
+     * so the two paths never both fire. */
+    if (gWasFKeyPressed) {
+        if (!bKeyPressed) {          /* MENU released while F is held */
+            gWasFKeyPressed = false;
+            HideFKeyIcon();
+            gRequestDisplayScreen = DISPLAY_BT;
+        }
+        return;
+    }
+
     if (bKeyPressed && !bKeyHeld) // menu key pressed
         gBeepToPlay = BEEP_1KHZ_60MS_OPTIONAL;
 

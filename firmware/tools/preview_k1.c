@@ -34,6 +34,8 @@
 #include "driver/py25q16.h"
 #include "ui/menu.h"
 #include "ui/status.h"
+#include "ui/bt.h"
+#include <string.h>
 
 /* State assertions this preview checks (the panel rendering is eyeballed). */
 static int failures;
@@ -537,6 +539,40 @@ int main(void)
                ok ? "ok  " : "FAIL",
                host_beeper_plays_path_on(), host_beeper_play_count());
         if (!ok) failures++;
+    }
+
+    /* The Bluetooth menu: its own screen (F + MENU), so the main menu stays
+     * short.  The item table is the stock's nine entries.  Run last: pressing
+     * keys changes the backlight countdown the checks above rely on. */
+    {
+        bool ok;
+        unsigned int i;
+
+        gScreenToDisplay      = DISPLAY_MAIN;
+        gRequestDisplayScreen = DISPLAY_INVALID;
+        for (i = 0; i < 4u; i++)        /* let the app settle on DISPLAY_MAIN */
+            step();
+        gWasFKeyPressed       = true;
+        gKeyInputCountdown    = key_input_timeout_500ms;
+        press(KEY_MENU);
+
+        ok = (gScreenToDisplay == DISPLAY_BT);
+        printf("\n[bt] %s F+MENU -> screen %u (DISPLAY_BT = %u, not DISPLAY_MENU)\n",
+               ok ? "ok  " : "FAIL", (unsigned)gScreenToDisplay,
+               (unsigned)DISPLAY_BT);
+        if (!ok) failures++;
+
+        ok = (BT_MenuCount() == 9u) &&
+             (strcmp(BT_MenuName(0), "BT Switch") == 0);
+        printf("[bt] %s menu has %u items, first '%s'\n",
+               ok ? "ok  " : "FAIL", BT_MenuCount(), BT_MenuName(0));
+        if (!ok) failures++;
+
+        gScreenToDisplay = DISPLAY_BT;
+        UI_DisplayBT();
+        render("UI_DisplayBT(): the Bluetooth menu");
+        for (i = 0; i < BT_MenuCount(); i++)
+            (void)BT_MenuName(i);
     }
 
     printf("\n%d failures\n", failures);

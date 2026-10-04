@@ -38,6 +38,7 @@
 #include "ui/menu.h"
 #include "ui/scanner.h"
 #include "ui/ui.h"
+#include "ui/bt.h"
 #include "../misc.h"
 
 GUI_DisplayType_t gScreenToDisplay;
@@ -52,6 +53,7 @@ void (*const UI_DisplayFunctions[])(void) = {
     [DISPLAY_MAIN] = &UI_DisplayMain,
     [DISPLAY_MENU] = &UI_DisplayMenu,
     [DISPLAY_SCANNER] = &UI_DisplayScanner,
+    [DISPLAY_BT] = &UI_DisplayBT,
 
 #ifdef ENABLE_FMRADIO_EMBEDDED
     [DISPLAY_FM] = &UI_DisplayFM,
