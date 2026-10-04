@@ -336,6 +336,7 @@ typedef struct {
 void     SETTINGS_InitEEPROM(void);
 void     SETTINGS_LoadCalibration(void);
 void     SETTINGS_FixupVfoPointers(void);
+bool     SETTINGS_BluetoothSpeakerSwitch(void);
 
 uint32_t SETTINGS_FetchChannelFrequency(const uint16_t channel);
 bool     SETTINGS_FetchChannelScanInfo(const uint16_t channel, uint32_t *frequency, ModulationMode_t *modulation);

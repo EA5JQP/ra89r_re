@@ -10,6 +10,9 @@
 
 #include <string.h>
 
+#include "driver/audio_path.h"
+#include "driver/pa.h"
+
 #define BT_QUEUE_MAX    8u
 #define BT_RESET_TICKS  200u    /* 2 s at the 10 ms tick */
 #define BT_RESET_RETRIES 5u     /* re-pulse PD0 and listen again, like the stock */
@@ -31,10 +34,11 @@ static unsigned   s_qidx;
 static unsigned   s_ticks;
 
 static bool       s_connected;
+static bool       s_bt_linked;       /* link state, independent of SCO call state */
 static bool       s_ptt_down;   /* the earpiece's PTT button */
 static bool       s_call_on;    /* AT+BT_CALL=ON has been sent (SCO up) */
-static uint8_t    s_mic_gain;   /* the levels to (re)send with the call */
-static uint8_t    s_spk_gain;
+static bool       s_speaker_switch;
+static bool       s_pa_bt_audio_on;
 static char       s_linked_name[24];  /* the device we connected */
 static unsigned   s_retries;    /* PD0 re-pulses while waiting for +IM_READY */
 
@@ -52,6 +56,27 @@ static unsigned   s_found_n;
  * speaker); the level is an index into these. */
 static const char *const bt_mic_gain_str[] = { "0", "5", "6", "7", "8" };
 static const char *const bt_spk_gain_str[] = { "0", "4", "8", "16", "23", "31" };
+
+/* Stock FUN_080177A8 drives PC13 high unless BT is enabled and an earpiece is
+ * linked; in that state PC13 follows the stock/CPS Speak Switch setting.  The
+ * chip output is controlled separately by FUN_08015D44 through BK4829 0x33. */
+static void update_stock_audio_paths(void)
+{
+    const bool linked = s_enabled && s_bt_linked;
+    const bool pc13_high = !linked || s_speaker_switch;
+
+    audio_path_drive(pc13_high ? 1 : 0);
+    if (linked != s_pa_bt_audio_on) {
+        pa_set_bt_audio(linked);
+        s_pa_bt_audio_on = linked;
+    }
+}
+
+void bt_set_speaker_switch(bool enabled)
+{
+    s_speaker_switch = enabled;
+    update_stock_audio_paths();
+}
 
 /* Copy the second comma-separated field (the device name) out of an
  * `+IM_EARDEV` payload. */
@@ -219,24 +244,35 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
     case BT_EV_SCO_CONN:                /* audio link up */
     case BT_EV_CALL_CONNECTED:
         s_connected = true;
+        s_bt_linked = true;
         if (s_state == BT_STATE_SCAN || s_state == BT_STATE_CONNECT)
             s_state = BT_STATE_CONNECTED;
+        update_stock_audio_paths();
         /* Open the audio (SCO) link, as the stock does (`FUN_08007540`):
          * without it the radio's audio does not reach the earpiece and its
          * button is not reported. */
         if (!s_call_on) {
             s_call_on = true;
             bluetooth_send_cmd(BT_CMD_BT_CALL_ON);
-            /* The stock sets the gains with the call too (`FUN_080075A0`). */
-            bluetooth_send_param(BT_CMD_MICGAIN, bt_mic_gain_str[s_mic_gain]);
-            bluetooth_send_param(BT_CMD_SPKGAIN, bt_spk_gain_str[s_spk_gain]);
         }
         break;
 
     case BT_EV_BT_DISCONNECT:
+        s_connected = false;
+        s_bt_linked = false;
+        update_stock_audio_paths();
+        if (s_call_on) {
+            s_call_on = false;
+            bluetooth_send_cmd(BT_CMD_BT_CALL_OFF);
+        }
+        if (s_state == BT_STATE_CONNECTED)
+            s_state = BT_STATE_IDLE;
+        break;
+
     case BT_EV_SCO_DISCONNECT:
     case BT_EV_CALL_DISCONNECTED:
         s_connected = false;
+        update_stock_audio_paths();
         if (s_call_on) {
             s_call_on = false;
             bluetooth_send_cmd(BT_CMD_BT_CALL_OFF);
@@ -308,6 +344,10 @@ void bt_set_enabled(bool on)
 #endif
         s_state = BT_STATE_RESET;
     } else {
+        s_connected = false;
+        s_bt_linked = false;
+        s_ptt_down = false;
+        s_call_on = false;
         bluetooth_send_cmd(BT_CMD_BT_DISCN);
         queue_clear();
 #ifndef BLUETOOTH_HOST_TEST
@@ -315,6 +355,7 @@ void bt_set_enabled(bool on)
 #endif
         s_state = BT_STATE_OFF;
     }
+    update_stock_audio_paths();
 }
 
 bool bt_enabled(void)
@@ -355,18 +396,14 @@ void bt_set_scan(bool on)
 
 void bt_set_spk_gain(uint8_t level)
 {
-    if ((unsigned)level >= bt_spk_gain_levels())
-        return;
-    s_spk_gain = level;
-    bluetooth_send_param(BT_CMD_SPKGAIN, bt_spk_gain_str[level]);
+    if ((unsigned)level < bt_spk_gain_levels())
+        bluetooth_send_param(BT_CMD_SPKGAIN, bt_spk_gain_str[level]);
 }
 
 void bt_set_mic_gain(uint8_t level)
 {
-    if ((unsigned)level >= bt_mic_gain_levels())
-        return;
-    s_mic_gain = level;
-    bluetooth_send_param(BT_CMD_MICGAIN, bt_mic_gain_str[level]);
+    if ((unsigned)level < bt_mic_gain_levels())
+        bluetooth_send_param(BT_CMD_MICGAIN, bt_mic_gain_str[level]);
 }
 
 /* Pairing: the stock's Pairing item queues `AT+BT_SCAN=ON`; the module then

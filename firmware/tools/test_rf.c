@@ -23,6 +23,10 @@
 #include "driver/pa.h"
 #include "driver/rf_bus.h"
 
+/* Added with the stock-compatible BT GPIO implementation. */
+extern void pa_set_bt_audio(bool on);
+extern bool pa_bt_audio(void);
+
 /* The GPIO/timer scratch the host device-header double points at.  This test
  * does not link tools/host/host_hw.c, so it supplies its own.  `pa_init()` is
  * never called, so `RCC`'s null pointer is never dereferenced. */
@@ -381,11 +385,7 @@ static void test_k1_interface(void)
           "with the driver's gains packed in ((11<<12)|(5<<4)|3)");
 }
 
-/* The RX path must not clobber register 0x33.  BK4819_Init() leaves the
- * driver's output shadow at 0x9000; a receive select is a read-modify-write on
- * top of it (the stock's FUN_080137D4 reads 0x33 back before masking), not a
- * fresh 0x04/0x00.  This is the regression that stopped 0x67 following a
- * carrier. */
+/* Record the last BK4829 write to 0x33. */
 static uint16_t last_reg33(void)
 {
     unsigned i;
@@ -402,24 +402,25 @@ static void test_pa_rx_path(void)
 
     /* The BK4829's own receive state clears both LNA pins (the stock's BK4829
      * branch, FUN_08016DE8 -> FUN_080137D4(0x10, 0)); pin 4 is the BK4815
-     * branch's.  The 0x9000 bits BK4819_Init() set must survive. */
+     * branch's.  It also runs the stock BT-pin-off update, clearing paired bit
+     * 0x1000 from the driver's 0x9000 init word. */
     log_reset();
     BK4819_Init();
     log_reset();
     pa_select_band(14550000u);
-    check_hex(last_reg33(), 0x9000, "VHF receive clears both LNA pins, keeps 0x9000");
+    check_hex(last_reg33(), 0x8000, "VHF RX applies stock pin-2-off pair clear");
 
     log_reset();
     BK4819_Init();
     log_reset();
     pa_select_band(44600625u);
-    check_hex(last_reg33(), 0x9000, "UHF receive clears both LNA pins, keeps 0x9000");
+    check_hex(last_reg33(), 0x8000, "UHF RX applies stock pin-2-off pair clear");
 
     log_reset();
     BK4819_Init();
     log_reset();
     pa_select_band(11800000u);      /* 118.0 MHz */
-    check_hex(last_reg33(), 0x9000, "118 MHz receive clears both LNA pins, keeps 0x9000");
+    check_hex(last_reg33(), 0x8000, "118 MHz RX applies stock pin-2-off pair clear");
 }
 
 /* The K1's power ladder reaches 0x36 (its SetupPowerAmplifier) and, with the
@@ -434,7 +435,7 @@ static void test_pa_tx_path(void)
     log_reset();
     pa_select_band(14550000u);
     pa_tx_enable(0x40u);
-    check_hex(pa_last_reg33(), 0x0042u, "VHF TX: band pin 0x40 + T/R 0x02");
+    check_hex(pa_last_reg33(), 0x8042u, "VHF TX: stock base + band pin + T/R; BT pin off");
     check_hex(pa_last_reg36(), 0x4088u, "VHF TX: 0x36 = (0x40<<8) | PA-CTL | gain 0x08");
     check_hex(pa_last_compare(), (0x40u * PA_PWM_ARR) / 255u,
               "VHF TX: PWM compare = power*ARR/255");
@@ -445,9 +446,35 @@ static void test_pa_tx_path(void)
     log_reset();
     pa_select_band(44600625u);
     pa_tx_enable(0xFFu);
-    check_hex(pa_last_reg33(), 0x0022u, "UHF TX: band pin 0x20 + T/R 0x02");
+    check_hex(pa_last_reg33(), 0x8022u, "UHF TX: stock base + band pin + T/R; BT pin off");
     check_hex(pa_last_reg36(), 0xFFA2u, "UHF TX: 0x36 = (0xFF<<8) | PA-CTL | gain 0x22");
     check_hex(pa_last_compare(), PA_PWM_MAX_DUTY, "UHF TX: full power clamps the compare");
+}
+
+/* The stock's FUN_080137D4(mask=4, value=4) drives GPIO2 by clearing both
+ * 0x0010 (output) and its paired 0x1000 configuration bit, then setting the
+ * output when requested.  The port must do this without replacing the rest of
+ * the PA/band register. */
+static void test_pa_bt_audio(void)
+{
+    printf("pa BT audio GPIO (stock 0x33 paired bit)\n");
+
+    log_reset();
+    BK4819_Init();
+    pa_select_band(14550000u);
+    BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, true);
+    pa_set_bt_audio(true);
+    check(pa_bt_audio(), "BT link state retained");
+    check_hex(last_reg33(), 0x8050u, "BT on clears paired 0x1000, sets output 0x0010");
+
+    log_reset();
+    pa_tx_enable(0x40u);
+    check_hex(pa_last_reg33(), 0x8052u, "VHF TX preserves BT output and stock paired-bit clear");
+
+    log_reset();
+    pa_set_bt_audio(false);
+    check(!pa_bt_audio(), "BT disconnect state retained");
+    check_hex(last_reg33(), 0x8042u, "BT off clears output, keeps band/T-R and paired-bit state");
 }
 
 int main(void)
@@ -462,6 +489,7 @@ int main(void)
     test_k1_interface();
     test_pa_rx_path();
     test_pa_tx_path();
+    test_pa_bt_audio();
 
     printf("\n%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

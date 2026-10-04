@@ -513,7 +513,7 @@ for Jieli's own YBT100 documentation, not for this image.
 The module identifies itself as **`RETEVIS RA89R(BT)`** at `11:C3:EF:CD:DF:5A`
 (classic) and **`RETEVIS RA89R`** at `10:C3:EF:CD:DF:5A` (BLE).
 
-## The BT audio path (what the stock does; the mic side is still open)
+## The BT audio path (stock behavior and port regression check)
 
 When an earpiece connects, the stock:
 
@@ -525,23 +525,58 @@ When an earpiece connects, the stock:
   `0x2000`), the audio-path/amplifier enable, gated on the BT bool and the
   connection state.
 
-On the radio, `AT+BT_CALL=ON` is enough for the **radio's receive audio to reach
-the earpiece** (heard on the device).  The reverse -- the earpiece's mic reaching
-the radio's **transmit** -- does not work yet: the radio still samples its own
-mic at the BK4829's mic ADC (`0x30` bit 2).  The module's analog output (the SCO
-audio, where the earpiece mic appears) is where that would come from, but where
-that pin lands on this board is not in the firmware -- the stock only sets the
-module's internal gains.  If it is summed into the BK4829's mic node the two
-would mix; if it is routed elsewhere (or through a switch) it needs a board
-probe.  The port sends `AT+BT_CALL=ON` and the gains on connect, matching the
-stock.
+The first radio-tested port sequence (commit `0cc3de0`) sent only
+`AT+BT_CALL=ON` on connect and `AT+BT_CALL=OFF` on disconnect; receive audio
+from the radio was heard in the earpiece.  Commit `0bfe0cc` later added
+`AT+MICGAIN` and `AT+SPKGAIN` sends at startup and immediately after
+`AT+BT_CALL=ON`.  After the later `0x33` experiment was reverted and that
+reverted firmware was flashed, the user still reported no BT receive audio.
+The current diagnostic candidate therefore returns SCO setup to the earlier
+CALL-only sequence and does not automatically write either module gain at boot
+or connection.  The BT menu's explicit gain controls still send their selected
+AT commands.  This isolates the gain writes as the remaining software change
+after the known-working sequence; the candidate still needs radio validation.
+
+For transmit, the user confirms the stock silences the radio's own mic while in
+BT mode, and ordinary port TX currently still uses the radio mic.  The earpiece
+mic route is therefore still open.  The BK4829 mic ADC (`0x30` bit 2) experiment
+was tried and reverted: it did not select the earpiece mic.
+
+Two more route tests/findings:
+
+- The user toggled **PC13** high/low with console `C` and saw no change in mic
+  behavior. PC13 is therefore not established as the mic-source selector; its
+  stock `FUN_080177A8` behavior is tied to BT connection and the CPS speaker
+  switch, but its destination remains unknown. The port mirrors that level
+  policy from codeplug byte 9 bit 5; this is not claimed as the mic fix.
+- The earlier port `g` test of BK4829 `0x33` pin 2 was **not stock-equivalent**.
+  The stock's `FUN_080137D4(mask=4, value=4)` clears both output bit `0x0010`
+  and its paired configuration bit `0x1000`, whereas the imported K1
+  `BK4819_ToggleGpioOut()` changed only `0x0010`.  Thus the observed port
+  `0x9040 -> 0x9050` did not reproduce the stock's `0x8040 -> 0x8050` transition.
+  The attempted implementation also overwrote the whole `0x33` word in TX and
+  broke TX; it was reverted. The port now uses a separate stock-semantic masked
+  write for pin 2 and preserves it across TX/RX `0x33` writes. This restores the
+  stock state transition but is still **not validated as a mic route** on the
+  radio.
+
+The stock's normal TX mic-gain writer is `FUN_0801C3A8` (`0x40`), whose value
+comes from `FUN_08020190`; that path has no BT-connected or `config[0x3a]`
+selection.  A separate UART binary-control mode can write a mic-gain override
+at `0x2000A428` (`FUN_0801E1E0`, message type `0x20`), but there is not yet
+evidence that this mode is entered for BT audio. The earpiece-mic route still
+needs its control traced. The PC13/`0x33` restoration is for stock parity only,
+not a claim that either line routes the earpiece mic.
 
 ## Open
 
-1. **Port integration.**  The service, the F+MENU `DISPLAY_BT` screen and the
-   settings are in, and the link reaches `Ready` on the radio.  Still open:
-   pairing per-device pick (needs the binary `+IM_EARDEV` record), the paired
-   list persistence, and the earpiece PTT/audio (phases 2-4 of the design).
+1. **Port integration.** The service, the F+MENU `DISPLAY_BT` screen and the
+   settings are in, and the link reaches `Ready` on the radio. The earlier
+   CALL-only sequence receives radio audio in the earpiece; automatic gain
+   writes remain disabled. The port now mirrors stock PC13 and BK4829 pin-2
+   control, pending radio validation. Earpiece TX mic routing remains open
+   (stock silences the radio mic in BT mode). Pairing per-device pick and
+   paired-list persistence also remain open.
 2. **The binary `RDTP` protocol.**  Frame layout, the meaning of the
    `fe fe ee ef` prefix, and the opcode list are open; the opcodes are only known
    from the two dispatch sites.

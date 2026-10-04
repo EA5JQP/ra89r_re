@@ -102,6 +102,9 @@ int16_t  BK4819_GetRSSI_dBm(void) { return -120; }
 /* More of the same: the menu's action path calls these, and the host compiles
  * no audio engine and no GPIO driver. */
 void BK4819_ToggleGpioOut(BK4819_GPIO_PIN_t pin, bool enable) { (void)pin; (void)enable; }
+/* BT audio-path hardware is not present in the screen/key preview. */
+void audio_path_drive(int on) { (void)on; }
+void pa_set_bt_audio(bool on) { (void)on; }
 
 
 /* Leftovers of the menu/battery path in the host build (their owners are the

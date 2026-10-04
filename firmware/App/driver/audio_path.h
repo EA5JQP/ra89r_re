@@ -5,15 +5,15 @@
  * `AUDIO_AudioPathOff()`, and the port replaces those two macros with the
  * callback this module provides (see `BK4819_SetAudioPathCallback`).
  *
- * On this board the line is `PC13`.  What is established: the stock *raises* it
- * from its T/R path (`FUN_080177A8`, gated by two codeplug bits, both clear on
- * this radio, so it takes the unconditional high branch) while its RF bring-up
- * clears it (`FUN_08009C9C`); receive audio is audible with it high; and
- * dropping it during a transmission did not change what a second receiver heard.
+ * On this board the line is `PC13`.  The stock drives it high while BT is off or
+ * unlinked; while linked it follows codeplug settings byte 9 bit 5 (Speak
+ * Switch) in `FUN_080177A8`.  This radio's bit is clear, so stock drives PC13 low
+ * while a BT earpiece is linked.  Its destination is not identified; a radio test
+ * toggled it without changing microphone behavior.
  *
  * What is *not* established is what it switches -- an amplifier enable, an
- * analogue path switch or something else entirely -- so this driver asserts it
- * the way the working bench did and nothing more is read into it.  See
+ * analogue path switch or something else entirely -- so the driver mirrors only
+ * the stock's observed level policy and does not treat it as a proven mic route. See
  * `docs/ra89r_rffeatures.md` and `docs/ra89r_led.md`.
  */
 #ifndef DRIVER_AUDIO_PATH_H

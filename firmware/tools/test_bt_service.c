@@ -18,6 +18,14 @@
 #include "app/bt.h"
 #include "driver/bluetooth.h"
 
+extern void bt_set_speaker_switch(bool enabled);
+
+static int host_audio_path = 1;
+static int host_bt_rf_path;
+
+void audio_path_drive(int on) { host_audio_path = on != 0; }
+void pa_set_bt_audio(bool on) { host_bt_rf_path = on ? 1 : 0; }
+
 #define MAX_CMDS 40
 static char     rec[MAX_CMDS][64];
 static unsigned rec_n;
@@ -172,6 +180,41 @@ int main(void)
     check(bt_ptt_down(), "EAR_SIDE_SINGLE toggles PTT on");
     bt_service_event(BT_EV_EAR_SIDE_SINGLE, NULL, 0);
     check(!bt_ptt_down(), "EAR_SIDE_SINGLE toggles PTT off");
+
+    /* Regression check against the earlier radio-tested audio sequence
+     * (commit 0cc3de0): opening SCO sends BT_CALL only.  The later gain writes
+     * are a separate behavior change and must not be bundled into SCO setup. */
+    rec_reset();
+    bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
+    check(rec_n == 1u && rec_is(0, "AT+BT_CALL=ON\r\n"),
+          "earpiece connect opens SCO without changing module gains");
+    rec_reset();
+    bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
+    check(rec_n == 1u && rec_is(0, "AT+BT_CALL=OFF\r\n"),
+          "earpiece disconnect closes SCO");
+
+    /* Stock FUN_080177A8: PC13 follows the Speak Switch setting only while
+     * BT is enabled and linked; chip pin 2 follows the BT link itself. */
+    bt_set_speaker_switch(false);
+    check(host_audio_path == 1, "PC13 idles high before the BT link");
+    bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
+    check(host_audio_path == 0, "Speak Switch off drives PC13 low while linked");
+    check(host_bt_rf_path == 1, "BT link sets the stock chip audio output");
+    bt_service_event(BT_EV_SCO_DISCONNECT, NULL, 0);
+    check(host_audio_path == 0 && host_bt_rf_path == 1,
+          "SCO loss alone keeps BT-link-controlled stock paths active");
+    bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
+    check(host_audio_path == 1, "PC13 returns high after BT disconnect");
+    check(host_bt_rf_path == 0, "BT disconnect clears the stock chip audio output");
+
+    bt_set_speaker_switch(true);
+    bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
+    check(host_audio_path == 1, "Speak Switch on keeps PC13 high while linked");
+    bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
+    bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
+    bt_set_enabled(false);
+    check(host_audio_path == 1 && host_bt_rf_path == 0,
+          "disabling BT restores PC13 and clears the chip BT output");
 
     printf("\n%d failed\n", fails);
     return fails ? 1 : 0;

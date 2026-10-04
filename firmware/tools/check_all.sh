@@ -28,6 +28,12 @@ $CC -std=c11 -Wall -Wextra -I App -I App/driver -DBLUETOOTH_HOST_TEST \
     -o /tmp/ra89r_test_bt_service
 /tmp/ra89r_test_bt_service | tail -2
 
+echo "== test_rf (register paths, including stock BT pin semantics) =="
+$CC -std=c11 -I tools/host -I App -I App/driver tools/test_rf.c \
+    App/driver/bk4829.c App/driver/bk4815.c App/driver/bk4819.c \
+    App/driver/pa.c tools/host/host_led.c -o /tmp/ra89r_test_rf
+/tmp/ra89r_test_rf | tail -3
+
 echo "== preview_k1 (screens + keys + settings, on a PC) =="
 $CC $HOST_FLAGS -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
     -DBLUETOOTH_HOST_TEST \

@@ -162,11 +162,11 @@
  * (`FUN_08005F90` for PA13, `FUN_0800656C`/`FUN_08006070`/`FUN_08019C58` for PA14)
  * are blinks, which is what an indicator driver looks like.
  *
- * `PC13` is the separate, static line: `FUN_080177A8` raises it and its
- * `config+0x38` gate is 0 on this codeplug, so it is held HIGH.  That is the
- * remaining candidate for the audio-path/amplifier enable, and it is what the
- * K1-driver callback drives. */
-#define AUDIO_PATH_PIN       (1u << 13)   /* PC13 -- amplifier enable candidate, held HIGH */
+ * `PC13` is the separate audio-path line: `FUN_080177A8` holds it HIGH while
+ * BT is off/unlinked; while an earpiece is linked it follows the codeplug's
+ * Speak Switch (settings byte 9 bit 5).  This radio's switch is off, so stock
+ * drives PC13 LOW while linked.  Its physical destination is still unknown. */
+#define AUDIO_PATH_PIN       (1u << 13)   /* PC13 -- stock BT/T-R audio-path control */
 
 /* The PA power/bias is a PWM, not a register: the stock's "Pow AdjData" path
  * (FUN_08016A2C -> FUN_0801830C -> FUN_0801BDE8 -> FUN_08018A88 -> FUN_080167B4

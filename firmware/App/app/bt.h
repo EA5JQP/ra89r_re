@@ -36,6 +36,9 @@ void bt_service_tick(void);
 void bt_service_event(bt_event_t ev, const char *payload, unsigned len);
 
 void       bt_set_enabled(bool on);
+/* Stock codeplug setting byte 9 bit 5 (Speak Switch), used for the PC13 level
+ * only while BT is enabled and an earpiece is linked. */
+void       bt_set_speaker_switch(bool enabled);
 bool       bt_enabled(void);
 void       bt_set_mode(uint8_t mode);        /* 0 = emitter, 1 = receiver */
 void       bt_set_name(const char *name);    /* NULL/"" = unset */

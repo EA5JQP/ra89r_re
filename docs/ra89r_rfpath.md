@@ -283,7 +283,7 @@ in the image:
 |---|---|---|---|---|
 | `0x40` | `1` | `FUN_0801BDE8` | `(3,1)` | **TX band 0 (VHF)** |
 | `0x20` | `2` | `FUN_0801BDE8` | `(3,2)` | **TX band 1/2 (UHF)** |
-| `0x10` | `4` | `FUN_08005638` / `FUN_08015D44` / `FUN_08004E20` | `(4,4)` / `(4,0)` | tone/CTCSS, plus a config-gated case |
+| `0x10` | `4` | `FUN_08005638` / `FUN_08015D44` / `FUN_08004E20` | `(4,4)` / `(4,0)` | tone/CTCSS path and BT-linked state (`BT enabled && connected`); audio/mic role still unproven |
 | `0x08` | `8` | `FUN_0800D35C` / `FUN_0800D434` | `(8,8)` / `(8,0)` | band byte `0x20003EE4` |
 | `0x04` | `0x10` | `FUN_08016CEC` / `FUN_08016DE8` | `(0x10,0x10)` / `(0x10,0)` | **BK4815 branch** (> 134 MHz) / **BK4829 branch** (<= 134 MHz) |
 | `0x02` | `0x20` | `FUN_08013A70` / `FUN_08013B12` | `(0x20,0x20)` / `(0x20,0)` | **T/R (PA enable)** |
@@ -292,6 +292,11 @@ in the image:
 **Only `FUN_0801BDE8` sets pins 0/1**, and it is reached only from the transmit
 start (`FUN_08016A2C` → `FUN_0801830C` → `FUN_0801BDE8`, the "Pow AdjData"
 routine).  It is the **TX path pair**:
+
+For every masked pin `n`, `FUN_080137D4` also clears configuration bit `14-n`
+in addition to output bit `0x40 >> n`.  In particular, pin 2's stock BT action
+clears `0x1000` and controls `0x0010`; the K1-compatible `BK4819_ToggleGpioOut`
+does not clear the paired bit, so it is not a substitute for this stock helper.
 
 * `band == 0` (VHF) → `FUN_080137D4(3, 1)` → **`0x40`**
 * `band == 1 or 2` (250 M / UHF) → `FUN_080137D4(3, 2)` → **`0x20`**

@@ -483,11 +483,10 @@ static void rf_report(void)
 /* The K1 firmware's audio path is a GPIO of its own -- `GPIO_PIN_AUDIO_PATH` =
  * PA8 on that board, driven HIGH to enable through `AUDIO_AudioPathOn()` -- and
  * that is the call this port replaced with a callback.  On this board the line
- * the stock holds asserted is PC13 (`FUN_080177A8` raises it and its
- * `config+0x38` gate is 0 on this codeplug, so it stays HIGH), which leaves PC13
- * as the amplifier-enable candidate.  It is a *static* line: nothing in the
- * squelch path touches it, so `C` inverts it and the speaker can be listened to
- * with the line both ways.
+ * is PC13 (`FUN_080177A8`): stock holds it high while BT is off/unlinked and
+ * follows the codeplug Speak Switch while linked (low on this radio).  Its
+ * physical destination is not established; `C` manually toggles it for
+ * comparison, and the user's mic test saw no change.
  *
  * PA13/PA14 are *not* this line: they are the status LED (PA13 red, PA14 green,
  * both active high -- measured), which lives in `driver/led.c` behind the
@@ -499,9 +498,9 @@ static void audio_path_toggle(void)
     uart_printf("\nRF: PC13 (audio-path line) -> %s (IDR %s)\n",
                 audio_path_is_on() ? "high" : "low",
                 gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN) ? "high" : "low");
-    uart_puts("  the stock raises this line from its T/R path and holds it high on\n"
-              "  this codeplug; receive audio was validated with it high.  What it\n"
-              "  switches is not measured -- see docs/ra89r_rffeatures.md.\n");
+    uart_puts("  stock: high when BT is off/unlinked; when linked it follows Speak\n"
+              "  Switch (low on this codeplug). Its destination is not measured --\n"
+              "  see docs/ra89r_rffeatures.md.\n");
 }
 
 /* The console's 'K': bring the RF up and retune, reporting what landed.  The
@@ -1365,8 +1364,7 @@ int main(void)
     bt_init();
     bt_set_mode(gEeprom.BT_Mode);
     bt_set_name(gEeprom.BT_Name);
-    bt_set_mic_gain(gEeprom.BT_MicGain);
-    bt_set_spk_gain(gEeprom.BT_SpkGain);
+    bt_set_speaker_switch(SETTINGS_BluetoothSpeakerSwitch());
     bt_set_linked_name(gEeprom.BT_PairedName);
     bt_set_enabled(gEeprom.BT_Switch);
 

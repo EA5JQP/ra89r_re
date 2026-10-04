@@ -89,6 +89,7 @@ bool     codeplug_freq_restore(const uint8_t *src, size_t size);
 void     codeplug_shared_settings(void);
 
 EEPROM_Config_t gEeprom;
+static bool s_codeplug_bt_speaker_switch;
 
 /* The VFO objects live inside gEeprom and carry pointers into themselves, so
  * anything that replaces or clears gEeprom -- the defaults, or a blob read back
@@ -130,6 +131,7 @@ typedef struct {
 void SettingsDefaults(void)
 {
     memset(&gEeprom, 0, sizeof gEeprom);
+    s_codeplug_bt_speaker_switch = false;
 
     gEeprom.RX_VFO = 0;
     gEeprom.TX_VFO = 0;
@@ -1076,7 +1078,18 @@ bool codeplug_freq_restore(const uint8_t *src, size_t size)
 
 void codeplug_shared_settings(void)
 {
-    /* Not mapped yet: docs/ra89r_codeplug.md records what the block contains and
-     * which of it the K1 has an equivalent for.  Until then the port's own
-     * defaults and its blob decide, and the stock's block is left alone. */
+    uint8_t byte9 = 0xFFu;
+
+    /* The stock's BT speaker switch is settings byte 9 bit 5 (CPS
+     * `ra89r_codeplug.md`, `FUN_080177A8`).  It controls PC13 while an earpiece
+     * is linked; it is not a K1 setting, so keep it as read-only shared
+     * codeplug state instead of growing the serialized gEeprom blob. */
+    PY25Q16_ReadBuffer(RA89R_CP_SETTINGS_BASE + 9u, &byte9, 1u);
+    if (byte9 != 0xFFu)
+        s_codeplug_bt_speaker_switch = (byte9 & 0x20u) != 0u;
+}
+
+bool SETTINGS_BluetoothSpeakerSwitch(void)
+{
+    return s_codeplug_bt_speaker_switch;
 }
