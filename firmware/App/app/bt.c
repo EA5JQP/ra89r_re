@@ -33,6 +33,8 @@ static unsigned   s_ticks;
 static bool       s_connected;
 static bool       s_ptt_down;   /* the earpiece's PTT button */
 static bool       s_call_on;    /* AT+BT_CALL=ON has been sent (SCO up) */
+static uint8_t    s_mic_gain;   /* the levels to (re)send with the call */
+static uint8_t    s_spk_gain;
 static char       s_linked_name[24];  /* the device we connected */
 static unsigned   s_retries;    /* PD0 re-pulses while waiting for +IM_READY */
 
@@ -45,6 +47,11 @@ static unsigned   s_retries;    /* PD0 re-pulses while waiting for +IM_READY */
 static char       s_found[BT_FOUND_MAX][BT_FOUND_LEN];       /* the whole payload */
 static char       s_found_name[BT_FOUND_MAX][BT_NAME_LEN];   /* the name field */
 static unsigned   s_found_n;
+
+/* The stock's own gain value strings (`FUN_0802286c` mic, `FUN_080226d8`
+ * speaker); the level is an index into these. */
+static const char *const bt_mic_gain_str[] = { "0", "5", "6", "7", "8" };
+static const char *const bt_spk_gain_str[] = { "0", "4", "8", "16", "23", "31" };
 
 /* Copy the second comma-separated field (the device name) out of an
  * `+IM_EARDEV` payload. */
@@ -220,6 +227,9 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
         if (!s_call_on) {
             s_call_on = true;
             bluetooth_send_cmd(BT_CMD_BT_CALL_ON);
+            /* The stock sets the gains with the call too (`FUN_080075A0`). */
+            bluetooth_send_param(BT_CMD_MICGAIN, bt_mic_gain_str[s_mic_gain]);
+            bluetooth_send_param(BT_CMD_SPKGAIN, bt_spk_gain_str[s_spk_gain]);
         }
         break;
 
@@ -328,11 +338,6 @@ void bt_set_name(const char *name)
     }
 }
 
-/* The stock's own gain value strings (`FUN_0802286c` mic, `FUN_080226d8`
- * speaker); the level is an index into these. */
-static const char *const bt_mic_gain_str[] = { "0", "5", "6", "7", "8" };
-static const char *const bt_spk_gain_str[] = { "0", "4", "8", "16", "23", "31" };
-
 unsigned bt_spk_gain_levels(void)
 {
     return (unsigned)(sizeof bt_spk_gain_str / sizeof bt_spk_gain_str[0]);
@@ -350,14 +355,18 @@ void bt_set_scan(bool on)
 
 void bt_set_spk_gain(uint8_t level)
 {
-    if ((unsigned)level < bt_spk_gain_levels())
-        bluetooth_send_param(BT_CMD_SPKGAIN, bt_spk_gain_str[level]);
+    if ((unsigned)level >= bt_spk_gain_levels())
+        return;
+    s_spk_gain = level;
+    bluetooth_send_param(BT_CMD_SPKGAIN, bt_spk_gain_str[level]);
 }
 
 void bt_set_mic_gain(uint8_t level)
 {
-    if ((unsigned)level < bt_mic_gain_levels())
-        bluetooth_send_param(BT_CMD_MICGAIN, bt_mic_gain_str[level]);
+    if ((unsigned)level >= bt_mic_gain_levels())
+        return;
+    s_mic_gain = level;
+    bluetooth_send_param(BT_CMD_MICGAIN, bt_mic_gain_str[level]);
 }
 
 /* Pairing: the stock's Pairing item queues `AT+BT_SCAN=ON`; the module then

@@ -513,6 +513,29 @@ for Jieli's own YBT100 documentation, not for this image.
 The module identifies itself as **`RETEVIS RA89R(BT)`** at `11:C3:EF:CD:DF:5A`
 (classic) and **`RETEVIS RA89R`** at `10:C3:EF:CD:DF:5A` (BLE).
 
+## The BT audio path (what the stock does; the mic side is still open)
+
+When an earpiece connects, the stock:
+
+- sends **`AT+BT_CALL=ON`** (`FUN_08007540`; `FUN_0801A774` when a call starts)
+  to open the SCO audio link;
+- sets the module's gains from the codeplug (`FUN_080075A0`:
+  `AT+MICGAIN=<config[0x3b]>`, `AT+SPKGAIN=<config[0x3c]>`);
+- drives **`PC13`** (`FUN_080177A8` raise, `FUN_08009C9C` lower -- GPIO mask
+  `0x2000`), the audio-path/amplifier enable, gated on the BT bool and the
+  connection state.
+
+On the radio, `AT+BT_CALL=ON` is enough for the **radio's receive audio to reach
+the earpiece** (heard on the device).  The reverse -- the earpiece's mic reaching
+the radio's **transmit** -- does not work yet: the radio still samples its own
+mic at the BK4829's mic ADC (`0x30` bit 2).  The module's analog output (the SCO
+audio, where the earpiece mic appears) is where that would come from, but where
+that pin lands on this board is not in the firmware -- the stock only sets the
+module's internal gains.  If it is summed into the BK4829's mic node the two
+would mix; if it is routed elsewhere (or through a switch) it needs a board
+probe.  The port sends `AT+BT_CALL=ON` and the gains on connect, matching the
+stock.
+
 ## Open
 
 1. **Port integration.**  The service, the F+MENU `DISPLAY_BT` screen and the

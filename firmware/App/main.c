@@ -1365,6 +1365,8 @@ int main(void)
     bt_init();
     bt_set_mode(gEeprom.BT_Mode);
     bt_set_name(gEeprom.BT_Name);
+    bt_set_mic_gain(gEeprom.BT_MicGain);
+    bt_set_spk_gain(gEeprom.BT_SpkGain);
     bt_set_linked_name(gEeprom.BT_PairedName);
     bt_set_enabled(gEeprom.BT_Switch);
 
