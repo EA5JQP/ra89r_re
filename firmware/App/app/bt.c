@@ -33,11 +33,40 @@ static unsigned   s_ticks;
 static bool       s_connected;
 static unsigned   s_retries;    /* PD0 re-pulses while waiting for +IM_READY */
 
-/* Devices the module reported as `+IM_EARDEV` since the scan started. */
+/* Devices the module reported as `+IM_EARDEV` since the scan started.  The
+ * payload is `<address>,<name>,<rssi>` (e.g. `7BA245EBBE2C,Ear (stick),-68`):
+ * the address is what `AT+EAR_CONN` takes, the name is what we show. */
 #define BT_FOUND_MAX 8u
-#define BT_FOUND_LEN 32u
-static char       s_found[BT_FOUND_MAX][BT_FOUND_LEN];
+#define BT_FOUND_LEN 40u
+#define BT_NAME_LEN  24u
+static char       s_found[BT_FOUND_MAX][BT_FOUND_LEN];       /* the whole payload */
+static char       s_found_name[BT_FOUND_MAX][BT_NAME_LEN];   /* the name field */
 static unsigned   s_found_n;
+
+/* Copy the second comma-separated field (the device name) out of an
+ * `+IM_EARDEV` payload. */
+static void eardev_name(const char *payload, unsigned len, char *out, unsigned cap)
+{
+    unsigned i, start = 0u, field = 0u;
+
+    out[0] = '\0';
+    if (payload == 0)
+        return;
+    for (i = 0; i <= len; i++) {
+        if (i == len || payload[i] == ',') {
+            if (field == 1u) {
+                unsigned n = i - start;
+                if (n >= cap)
+                    n = cap - 1u;
+                memcpy(out, payload + start, n);
+                out[n] = '\0';
+                return;
+            }
+            field++;
+            start = i + 1u;
+        }
+    }
+}
 
 static void text_copy(char *dst, unsigned cap, const char *src, unsigned len)
 {
@@ -169,6 +198,8 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
             if (n != 0u && payload != 0)
                 memcpy(s_found[s_found_n], payload, n);
             s_found[s_found_n][n] = '\0';
+            eardev_name(s_found[s_found_n], n, s_found_name[s_found_n],
+                        BT_NAME_LEN);
             s_found_n++;
         }
         break;
@@ -331,7 +362,9 @@ unsigned bt_found_count(void)
 
 const char *bt_found_dev(unsigned i)
 {
-    return (i < s_found_n) ? s_found[i] : "";
+    if (i >= s_found_n)
+        return "";
+    return (s_found_name[i][0] != '\0') ? s_found_name[i] : s_found[i];
 }
 
 void bt_connect_dev(unsigned i)

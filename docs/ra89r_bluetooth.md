@@ -466,13 +466,15 @@ the menu-position → handler mapping is inferred (the type array lives in RAM):
 | `FUN_08019B00(value)` | `config[0x3f]` → byte 7 bits 4–7 | byte 7 (the doc's hold time is bits 0–3; the handler's field is bits 4–7) |
 
 Pairing (`FUN_0800C588` case 1) is a scan: when the module is ready it queues
-`AT+BT_SCAN=ON` (index `0x1e`) and the module reports found earpieces as
-`+IM_EARDEV:<record>`.  `+IM_EARDEV` is **binary**: `FUN_0800f9b0` stores a
-13-byte record per device (`state+0x18 + i*0xd`) plus a 64-byte name
-(`state+0x80 + i*0x40`), and `AT+EAR_CONN=<record>` takes that record — so a
-"pick a device" needs the raw record, not a printable address.  `FUN_08007FD0`
-(the `+IM_READY` path) instead does scan-and-auto-connect with
-`AT+BT_SCANATCN=ON` and `AT+BT_CONN_LAST`.
+`AT+BT_SCAN=ON` (index `0x1e`), and the module reports each found earpiece as
+**`+IM_EARDEV:<addr>,<name>,<rssi>`** — observed on the radio as
+`+IM_EARDEV:7BA245EBBE2C,Ear (stick),-68`.  The stock's `FUN_0800f9b0` splits
+that on commas (scanning from offset `0xb`, the length of `+IM_EARDEV:`) into a
+13-byte record (`state+0x18 + i*0xd`) and a 64-byte name (`state+0x80 +
+i*0x40`); `AT+EAR_CONN=<addr>` takes the first field.  On the radio, selecting
+the device connects it: the module answers `+IM_BT_EAR_CONN` and
+`+IM_EAR_VOL=<n>`.  `FUN_08007FD0` (the `+IM_READY` path) instead does
+scan-and-auto-connect with `AT+BT_SCANATCN=ON` and `AT+BT_CONN_LAST`.
 
 The port's BT screen (`App/ui/bt.c`) now renders in the K1 menu's own layout
 (three-row left column, inverted current item, value on the right,
