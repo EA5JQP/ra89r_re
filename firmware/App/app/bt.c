@@ -56,8 +56,13 @@ static unsigned   s_found_n;
 
 /* The stock's own gain value strings (`FUN_0802286c` mic, `FUN_080226d8`
  * speaker); the level is an index into these. */
-static const char *const bt_mic_gain_str[] = { "0", "5", "6", "7", "8" };
+static const char *const bt_mic_gain_str[] = { "0", "5", "6", "7", "8", "9" };
 static const char *const bt_spk_gain_str[] = { "0", "4", "8", "16", "23", "31" };
+
+/* The levels sent to the module on earpiece connect, from codeplug byte 8
+ * (`FUN_080075A0`).  Defaults match the stock/CPS (mic 2, speaker 2). */
+static uint8_t s_mic_gain_level = 2u;
+static uint8_t s_spk_gain_level = 2u;
 
 /* Stock FUN_080177A8 drives PC13 high unless BT is enabled and an earpiece is
  * linked; in that state PC13 follows the stock/CPS Speak Switch setting.  The
@@ -249,6 +254,12 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
         if (s_state == BT_STATE_SCAN || s_state == BT_STATE_CONNECT)
             s_state = BT_STATE_CONNECTED;
         update_stock_audio_paths();
+        /* Stock FUN_0801AE8C -> FUN_080075A0(0): set the module's mic and
+         * speaker gains from codeplug byte 8 before opening the call.  The
+         * module's own power-on default is not the CPS value, and the headset
+         * mic was silent until these were sent. */
+        bluetooth_send_param(BT_CMD_MICGAIN, bt_mic_gain_str[s_mic_gain_level]);
+        bluetooth_send_param(BT_CMD_SPKGAIN, bt_spk_gain_str[s_spk_gain_level]);
         /* Open the audio (SCO) link, as the stock does (`FUN_08007540`):
          * without it the radio's audio does not reach the earpiece and its
          * button is not reported. */
@@ -430,14 +441,26 @@ void bt_set_scan(bool on)
 
 void bt_set_spk_gain(uint8_t level)
 {
-    if ((unsigned)level < bt_spk_gain_levels())
+    if ((unsigned)level < bt_spk_gain_levels()) {
+        s_spk_gain_level = level;
         bluetooth_send_param(BT_CMD_SPKGAIN, bt_spk_gain_str[level]);
+    }
 }
 
 void bt_set_mic_gain(uint8_t level)
 {
-    if ((unsigned)level < bt_mic_gain_levels())
+    if ((unsigned)level < bt_mic_gain_levels()) {
+        s_mic_gain_level = level;
         bluetooth_send_param(BT_CMD_MICGAIN, bt_mic_gain_str[level]);
+    }
+}
+
+void bt_set_gain_levels(uint8_t mic, uint8_t spk)
+{
+    if ((unsigned)mic < bt_mic_gain_levels())
+        s_mic_gain_level = mic;
+    if ((unsigned)spk < bt_spk_gain_levels())
+        s_spk_gain_level = spk;
 }
 
 /* Pairing: the stock's Pairing item queues `AT+BT_SCAN=ON`; the module then

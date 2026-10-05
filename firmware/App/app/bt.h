@@ -51,6 +51,10 @@ void       bt_set_name(const char *name);    /* NULL/"" = unset */
 void       bt_set_scan(bool on);
 void       bt_set_spk_gain(uint8_t level);
 void       bt_set_mic_gain(uint8_t level);
+/* Seed the module's mic/speaker gain levels without sending anything.  The app
+ * calls this at boot from codeplug byte 8; the levels are sent to the module on
+ * earpiece connect, as the stock does (`FUN_080075A0`). */
+void       bt_set_gain_levels(uint8_t mic, uint8_t spk);
 unsigned   bt_spk_gain_levels(void);
 unsigned   bt_mic_gain_levels(void);
 

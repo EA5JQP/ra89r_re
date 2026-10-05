@@ -73,6 +73,28 @@ static void check_bt_speaker_switch(void)
     SETTINGS_InitEEPROM();
 }
 
+static void check_bt_gains(void)
+{
+    /* Stock FUN_0801AE8C sends the module gains from codeplug byte 8 on connect
+     * (`FUN_080075A0`); the port seeds BT_MicGain/BT_SpkGain from it. */
+    bool ok;
+
+    host_set_codeplug_byte(8224u + 8u, 0x43u);   /* mic 4, speaker 3 */
+    SETTINGS_InitEEPROM();
+    ok = gEeprom.BT_MicGain == 4u && gEeprom.BT_SpkGain == 3u;
+    printf("[codeplug] %s byte 8 -> BT gains mic=%u spk=%u (want 4/3)\n",
+           ok ? "ok  " : "FAIL", (unsigned)gEeprom.BT_MicGain,
+           (unsigned)gEeprom.BT_SpkGain);
+    if (!ok) failures++;
+
+    host_set_codeplug_byte(8224u + 8u, 0xFFu);   /* erased -> keep defaults */
+    SETTINGS_InitEEPROM();
+    ok = gEeprom.BT_MicGain == 2u && gEeprom.BT_SpkGain == 2u;
+    printf("[codeplug] %s erased byte 8 keeps the gain defaults (2/2)\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+}
+
 /* One pass of the firmware's own loop (firmware/App/main.c): the application
  * state machine and panel, the port's transmit check, then the 10 ms slice --
  * which is where the K1's CheckKeys() lives and therefore the only place a key
@@ -129,6 +151,7 @@ int main(void)
     ST7565_Init();
     SETTINGS_InitEEPROM();
     check_bt_speaker_switch();
+    check_bt_gains();
     SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
 
     /* ---- the image: the import must have given the K1 real channels -------

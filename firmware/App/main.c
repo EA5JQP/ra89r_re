@@ -1365,6 +1365,7 @@ int main(void)
     bt_set_mode(gEeprom.BT_Mode);
     bt_set_name(gEeprom.BT_Name);
     bt_set_speaker_switch(SETTINGS_BluetoothSpeakerSwitch());
+    bt_set_gain_levels(gEeprom.BT_MicGain, gEeprom.BT_SpkGain);
     bt_set_linked_name(gEeprom.BT_PairedName);
     bt_set_enabled(gEeprom.BT_Switch);
 

@@ -1078,6 +1078,7 @@ bool codeplug_freq_restore(const uint8_t *src, size_t size)
 
 void codeplug_shared_settings(void)
 {
+    uint8_t byte8 = 0xFFu;
     uint8_t byte9 = 0xFFu;
 
     /* The stock's BT speaker switch is settings byte 9 bit 5 (CPS
@@ -1087,6 +1088,22 @@ void codeplug_shared_settings(void)
     PY25Q16_ReadBuffer(RA89R_CP_SETTINGS_BASE + 9u, &byte9, 1u);
     if (byte9 != 0xFFu)
         s_codeplug_bt_speaker_switch = (byte9 & 0x20u) != 0u;
+
+    /* Byte 8 carries the module gains the stock sends on connect
+     * (`FUN_0801AE8C` -> `FUN_080075A0`): bits 4-7 mic, bits 0-3 speaker, each
+     * an index into the stock's own gain tables.  Seed the port's BT gain
+     * levels from it; the port's own saved blob still wins if the user changed
+     * them in the BT menu, which loads after this. */
+    PY25Q16_ReadBuffer(RA89R_CP_SETTINGS_BASE + 8u, &byte8, 1u);
+    if (byte8 != 0xFFu) {
+        const uint8_t mic = (uint8_t)((byte8 >> 4) & 0x0Fu);
+        const uint8_t spk = (uint8_t)(byte8 & 0x0Fu);
+
+        if (mic <= 5u)
+            gEeprom.BT_MicGain = mic;
+        if (spk <= 5u)
+            gEeprom.BT_SpkGain = spk;
+    }
 }
 
 bool SETTINGS_BluetoothSpeakerSwitch(void)

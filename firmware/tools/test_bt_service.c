@@ -216,17 +216,21 @@ int main(void)
     bt_service_event(BT_EV_EAR_SIDE_SINGLE, NULL, 0);
     check(!bt_ptt_down(), "EAR_SIDE_SINGLE toggles PTT off");
 
-    /* Regression check against the earlier radio-tested audio sequence
-     * (commit 0cc3de0): opening SCO sends BT_CALL only.  The later gain writes
-     * are a separate behavior change and must not be bundled into SCO setup. */
+    /* Stock FUN_0801AE8C -> FUN_080075A0(0): on earpiece connect the module's
+     * mic and speaker gains are set from codeplug byte 8 before the call is
+     * opened.  bt_set_gain_levels() seeds the levels the app read from the
+     * codeplug (or the menu). */
+    bt_set_gain_levels(4, 3);
     rec_reset();
     bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
-    check(rec_n == 1u && rec_is(0, "AT+BT_CALL=ON\r\n"),
-          "earpiece connect opens SCO without changing module gains");
+    check(rec_n == 3u && rec_is(0, "AT+MICGAIN=8\r\n") &&
+          rec_is(1, "AT+SPKGAIN=16\r\n") && rec_is(2, "AT+BT_CALL=ON\r\n"),
+          "earpiece connect sets module gains then opens SCO");
     rec_reset();
     bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
     check(rec_n == 0u && !bt_connected(),
           "BT disconnect closes the link without redundant CALL=OFF");
+    bt_set_gain_levels(2, 2);
 
     /* The stock clears its SCO/call flag on these events but does not send
      * BT_CALL=OFF; it re-opens CALL on the next receive T/R transition. */

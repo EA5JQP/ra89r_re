@@ -236,9 +236,13 @@ state struct at **`0x20009ade`** (`DAT_08022340`):
 (`DAT_08022868 = 0x0a0d`).  The gain values are **not** ASCII built on the fly:
 they come from small tables — `FUN_0802286c(level)` for the microphone and
 `FUN_080226d8(level)` for the speaker — whose entries are the two-byte strings
-`"0"`, `"5"`, `"6"`, `"7"`, `"8"` (mic) and `"0"`, `"4"`, `"8"`, `"16"`, `"23"`,
-`"31"` (speaker) at `0x08024e64`ff.  The caller passes `level + 1`, with the
-level read from the config struct (`+0x3b` mic, `+0x3c` speaker).
+**`"0"`, `"5"`, `"6"`, `"7"`, `"8"`, `"9"`** (mic, six entries) and `"0"`,
+`"4"`, `"8"`, `"16"`, `"23"`, `"31"` (speaker, six entries) at
+`0x08024e64`ff.  The literal pool confirms the index map
+(`0x080228E8`..`0x080228FC` → `0x08024E64`..`0x08024E6E`, stride 2), so the mic
+table is six entries, not five; the port's table was short one (`"9"`).  The
+level is read from the config struct (`+0x3b` mic, `+0x3c` speaker) and passed
+straight to the table, so codeplug byte 8's 1..5 range indexes entries 1..5.
 
 ## The response parser — `FUN_08022974`
 
@@ -573,6 +577,33 @@ The same capture contains **no** `+IM_EAR_PTT_KEYDOWN` / `+IM_EAR_PTT_KEYUP`
 event source is therefore still unidentified; a clean capture taken *while the
 headset button is pressed* is needed before changing the parser, and the churn
 above must be removed first so it does not bury the real event.
+
+### Headset PTT and the module gains (second capture, after the storm fix)
+
+A later capture (PTT via BT working) shows the headset button itself:
+
+```
++IM_BT_EAR_CONN +OK +IM_SCO_CONN +IM_EAR_VOL=127 +IM_SCO_DISCN
++IM_EAR_SIDE_SINGLE1 ... +IM_EAR_SIDE_SINGLE0 +IM_EAR_SIDE_SINGLE1 +OK
++IM_SCO_CONN +IM_SCO_DISCN +IM_EAR_SIDE_SINGLE0 +IM_EAR_SIDE_SINGLE1 ...
+```
+
+So the headset PTT is **`+IM_EAR_SIDE_SINGLE1`** (the module also emits
+`+IM_EAR_SIDE_SINGLE0`; the port matches only `SINGLE1` and toggles, which is
+what keys TX, so `SINGLE0` is left ignored), and there is still **no**
+`+IM_EAR_PTT_KEYDOWN/UP`.
+
+On earpiece connect the stock sets the module's gains (`FUN_0801AE8C` ->
+`FUN_080075A0(0)`): `AT+MICGAIN=<config[0x3b]>`, `AT+SPKGAIN=<config[0x3c]>`
+from codeplug **byte 8**, then opens the call.  The port had sent only
+`AT+BT_CALL=ON`, leaving the module at its power-on gains.  It now reads byte 8
+into `gEeprom.BT_MicGain`/`BT_SpkGain` (`codeplug_shared_settings`), seeds
+`bt_set_gain_levels()` at boot, and sends `AT+MICGAIN`/`AT+SPKGAIN` before
+`AT+BT_CALL=ON` on `+IM_BT_EAR_CONN`, matching the stock order.  The port's mic
+table was also short one entry (`"9"`), now fixed.  **Radio validation pending:**
+whether this is what makes the headset mic reach the transmitted signal; the
+radio-mic mute/analog route is still unidentified, so do not assume the gain
+alone fixes it.
 
 The missing menu key beep is not specific to the BT screen: `BT_ProcessKeys`
 did not request a beep, and the shared K1 `AUDIO_PlayBeep()` returned early while
