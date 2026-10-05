@@ -1,7 +1,8 @@
 # RA89R Bluetooth audio and PTT parity
 
-**Status:** Proposed design; awaiting user review. No implementation authorized by
-this document yet.
+**Status:** Proposed design for the remaining parity work; awaiting user review.
+The current branch contains preliminary PC13/`0x33` and SCO-recovery changes,
+but they are not a complete or radio-validated implementation of this design.
 
 ## Goal
 
