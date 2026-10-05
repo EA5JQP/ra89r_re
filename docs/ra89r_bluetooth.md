@@ -548,6 +548,12 @@ port previously treated SCO/call-disconnect events as full audio shutdown and
   events, and reissues `AT+BT_CALL=ON` on the TX-to-RX transition. This fix is
   host-tested but still needs on-radio validation.
 
+The missing menu key beep is not specific to the BT screen: `BT_ProcessKeys`
+does not request a beep, and the shared K1 `AUDIO_PlayBeep()` returns early while
+`gCurrentFunction` is RECEIVE or MONITOR (`App/audio.c`). The normal menu uses
+the same path, so its lack of key beeps is the same behavior; the DAC beeper
+hardware itself is separately testable with console `Z`.
+
 For transmit, the user confirms the stock silences the radio's own mic while in
 BT mode, and ordinary port TX currently still uses the radio mic.  The earpiece
 mic route is therefore still open.  The BK4829 mic ADC (`0x30` bit 2) experiment
