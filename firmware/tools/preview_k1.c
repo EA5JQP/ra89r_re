@@ -576,6 +576,63 @@ int main(void)
         if (!ok) failures++;
     }
 
+    /* Menu key feedback must not be suppressed merely because the receiver
+     * remains in FUNCTION_RECEIVE.  Exercise the K1's normal key loop and the
+     * BT menu's direct handler, then prove held/disabled events stay silent. */
+    {
+        bool ok;
+        unsigned int i;
+        unsigned int plays_at_press;
+
+        gCurrentFunction = FUNCTION_RECEIVE;
+        gEeprom.BEEP_CONTROL = true;
+        gScreenToDisplay = DISPLAY_MENU;
+        gRequestDisplayScreen = DISPLAY_INVALID;
+        host_set_key(KEY_INVALID);
+        for (i = 0; i < 4u; i++)
+            CheckKeys();
+        gBeepToPlay = BEEP_NONE;
+        host_beeper_reset_counts();
+        host_set_key(KEY_UP);
+        for (i = 0; i < 4u; i++)
+            CheckKeys();
+        plays_at_press = host_beeper_play_count();
+        host_set_key(KEY_INVALID);
+        for (i = 0; i < 4u; i++)
+            CheckKeys();
+        ok = plays_at_press == 1u &&
+             host_beeper_play_count() == plays_at_press &&
+             gCurrentFunction == FUNCTION_RECEIVE;
+        printf("[beep] %s normal menu press beeps once in RECEIVE (%u/%u plays, function %u)\n",
+               ok ? "ok  " : "FAIL", plays_at_press,
+               host_beeper_play_count(), (unsigned)gCurrentFunction);
+        if (!ok) failures++;
+
+        gScreenToDisplay = DISPLAY_BT;
+        host_beeper_reset_counts();
+        BT_ProcessKeys(KEY_DOWN, true, false);
+        ok = host_beeper_play_count() == 1u;
+        printf("[beep] %s BT menu key beeps in RECEIVE (%u plays)\n",
+               ok ? "ok  " : "FAIL", host_beeper_play_count());
+        if (!ok) failures++;
+
+        host_beeper_reset_counts();
+        BT_ProcessKeys(KEY_DOWN, true, true);
+        ok = host_beeper_play_count() == 0u;
+        printf("[beep] %s held BT menu key does not repeat a beep\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        gEeprom.BEEP_CONTROL = false;
+        host_beeper_reset_counts();
+        BT_ProcessKeys(KEY_DOWN, true, false);
+        ok = host_beeper_play_count() == 0u;
+        printf("[beep] %s disabled Beep setting suppresses BT menu feedback\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+        gEeprom.BEEP_CONTROL = true;
+    }
+
     /* The Bluetooth menu: its own screen (F + MENU), so the main menu stays
      * short.  The item table is the stock's nine entries.  Run last: pressing
      * keys changes the backlight countdown the checks above rely on. */

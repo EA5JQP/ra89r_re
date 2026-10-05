@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "app/bt.h"
+#include "audio.h"
 #include "driver/st7565.h"
 #include "external/printf/printf.h"
 #include "misc.h"
@@ -264,6 +265,9 @@ static void bt_change(int dir)
 
 void BT_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 {
+    if (bKeyPressed && !bKeyHeld)
+        AUDIO_PlayKeyBeep(BEEP_1KHZ_60MS_OPTIONAL);
+
     if (s_pairing) {
         switch (Key) {
         case KEY_UP:

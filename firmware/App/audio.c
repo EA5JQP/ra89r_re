@@ -52,7 +52,7 @@ static const uint16_t BEEP_Classic_array[][3] = { /* Tone    Duration    Repeats
 
 BEEP_Type_t gBeepToPlay = BEEP_NONE;
 
-void AUDIO_PlayBeep(BEEP_Type_t Beep)
+static void AUDIO_PlayBeepInternal(BEEP_Type_t Beep, bool is_key_feedback)
 {
     if (Beep == BEEP_NONE)
         return;
@@ -62,10 +62,10 @@ void AUDIO_PlayBeep(BEEP_Type_t Beep)
          !gEeprom.BEEP_CONTROL)
         return;
 
-    if (gCurrentFunction == FUNCTION_RECEIVE)
+    if (!is_key_feedback && gCurrentFunction == FUNCTION_RECEIVE)
         return;
 
-    if (gCurrentFunction == FUNCTION_MONITOR)
+    if (!is_key_feedback && gCurrentFunction == FUNCTION_MONITOR)
         return;
 
     if (Beep >= ARRAY_SIZE(BEEP_Classic_array))
@@ -90,6 +90,16 @@ void AUDIO_PlayBeep(BEEP_Type_t Beep)
 #ifdef ENABLE_VOX
     gVoxResumeCountdown = 80;
 #endif
+}
+
+void AUDIO_PlayBeep(BEEP_Type_t Beep)
+{
+    AUDIO_PlayBeepInternal(Beep, false);
+}
+
+void AUDIO_PlayKeyBeep(BEEP_Type_t Beep)
+{
+    AUDIO_PlayBeepInternal(Beep, true);
 }
 
 #ifdef ENABLE_VOICE

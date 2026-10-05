@@ -549,10 +549,20 @@ port previously treated SCO/call-disconnect events as full audio shutdown and
   host-tested but still needs on-radio validation.
 
 The missing menu key beep is not specific to the BT screen: `BT_ProcessKeys`
-does not request a beep, and the shared K1 `AUDIO_PlayBeep()` returns early while
-`gCurrentFunction` is RECEIVE or MONITOR (`App/audio.c`). The normal menu uses
-the same path, so its lack of key beeps is the same behavior; the DAC beeper
-hardware itself is separately testable with console `Z`.
+did not request a beep, and the shared K1 `AUDIO_PlayBeep()` returned early while
+`gCurrentFunction` is RECEIVE or MONITOR (`App/audio.c`). The port now routes
+normal-menu feedback through `AUDIO_PlayKeyBeep()` and requests the same optional
+1 kHz beep for a non-held BT-menu key. This path honors the Beep setting and
+does not repeat on held events. `preview_k1` exercises both menu paths in
+RECEIVE using the host beeper.
+
+The **destination is still unverified**: `AUDIO_PlayKeyBeep()` uses the existing
+PA4/DAC beeper and temporarily enables the PC13 audio path, whose physical
+destination has not been established. The BT link controls remain the stock
+PC13 level and BK4829 `0x33` pin-2 output; neither host readback nor the current
+radio report (audio heard through both endpoints) proves exclusive routing or
+that a DAC beep reaches the BT headset. Do not claim linked beeps are headset-only
+until the radio is checked, and do not add a speculative route write.
 
 For transmit, the user confirms the stock silences the radio's own mic while in
 BT mode, and ordinary port TX currently still uses the radio mic.  The earpiece

@@ -51,6 +51,9 @@ typedef enum BEEP_Type_t BEEP_Type_t;
 extern BEEP_Type_t       gBeepToPlay;
 
 void AUDIO_PlayBeep(BEEP_Type_t Beep);
+/* Explicit UI key feedback; still obeys the optional Beep setting, but plays
+ * even while the radio's RF function state remains RECEIVE or MONITOR. */
+void AUDIO_PlayKeyBeep(BEEP_Type_t Beep);
 
 #define AUDIO_AudioPathOn() GPIO_EnableAudioPath()
 
