@@ -24,6 +24,8 @@ void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source)
     if (s_active && source == s_source)
         return;
 
+    bt_set_radio_tx_active(true);
+
     /* The band state first (PA0/PA1, the BK4815 0x75 band and the RX path),
      * then the TX band pin -- pa_tx_enable() overwrites 0x33 and sets 0x36 and
      * the PB14 bias PWM from `power`. */
@@ -72,6 +74,10 @@ void tx_stop(void)
     led_set(LED_OFF);
 
     s_active = false;
+    /* Stock FUN_080177A8 re-opens BT_CALL when the radio returns to RX and the
+     * earpiece is still linked.  A SCO-disconnect event during PTT clears the
+     * call state but is not a BT device disconnect. */
+    bt_set_radio_tx_active(false);
 }
 
 bool tx_active(void) { return s_active; }

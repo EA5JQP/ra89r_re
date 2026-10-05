@@ -537,6 +537,17 @@ or connection.  The BT menu's explicit gain controls still send their selected
 AT commands.  This isolates the gain writes as the remaining software change
 after the known-working sequence; the candidate still needs radio validation.
 
+The stock distinguishes a **BT link disconnect** from an **SCO/call disconnect**:
+`FUN_08022974` clears its call-active flag for `+IM_SCO_DISCN` and
+`+IM_CALL_DISCONED`; it does not send `AT+BT_CALL=OFF` there.  `FUN_080177A8`
+can reopen the call when returning to RX if the earpiece is still linked.  The
+port previously treated SCO/call-disconnect events as full audio shutdown and
+  sent `AT+BT_CALL=OFF`. That matches the reported symptom after BT PTT (BT RX
+  audio disappears and subsequent beeps are absent). The current candidate now
+  keeps the BT link, avoids that OFF command, coalesces paired SCO/call-disconnect
+  events, and reissues `AT+BT_CALL=ON` on the TX-to-RX transition. This fix is
+  host-tested but still needs on-radio validation.
+
 For transmit, the user confirms the stock silences the radio's own mic while in
 BT mode, and ordinary port TX currently still uses the radio mic.  The earpiece
 mic route is therefore still open.  The BK4829 mic ADC (`0x30` bit 2) experiment

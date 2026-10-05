@@ -34,6 +34,9 @@ void bt_poll(void);
  * clock (reset retry, per-command timeout). */
 void bt_service_tick(void);
 void bt_service_event(bt_event_t ev, const char *payload, unsigned len);
+/* Reopen SCO when the radio returns to RX after a PTT/T-R transition. */
+void bt_resume_audio(void);
+void bt_set_radio_tx_active(bool active);
 
 void       bt_set_enabled(bool on);
 /* Stock codeplug setting byte 9 bit 5 (Speak Switch), used for the PC13 level

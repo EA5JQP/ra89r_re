@@ -19,6 +19,7 @@
 #include "driver/bluetooth.h"
 
 extern void bt_set_speaker_switch(bool enabled);
+extern void bt_set_radio_tx_active(bool active);
 
 static int host_audio_path = 1;
 static int host_bt_rf_path;
@@ -190,8 +191,30 @@ int main(void)
           "earpiece connect opens SCO without changing module gains");
     rec_reset();
     bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
-    check(rec_n == 1u && rec_is(0, "AT+BT_CALL=OFF\r\n"),
-          "earpiece disconnect closes SCO");
+    check(rec_n == 0u && !bt_connected(),
+          "BT disconnect closes the link without redundant CALL=OFF");
+
+    /* The stock clears its SCO/call flag on these events but does not send
+     * BT_CALL=OFF; it re-opens CALL on the next receive T/R transition. */
+    bt_set_enabled(true);
+    bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
+    bt_set_radio_tx_active(true);
+    rec_reset();
+    bt_service_event(BT_EV_SCO_DISCONNECT, NULL, 0);
+    check(rec_n == 0u && bt_connected(),
+          "SCO loss during TX keeps the BT link and does not send CALL=OFF");
+    bt_set_radio_tx_active(false);
+    check(rec_n == 1u && rec_is(0, "AT+BT_CALL=ON\r\n"),
+          "TX-to-RX transition re-opens CALL after SCO disconnect");
+    rec_reset();
+    bt_service_event(BT_EV_CALL_DISCONNECTED, NULL, 0);
+    bt_service_event(BT_EV_SCO_DISCONNECT, NULL, 0);
+    check(rec_n == 0u, "paired SCO/call disconnect events do not issue duplicate commands");
+    bt_service_tick();
+    check(rec_n == 1u && rec_is(0, "AT+BT_CALL=ON\r\n"),
+          "deferred recovery coalesces call-disconnect events");
+    rec_reset();
+    bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
 
     /* Stock FUN_080177A8: PC13 follows the Speak Switch setting only while
      * BT is enabled and linked; chip pin 2 follows the BT link itself. */

@@ -35,8 +35,10 @@ static unsigned   s_ticks;
 
 static bool       s_connected;
 static bool       s_bt_linked;       /* link state, independent of SCO call state */
+static bool       s_radio_tx_active;
 static bool       s_ptt_down;   /* the earpiece's PTT button */
-static bool       s_call_on;    /* AT+BT_CALL=ON has been sent (SCO up) */
+static bool       s_call_on;    /* CALL/SCO state; cleared by SCO/call-disconnect events */
+static bool       s_call_resume_pending;
 static bool       s_speaker_switch;
 static bool       s_pa_bt_audio_on;
 static char       s_linked_name[24];  /* the device we connected */
@@ -240,11 +242,10 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
         break;
     }
 
-    case BT_EV_BT_EAR_CONN:             /* earpiece connected */
-    case BT_EV_SCO_CONN:                /* audio link up */
-    case BT_EV_CALL_CONNECTED:
+    case BT_EV_BT_EAR_CONN:             /* earpiece linked */
         s_connected = true;
         s_bt_linked = true;
+        s_call_resume_pending = false;
         if (s_state == BT_STATE_SCAN || s_state == BT_STATE_CONNECT)
             s_state = BT_STATE_CONNECTED;
         update_stock_audio_paths();
@@ -257,28 +258,34 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
         }
         break;
 
+    case BT_EV_SCO_CONN:                /* audio link up */
+    case BT_EV_CALL_CONNECTED:
+        s_connected = true;
+        s_bt_linked = true;
+        s_call_resume_pending = false;
+        if (s_state == BT_STATE_SCAN || s_state == BT_STATE_CONNECT)
+            s_state = BT_STATE_CONNECTED;
+        update_stock_audio_paths();
+        s_call_on = true;
+        break;
+
     case BT_EV_BT_DISCONNECT:
         s_connected = false;
         s_bt_linked = false;
+        s_call_on = false;
+        s_call_resume_pending = false;
         update_stock_audio_paths();
-        if (s_call_on) {
-            s_call_on = false;
-            bluetooth_send_cmd(BT_CMD_BT_CALL_OFF);
-        }
         if (s_state == BT_STATE_CONNECTED)
             s_state = BT_STATE_IDLE;
         break;
 
     case BT_EV_SCO_DISCONNECT:
     case BT_EV_CALL_DISCONNECTED:
-        s_connected = false;
-        update_stock_audio_paths();
-        if (s_call_on) {
-            s_call_on = false;
-            bluetooth_send_cmd(BT_CMD_BT_CALL_OFF);
-        }
-        if (s_state == BT_STATE_CONNECTED)
-            s_state = BT_STATE_IDLE;
+        /* These events end the SCO/call state, not the earpiece's BT link.
+         * Stock only clears its call flag here; it does not send CALL=OFF.
+         * T/R's receive transition may reopen the call (FUN_080177A8). */
+        s_call_on = false;
+        s_call_resume_pending = true;
         break;
 
     case BT_EV_EAR_SIDE_SINGLE:         /* the earpiece's button */
@@ -327,6 +334,30 @@ void bt_service_tick(void)
         if (++s_ticks >= BT_CMD_TICKS)
             queue_advance();
     }
+
+    /* A SCO teardown can report both CALL_DISCONED and SCO_DISCN.  Defer the
+     * stock-style RX restore until the whole UART batch has been parsed, and
+     * leave it pending throughout PTT so tx_stop() performs the restore. */
+    if (s_call_resume_pending && !s_radio_tx_active)
+        bt_resume_audio();
+}
+
+void bt_resume_audio(void)
+{
+    /* Mirror the stock's FUN_080177A8 receive/T-R path: if the headset remains
+     * linked but SCO ended during PTT, start the call again on return to RX. */
+    s_call_resume_pending = false;
+    if (s_enabled && s_bt_linked && !s_call_on) {
+        s_call_on = true;
+        bluetooth_send_cmd(BT_CMD_BT_CALL_ON);
+    }
+}
+
+void bt_set_radio_tx_active(bool active)
+{
+    s_radio_tx_active = active;
+    if (!active)
+        bt_resume_audio();
 }
 
 void bt_set_enabled(bool on)
@@ -348,6 +379,7 @@ void bt_set_enabled(bool on)
         s_bt_linked = false;
         s_ptt_down = false;
         s_call_on = false;
+        s_call_resume_pending = false;
         bluetooth_send_cmd(BT_CMD_BT_DISCN);
         queue_clear();
 #ifndef BLUETOOTH_HOST_TEST
