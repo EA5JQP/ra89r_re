@@ -66,6 +66,8 @@ void        bt_connect_dev(unsigned i); /* AT+EAR_CONN=<device> */
 /* The earpiece's PTT button (`+IM_EAR_PTT_KEYDOWN/UP` or the earpiece's own
  * `+IM_EAR_SIDE_SINGLE1` click); tx.c keys the transmitter while it is set. */
 bool        bt_ptt_down(void);
+/* Select which PTT input is allowed to key TX: 0=BT, 1=radio, 2=both. */
+bool        bt_ptt_source_active(bool radio_ptt, bool headset_ptt, uint8_t mode);
 
 /* The name of the device we connected, or "None".  `bt_set_linked_name()`
  * restores the persisted name at boot. */

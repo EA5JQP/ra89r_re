@@ -64,6 +64,39 @@ static void check(int ok, const char *what)
     }
 }
 
+static void test_bt_ptt_source_matrix(void)
+{
+    static const struct {
+        bool radio;
+        bool headset;
+        bool bt_mode;
+        bool radio_mode;
+        bool both_mode;
+    } cases[] = {
+        { false, false, false, false, false },
+        { false, true,  true,  false, true  },
+        { true,  false, false, true,  true  },
+        { true,  true,  true,  true,  true  }
+    };
+    unsigned i;
+
+    for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        check(bt_ptt_source_active(cases[i].radio, cases[i].headset, 0u) ==
+                  cases[i].bt_mode,
+              "BT mode uses headset PTT only");
+        check(bt_ptt_source_active(cases[i].radio, cases[i].headset, 1u) ==
+                  cases[i].radio_mode,
+              "Radio mode uses radio PTT only");
+        check(bt_ptt_source_active(cases[i].radio, cases[i].headset, 2u) ==
+                  cases[i].both_mode,
+              "Both mode accepts either PTT source");
+    }
+    check(bt_ptt_source_active(true, false, 3u) == false,
+          "invalid PTT mode fails closed to BT-only");
+    check(bt_ptt_source_active(false, true, 3u) == true,
+          "invalid PTT mode retains BT PTT only");
+}
+
 /* Drive the stock config sequence to completion, asserting each step. */
 static void drive_config(const char *label)
 {
@@ -93,6 +126,7 @@ int main(void)
     unsigned i;
 
     printf("bt service\n");
+    test_bt_ptt_source_matrix();
 
     check(bt_state() == BT_STATE_OFF, "starts OFF");
 
@@ -207,12 +241,15 @@ int main(void)
     check(rec_n == 1u && rec_is(0, "AT+BT_CALL=ON\r\n"),
           "TX-to-RX transition re-opens CALL after SCO disconnect");
     rec_reset();
+    bt_set_radio_tx_active(true);
     bt_service_event(BT_EV_CALL_DISCONNECTED, NULL, 0);
     bt_service_event(BT_EV_SCO_DISCONNECT, NULL, 0);
-    check(rec_n == 0u, "paired SCO/call disconnect events do not issue duplicate commands");
     bt_service_tick();
+    check(rec_n == 0u && bt_connected(),
+          "paired SCO/call teardown stays pending during TX without CALL=OFF");
+    bt_set_radio_tx_active(false);
     check(rec_n == 1u && rec_is(0, "AT+BT_CALL=ON\r\n"),
-          "deferred recovery coalesces call-disconnect events");
+          "paired disconnect events produce one CALL restart on TX-to-RX");
     rec_reset();
     bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
 

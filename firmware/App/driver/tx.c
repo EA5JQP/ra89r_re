@@ -91,8 +91,9 @@ tx_source_t tx_source(void) { return s_source; }
 void tx_poll_ptt(void)
 {
     const KEY_Code_t key  = KEYBOARD_GetKey();
-    const bool       down = (key == KEY_PTT) || (key == KEY_PTT2) ||
-                            bt_ptt_down();      /* the earpiece's PTT button */
+    const bool       radio_ptt = (key == KEY_PTT) || (key == KEY_PTT2);
+    const bool       down = bt_ptt_source_active(radio_ptt, bt_ptt_down(),
+                                                 gEeprom.BT_PTTType);
 
     if (down == tx_active())
         return;

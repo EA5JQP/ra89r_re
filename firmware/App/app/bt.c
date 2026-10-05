@@ -466,6 +466,19 @@ bool bt_ptt_down(void)
     return s_ptt_down;
 }
 
+bool bt_ptt_source_active(bool radio_ptt, bool headset_ptt, uint8_t mode)
+{
+    switch (mode) {
+    case 1u:
+        return radio_ptt;
+    case 2u:
+        return radio_ptt || headset_ptt;
+    case 0u:
+    default:
+        return headset_ptt;
+    }
+}
+
 unsigned bt_found_count(void)
 {
     return s_found_n;
