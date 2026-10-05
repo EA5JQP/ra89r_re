@@ -548,6 +548,32 @@ port previously treated SCO/call-disconnect events as full audio shutdown and
   events, and reissues `AT+BT_CALL=ON` on the TX-to-RX transition. This fix is
   host-tested but still needs on-radio validation.
 
+### The CALL=ON storm (on-radio capture, `U`)
+
+A raw USART3 capture after the earpiece linked showed an endless cycle:
+
+```
++IM_BT_EAR_CONN  +OK  +IM_SCO_CONN  +IM_EAR_VOL=127
++IM_SCO_DISCN  +OK  +IM_SCO_CONN  +IM_SCO_DISCN  +OK  ...
+```
+
+The `+OK` after each `+IM_SCO_DISCN` is the module acknowledging the port's own
+`AT+BT_CALL=ON`.  Root cause: `bt_service_tick()` re-sent `CALL=ON` on every
+10 ms slice while the radio sat in RX, so each SCO teardown was immediately
+answered with a fresh call open.  The stock never does this -- `FUN_080177A8`
+reopens CALL only on the receive T/R transition.  The port now resumes only from
+`bt_set_radio_tx_active(false)` (the `tx_stop()` path); an idle SCO teardown
+leaves `s_call_resume_pending` set until the next T/R transition.  Host
+regression: `test_bt_service.c`, "idle-RX SCO loss does not trigger a CALL=ON
+storm".  **Radio re-test pending** to confirm the module keeps SCO up once the
+port stops spamming CALL=ON.
+
+The same capture contains **no** `+IM_EAR_PTT_KEYDOWN` / `+IM_EAR_PTT_KEYUP`
+(and no `+IM_EAR_SIDE_SINGLE1`) -- only the SCO churn above.  The headset's PTT
+event source is therefore still unidentified; a clean capture taken *while the
+headset button is pressed* is needed before changing the parser, and the churn
+above must be removed first so it does not bury the real event.
+
 The missing menu key beep is not specific to the BT screen: `BT_ProcessKeys`
 did not request a beep, and the shared K1 `AUDIO_PlayBeep()` returned early while
 `gCurrentFunction` is RECEIVE or MONITOR (`App/audio.c`). The port now routes

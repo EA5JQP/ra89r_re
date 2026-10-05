@@ -253,6 +253,27 @@ int main(void)
     rec_reset();
     bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
 
+    /* On-radio capture: after the earpiece links, the module reports
+     * +IM_SCO_CONN / +IM_SCO_DISCN / +OK over and over -- each 10 ms tick
+     * re-sent CALL=ON.  A SCO loss while the radio idles in RX must not be
+     * answered with a CALL=ON storm; stock reopens CALL only on the receive
+     * T/R transition. */
+    bt_set_enabled(true);
+    bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);       /* link -> CALL=ON */
+    rec_reset();
+    bt_service_event(BT_EV_SCO_CONN, NULL, 0);
+    bt_service_event(BT_EV_SCO_DISCONNECT, NULL, 0);
+    for (i = 0; i < 50u; i++)
+        bt_service_tick();
+    check(rec_n == 0u && bt_connected(),
+          "idle-RX SCO loss does not trigger a CALL=ON storm");
+    bt_set_radio_tx_active(true);
+    bt_set_radio_tx_active(false);
+    check(rec_n == 1u && rec_is(0, "AT+BT_CALL=ON\r\n"),
+          "receive transition reopens CALL once after idle SCO loss");
+    rec_reset();
+    bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
+
     /* Stock FUN_080177A8: PC13 follows the Speak Switch setting only while
      * BT is enabled and linked; chip pin 2 follows the BT link itself. */
     bt_set_speaker_switch(false);

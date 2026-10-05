@@ -335,11 +335,13 @@ void bt_service_tick(void)
             queue_advance();
     }
 
-    /* A SCO teardown can report both CALL_DISCONED and SCO_DISCN.  Defer the
-     * stock-style RX restore until the whole UART batch has been parsed, and
-     * leave it pending throughout PTT so tx_stop() performs the restore. */
-    if (s_call_resume_pending && !s_radio_tx_active)
-        bt_resume_audio();
+    /* A SCO teardown can report both CALL_DISCONED and SCO_DISCN.  Stock clears
+     * its call flag on those events and reopens CALL only on the receive T/R
+     * transition (`FUN_080177A8`), never while idling in RX.  Resuming from
+     * this 10 ms tick instead produced an on-radio CALL=ON storm
+     * (`+IM_SCO_CONN` / `+IM_SCO_DISCN` / `+OK` repeating): tx_stop() calls
+     * bt_resume_audio() on the T/R transition, which is the only place it runs.
+     * `s_call_resume_pending` is left set until then. */
 }
 
 void bt_resume_audio(void)
