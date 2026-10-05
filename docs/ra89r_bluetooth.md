@@ -595,6 +595,29 @@ evidence that this mode is entered for BT audio. The earpiece-mic route still
 needs its control traced. The PC13/`0x33` restoration is for stock parity only,
 not a claim that either line routes the earpiece mic.
 
+### Stock TX mic-source trace (Ghidra, stock V49)
+
+The focused Ghidra pass does not find a BT mic selector in the normal RF path:
+
+- `FUN_0801C3A8` writes BK4829 register `0x40`, packing the gain from
+  `FUN_08020190(param)` into bits 4 onward while retaining the upper mode bits.
+  Its caller is `FUN_0801C564`, which also updates the CTCSS/tail registers.
+- `FUN_08020190` chooses between the channel's gain and the ordinary setting
+  from fields in `param`; it does not read the BT-link flag (`config+0x38`), PTT
+  mode (`config+0x3a`), PC13, or BK4829 `0x33`.
+- `FUN_08017280` calls `FUN_0801C564` as part of the radio's RX setup, then
+  writes the receive-mode register sequence including `0x30`. Its companion
+  `FUN_080171D0` configures the other mode and does not write a mic-source
+  selection. `FUN_0801C564` has no other direct caller in this Ghidra program.
+- The BT transition path `FUN_08018AB8` calls `FUN_08017306(param, 1)`, which
+  selects that same `FUN_08017280` RX sequence. The inspected `FUN_0801E1E0`
+  binary-event branches do not add a BT-dependent `0x40` or `0x30` choice.
+
+This narrows the unresolved route but does not prove that no indirect, analog,
+or unrecognized binary-control path exists. No TX-mic register change is
+justified by this static evidence; headset PTT's raw UART event and a controlled
+over-air mic-source test are still required.
+
 ## Open
 
 1. **Port integration.** The service, the F+MENU `DISPLAY_BT` screen and the
