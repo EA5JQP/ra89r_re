@@ -2,6 +2,8 @@
 #ifndef HOST_HW_H
 #define HOST_HW_H
 
+#include <stdint.h>
+
 #include "driver/keypad.h"
 
 /* The key the host's keypad reader reports; KEY_INVALID = nothing pressed. */
@@ -14,6 +16,9 @@ void host_set_ptt2(bool pressed);
  * the one thing that must not happen on a timer: a save that rewrites the blob
  * on every 10 ms slice. */
 unsigned host_flash_erase_count(void);
+
+/* Set one synthetic stock-codeplug byte by absolute SPI-flash offset. */
+void host_set_codeplug_byte(uint32_t offset, uint8_t value);
 
 /* The host's model of the amplifier enable (PC13): the beeper's DAC tone only
  * reaches the speaker through it, so a beep must drive it on.  `host_beeper_*`

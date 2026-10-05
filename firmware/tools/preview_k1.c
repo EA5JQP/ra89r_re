@@ -41,6 +41,38 @@
 /* State assertions this preview checks (the panel rendering is eyeballed). */
 static int failures;
 
+static void check_bt_speaker_switch(void)
+{
+    static const uint32_t setting_address = 8224u + 9u;
+    static const struct {
+        uint8_t value;
+        bool expected;
+        const char *name;
+    } cases[] = {
+        { 0x20u, true,  "Speak Switch bit set" },
+        { 0xFFu, false, "erased Speak Switch defaults off" },
+        { 0x00u, false, "Speak Switch bit clear" }
+    };
+    unsigned i;
+
+    for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        bool got;
+
+        host_set_codeplug_byte(setting_address, cases[i].value);
+        SETTINGS_InitEEPROM();
+        got = SETTINGS_BluetoothSpeakerSwitch();
+
+        printf("[codeplug] %s %s\n", got == cases[i].expected ? "ok  " : "FAIL",
+               cases[i].name);
+        if (got != cases[i].expected)
+            failures++;
+    }
+
+    /* Restore the host's factory-erased settings block for the rest of preview. */
+    host_set_codeplug_byte(setting_address, 0xFFu);
+    SETTINGS_InitEEPROM();
+}
+
 /* One pass of the firmware's own loop (firmware/App/main.c): the application
  * state machine and panel, the port's transmit check, then the 10 ms slice --
  * which is where the K1's CheckKeys() lives and therefore the only place a key
@@ -95,7 +127,9 @@ static void render(const char *title)
 int main(void)
 {
     ST7565_Init();
-    SETTINGS_InitEEPROM(); SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
+    SETTINGS_InitEEPROM();
+    check_bt_speaker_switch();
+    SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
 
     /* ---- the image: the import must have given the K1 real channels -------
      *

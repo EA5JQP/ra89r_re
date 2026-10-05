@@ -475,6 +475,18 @@ static void test_pa_bt_audio(void)
     pa_set_bt_audio(false);
     check(!pa_bt_audio(), "BT disconnect state retained");
     check_hex(last_reg33(), 0x8042u, "BT off clears output, keeps band/T-R and paired-bit state");
+
+    pa_set_bt_audio(true);
+    pa_rx_enable();
+    check_hex(pa_last_reg33(), 0x8010u, "VHF RX transition preserves BT output");
+    pa_select_band(44600625u);
+    check_hex(pa_last_reg33(), 0x8010u, "UHF RX band selection preserves BT output");
+    pa_tx_enable(0xFFu);
+    check_hex(pa_last_reg33(), 0x8032u, "UHF TX preserves BT output and applies band/T-R pins");
+    pa_rx_enable();
+    check_hex(pa_last_reg33(), 0x8010u, "UHF TX-to-RX preserves BT output");
+    pa_set_bt_audio(false);
+    check_hex(pa_last_reg33(), 0x8000u, "BT off after RX clears only the BT output");
 }
 
 int main(void)

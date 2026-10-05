@@ -113,7 +113,7 @@ void pa_set_bt_audio(bool on) { (void)on; }
 
 /* ---------------------------------------------------------------------------
  * A tiny in-RAM stand-in for the external SPI NOR flash, covering three
- * regions: the codeplug (0x0000..0x1FFF, which the preview preloads with a
+ * regions: the codeplug (0x0000..0x3FFF, which the preview preloads with a
  * factory-shaped image), the K1 image (0x4000..0x13FFF, empty until the port's
  * import writes it) and the two sectors the port's storage uses
  * (0x1FE000..0x1FFFFF, both empty on this radio).  Program ANDs bits and erase
@@ -125,7 +125,7 @@ void pa_set_bt_audio(bool on) { (void)on; }
 static uint8_t s_host_flash[HOST_FLASH_SIZE];
 
 #define HOST_CP_BASE 0x0000u
-#define HOST_CP_SIZE 0x2000u
+#define HOST_CP_SIZE 0x4000u
 static uint8_t s_host_codeplug[HOST_CP_SIZE];
 
 /* The K1 application's own EEPROM image: names 0x4000, attributes 0x8000,
@@ -224,6 +224,13 @@ void spi_flash_init(void)
         host_codeplug_defaults();
         initialised = true;
     }
+}
+
+void host_set_codeplug_byte(uint32_t offset, uint8_t value)
+{
+    spi_flash_init();
+    if (offset < HOST_CP_SIZE)
+        s_host_codeplug[offset] = value;
 }
 
 bool spi_flash_id(uint16_t *man_dev, uint32_t *jedec)
