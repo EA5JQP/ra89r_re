@@ -26,8 +26,8 @@ investigation item until its source selection is demonstrated.
    - `Radio`: radio PTT keys only;
    - `Both`: either source.
 3. **Menu key feedback:** ordinary key presses beep in both the normal menu and
-   BT menu, subject to the stock Beep setting. The beep must follow the selected
-   audio destination while BT is linked.
+   BT menu, subject to the stock Beep setting. While BT is linked, the beep is
+   heard in the BT headset; without BT, it is heard through the radio speaker.
 4. **SCO lifecycle:** headset link state and SCO/call state are distinct. An SCO
    teardown is not a headset disconnect; BT RX audio must recover when returning
    from PTT to RX while the headset remains linked.
@@ -101,9 +101,9 @@ register write.
 
 Add a key-feedback path shared by normal and BT menu handling. It should not be
 suppressed solely because `gCurrentFunction` remains RECEIVE/MONITOR while a menu
-is open, but it must respect the stock Beep setting. Route the beep through the
-same selected destination as RX while BT is linked; use the existing PA4/DAC
-beeper rather than a new RF-chip tone sequence.
+is open, but it must respect the stock Beep setting. Route the existing PA4/DAC
+beep through the BT headset while BT is linked and through the radio speaker when
+unlinked; do not add a new RF-chip tone sequence without stock evidence.
 
 ### TX microphone route
 
@@ -134,7 +134,8 @@ On the radio, verify separately:
    radio speaker plays RX audio.
 2. BT, Radio, and Both PTT modes key only their specified sources.
 3. After a headset PTT cycle, SCO RX audio and menu beeps recover without
-   re-pairing.
+   re-pairing; linked beeps are heard in the BT headset, unlinked beeps on the
+   radio speaker.
 4. A second receiver confirms which microphone is transmitted in each mode and
    that BT gain changes affect only the intended source.
 
