@@ -191,24 +191,31 @@ int main(void)
     render("SysInf page 2 (BATTERY)");
     gIsInSubMenu           = false;
 
-    /* The RF item exists and sets the selected VFO's transceiver. */
+    /* One item per VFO, each setting its own VFO explicitly. */
     {
-        bool found = false;
+        bool found_a = false, found_b = false;
         unsigned mi;
-        for (mi = 0; MenuList[mi].name[0] != '\0'; mi++)
-            if (MenuList[mi].menu_id == MENU_RF) { found = true; break; }
-        printf("[dual] %s RF menu item exists\n", found ? "ok  " : "FAIL");
-        if (!found) failures++;
+        for (mi = 0; MenuList[mi].name[0] != '\0'; mi++) {
+            if (MenuList[mi].menu_id == MENU_RF_A) found_a = true;
+            if (MenuList[mi].menu_id == MENU_RF_B) found_b = true;
+        }
+        printf("[dual] %s RF A and RF B menu items exist\n",
+               (found_a && found_b) ? "ok  " : "FAIL");
+        if (!(found_a && found_b)) failures++;
     }
-    gEeprom.TX_VFO    = 0;
-    gIsInSubMenu      = true;
-    gMenuCursor       = UI_MENU_GetViewPos(MENU_RF);
+    gIsInSubMenu = true;
+    gMenuCursor  = UI_MENU_GetViewPos(MENU_RF_A);
     gSubMenuSelection = 1;              /* BK4829 */
     MENU_AcceptSetting();
+    gMenuCursor  = UI_MENU_GetViewPos(MENU_RF_B);
+    gSubMenuSelection = 2;              /* BK4815 */
+    MENU_AcceptSetting();
     {
-        bool ok = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829;
-        printf("[dual] %s RF menu item sets VFO A transceiver\n",
-               ok ? "ok  " : "FAIL");
+        bool ok = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829 &&
+                  SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815;
+        printf("[dual] %s RF A=4829 RF B=4815 (A=%u B=%u)\n",
+               ok ? "ok  " : "FAIL", (unsigned)SETTINGS_GetVfoTransceiver(0u),
+               (unsigned)SETTINGS_GetVfoTransceiver(1u));
         if (!ok) failures++;
     }
     gIsInSubMenu = false;

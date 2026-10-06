@@ -68,7 +68,8 @@ const t_menu_item MenuList[] =
     {"BusyCL",      MENU_BCL           }, // was "BCL"
     {"Compnd",      MENU_COMPAND       },
     {"Mode",        MENU_AM            }, // was "AM"
-    {"RF",          MENU_RF            }, // per-VFO RF transceiver
+    {"RF A",        MENU_RF_A          }, // VFO A's RF transceiver
+    {"RF B",        MENU_RF_B          }, // VFO B's RF transceiver
 #ifdef ENABLE_FEAT_F4HWN
     {"TXLock",      MENU_TX_LOCK       }, 
 #endif
@@ -1058,7 +1059,8 @@ void UI_DisplayMenu(void)
             strcpy(String, gSubMenu_W_N[gSubMenuSelection]);
             break;
 
-        case MENU_RF:
+        case MENU_RF_A:
+        case MENU_RF_B:
             strcpy(String, gSubMenu_RF[gSubMenuSelection]);
             break;
 

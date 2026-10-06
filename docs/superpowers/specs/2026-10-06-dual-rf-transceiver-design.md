@@ -69,10 +69,11 @@ answer and each has an explicit gate.
 - The field is the port's own setting, stored in the port's versioned settings
   blob, **not** in the read-only stock codeplug. It is a per-VFO value, so it
   survives reboot.
-- A main-menu item `RF` (short name fits the 7-byte menu slot) is added to
-  `MenuList[]` next to the other per-VFO items. Like `Step`/`Power`/`W/N`, it
-  edits the currently selected VFO (`gTxVfo`), so the operator picks the VFO
-  with EXIT and then sets its transceiver. `AUTO` is the default.
+- Two main-menu items, `RF A` and `RF B`, are added to `MenuList[]` next to the
+  other per-VFO items. Each names its VFO explicitly and writes that VFO's
+  transceiver, independent of which VFO is selected on the main screen, so the
+  operator does not have to switch VFOs to configure them. `AUTO` is the
+  default.
 
 ### Transceiver service layer
 

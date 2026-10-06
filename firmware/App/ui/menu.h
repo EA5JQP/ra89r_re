@@ -161,7 +161,8 @@ enum
     MENU_F2LONG,
     MENU_MLONG,
     MENU_BATTYP,
-    MENU_RF,
+    MENU_RF_A,
+    MENU_RF_B,
 #if defined(ENABLE_FEAT_F4HWN) && defined(ENABLE_FEAT_F4HWN_LOGO_SAV)
     MENU_SET_SAV
 #endif
