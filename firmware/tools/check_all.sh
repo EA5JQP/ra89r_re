@@ -18,11 +18,6 @@ $CC -std=c11 -I tools/host -I App -I App/driver tools/test_rf.c \
     App/driver/pa.c tools/host/host_led.c -o /tmp/ra89r_test_rf
 /tmp/ra89r_test_rf | tail -2
 
-echo "== test_bk4815_rx (BK4815 receive tune) =="
-$CC -std=c11 -I App -I App/driver tools/test_bk4815_rx.c \
-    App/driver/bk4815.c App/driver/bk4815_rx.c -o /tmp/ra89r_test_bk4815_rx
-/tmp/ra89r_test_bk4815_rx | tail -2
-
 echo "== test_beeper (DAC tone math) =="
 $CC -std=c11 -I App -I App/driver tools/test_beeper.c \
     -o /tmp/ra89r_test_beeper

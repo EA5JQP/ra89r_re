@@ -355,6 +355,14 @@ static void test_bk4815_synth(void)
           "set_tone writes reg 0x22 (0x22<<1)");
     tone = (uint16_t)((log_[0].data[0] << 8) | log_[0].data[1]);
     check_hex(tone, 0x0DDDu, "reg 0x22 = the 1000 Hz tone word");
+
+    /* RSSI: register 0x44, bits 6:0. */
+    other_bk4815 = 0x00D5u;
+    log_reset();
+    check_hex(bk4815_read_rssi(), 0x55u, "RSSI is reg 0x44 masked to 7 bits");
+    check(log_len == 1 && xfer_is(&log_[0], BK4815_CS_PIN, 0x89),
+          "RSSI read addresses reg 0x44 ((0x44<<1)|1)");
+    other_bk4815 = 0u;
 }
 
 /* The accessors the console's read-back verification walks.  If these are wrong

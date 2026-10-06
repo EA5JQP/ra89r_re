@@ -121,4 +121,7 @@ void bk4815_set_frequency(uint32_t freq_10hz, bool tx);
 /* Write one SELCALL/tone frequency to register 0x22. */
 void bk4815_set_tone(uint32_t tone_hz);
 
+/* The chip's RSSI indicator: register 0x44, bits 6:0. */
+uint16_t bk4815_read_rssi(void);
+
 #endif /* DRIVER_BK4815_H */
