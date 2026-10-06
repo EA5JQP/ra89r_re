@@ -260,15 +260,13 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
             s_state = BT_STATE_CONNECTED;
         update_stock_audio_paths();
         gUpdateDisplay = true;
-        /* Stock FUN_0801AE8C -> FUN_080075A0(0): set the module's mic and
-         * speaker gains from codeplug byte 8 before opening the call.  The
-         * module's own power-on default is not the CPS value, and the headset
-         * mic was silent until these were sent. */
-        bluetooth_send_param(BT_CMD_MICGAIN, bt_mic_gain_str[s_mic_gain_level]);
-        bluetooth_send_param(BT_CMD_SPKGAIN, bt_spk_gain_str[s_spk_gain_level]);
         /* Open the audio (SCO) link, as the stock does (`FUN_08007540`):
          * without it the radio's audio does not reach the earpiece and its
-         * button is not reported. */
+         * button is not reported.  On-radio regression: writing
+         * AT+MICGAIN/AT+SPKGAIN immediately before this stopped the module
+         * from reporting +IM_SCO_CONN, so BT receive audio never came up.  Keep
+         * the connect sequence to CALL=ON only; the menu still sends the gains
+         * explicitly, and they can be re-applied once SCO is confirmed up. */
         if (!s_call_on) {
             s_call_on = true;
             bluetooth_send_cmd(BT_CMD_BT_CALL_ON);

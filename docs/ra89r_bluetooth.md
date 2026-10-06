@@ -598,15 +598,18 @@ what keys TX, so `SINGLE0` is left ignored), and there is still **no**
 
 On earpiece connect the stock sets the module's gains (`FUN_0801AE8C` ->
 `FUN_080075A0(0)`): `AT+MICGAIN=<config[0x3b]>`, `AT+SPKGAIN=<config[0x3c]>`
-from codeplug **byte 8**, then opens the call.  The port had sent only
-`AT+BT_CALL=ON`, leaving the module at its power-on gains.  It now reads byte 8
-into `gEeprom.BT_MicGain`/`BT_SpkGain` (`codeplug_shared_settings`), seeds
-`bt_set_gain_levels()` at boot, and sends `AT+MICGAIN`/`AT+SPKGAIN` before
-`AT+BT_CALL=ON` on `+IM_BT_EAR_CONN`, matching the stock order.  The port's mic
-table was also short one entry (`"9"`), now fixed.  **Radio validation pending:**
-whether this is what makes the headset mic reach the transmitted signal; the
-radio-mic mute/analog route is still unidentified, so do not assume the gain
-alone fixes it.
+from codeplug **byte 8**, then opens the call.  The port's mic table was short
+one entry (`"9"`), now fixed, and it reads byte 8 into
+`gEeprom.BT_MicGain`/`BT_SpkGain` (`codeplug_shared_settings`).
+
+**Writing those gains before the call does not work on this module.**  A
+connect sequence of `AT+MICGAIN`/`AT+SPKGAIN` followed by `AT+BT_CALL=ON` made
+the module stop reporting `+IM_SCO_CONN`, so BT receive audio never came up (the
+captures below show the missing event).  The connect sequence is back to
+`AT+BT_CALL=ON` only, the sequence that does open SCO; the BT menu still sends
+the gains on demand, and they can be re-applied once SCO is confirmed up.  The
+headset-mic route and the radio-mic mute/analog path remain unidentified, so do
+not assume a gain write fixes the mic.
 
 The missing menu key beep was not specific to the BT screen: `BT_ProcessKeys`
 did not request a beep, and the shared K1 `AUDIO_PlayBeep()` returned early while
