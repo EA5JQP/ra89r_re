@@ -218,6 +218,26 @@ int main(void)
                (unsigned)gEeprom.CHANNEL_DISPLAY_MODE);
         printf("[storage] write test=%d\n", storage_write_test(&bad));
 
+        /* The per-VFO RF transceiver choice is part of the port's extra blob,
+         * so it needs the full save path (SETTINGS_SaveSettings), not the bare
+         * gEeprom save, and a reload to read it back. */
+        {
+            bool ok;
+
+            SETTINGS_SetVfoTransceiver(0u, RF_XCVR_BK4829);
+            SETTINGS_SetVfoTransceiver(1u, RF_XCVR_BK4815);
+            SETTINGS_SaveSettings();
+            SETTINGS_SetVfoTransceiver(0u, RF_XCVR_AUTO);
+            SETTINGS_SetVfoTransceiver(1u, RF_XCVR_AUTO);
+            SETTINGS_InitEEPROM();
+            ok = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829 &&
+                 SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815;
+            printf("[dual] %s per-VFO transceiver survives save/load (A=%u B=%u)\n",
+                   ok ? "ok  " : "FAIL", (unsigned)SETTINGS_GetVfoTransceiver(0u),
+                   (unsigned)SETTINGS_GetVfoTransceiver(1u));
+            if (!ok) failures++;
+        }
+
         /* Put the state back so the screens below render as before (a plain
          * SettingsDefaults() would clear the VFO pointers those screens
          * dereference -- port_state_init() re-establishes them). */

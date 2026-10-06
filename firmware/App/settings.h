@@ -364,4 +364,16 @@ void SETTINGS_UpdateChannel(uint16_t channel, const VFO_Info_t *pVFO, bool keep)
 #ifdef ENABLE_FEAT_F4HWN
     void SETTINGS_ResetTxLock(void);
 #endif
+
+/* Which RF transceiver a VFO uses.  AUTO keeps the port's default (the
+ * BK4829); the other values pin a VFO to a specific part.  The choice lives in
+ * the port's own settings blob, not the read-only stock codeplug. */
+typedef enum {
+    RF_XCVR_AUTO   = 0,
+    RF_XCVR_BK4829 = 1,
+    RF_XCVR_BK4815 = 2
+} rf_xcvr_t;
+
+rf_xcvr_t SETTINGS_GetVfoTransceiver(uint8_t vfo);
+void      SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr);
 #endif
