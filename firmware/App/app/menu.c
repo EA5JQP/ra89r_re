@@ -208,6 +208,11 @@ int MENU_GetLimits(uint8_t menu_id, int32_t *pMin, int32_t *pMax)
             *pMax = ARRAY_SIZE(gSubMenu_W_N) - 1;
             break;
 
+        case MENU_RF:
+            //*pMin = 0;
+            *pMax = ARRAY_SIZE(gSubMenu_RF) - 1;
+            break;
+
         case MENU_RESET:
             //*pMin = 0;
             *pMax = ARRAY_SIZE(gSubMenu_RESET) - 1;
@@ -594,6 +599,13 @@ void MENU_AcceptSetting(void)
         case MENU_W_N:
             gTxVfo->CHANNEL_BANDWIDTH = gSubMenuSelection;
             gRequestSaveChannel       = 1;
+            return;
+
+        case MENU_RF:
+            /* The selected VFO (the menu edits gTxVfo's VFO) picks its
+             * transceiver; the choice lives in the port's blob. */
+            SETTINGS_SetVfoTransceiver(gEeprom.TX_VFO, (rf_xcvr_t)gSubMenuSelection);
+            gRequestSaveSettings = true;
             return;
 
 #ifndef ENABLE_FEAT_F4HWN
@@ -1142,6 +1154,10 @@ void MENU_ShowCurrentSetting(void)
 
         case MENU_W_N:
             gSubMenuSelection = gTxVfo->CHANNEL_BANDWIDTH;
+            break;
+
+        case MENU_RF:
+            gSubMenuSelection = (uint16_t)SETTINGS_GetVfoTransceiver(gEeprom.TX_VFO);
             break;
 
 #ifndef ENABLE_FEAT_F4HWN

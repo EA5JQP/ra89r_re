@@ -14,6 +14,7 @@
 
 #include "app/app.h"
 #include "app/fm.h"
+#include "app/menu.h"
 #include "audio.h"
 #include "driver/backlight.h"
 #include "driver/bk4819.h"
@@ -189,6 +190,28 @@ int main(void)
     UI_DisplayMenu();
     render("SysInf page 2 (BATTERY)");
     gIsInSubMenu           = false;
+
+    /* The RF item exists and sets the selected VFO's transceiver. */
+    {
+        bool found = false;
+        unsigned mi;
+        for (mi = 0; MenuList[mi].name[0] != '\0'; mi++)
+            if (MenuList[mi].menu_id == MENU_RF) { found = true; break; }
+        printf("[dual] %s RF menu item exists\n", found ? "ok  " : "FAIL");
+        if (!found) failures++;
+    }
+    gEeprom.TX_VFO    = 0;
+    gIsInSubMenu      = true;
+    gMenuCursor       = UI_MENU_GetViewPos(MENU_RF);
+    gSubMenuSelection = 1;              /* BK4829 */
+    MENU_AcceptSetting();
+    {
+        bool ok = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829;
+        printf("[dual] %s RF menu item sets VFO A transceiver\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+    }
+    gIsInSubMenu = false;
 
     /* The status bar with a charged pack: the icon must show bars, and (with
      * gSetting_battery_text = 2) the percentage beside it. */

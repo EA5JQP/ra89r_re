@@ -68,6 +68,7 @@ const t_menu_item MenuList[] =
     {"BusyCL",      MENU_BCL           }, // was "BCL"
     {"Compnd",      MENU_COMPAND       },
     {"Mode",        MENU_AM            }, // was "AM"
+    {"RF",          MENU_RF            }, // per-VFO RF transceiver
 #ifdef ENABLE_FEAT_F4HWN
     {"TXLock",      MENU_TX_LOCK       }, 
 #endif
@@ -224,6 +225,14 @@ const char* const gSubMenu_W_N[] =
 {
     "WIDE",
     "NARROW"
+};
+
+/* Which RF transceiver the selected VFO uses (rf_xcvr_t in settings.h). */
+const char* const gSubMenu_RF[] =
+{
+    "Auto",
+    "4829",
+    "4815"
 };
 
 const char* const gSubMenu_OFF_ON[] =
