@@ -783,6 +783,7 @@ static void MAIN_Key_MENU(bool bKeyPressed, bool bKeyHeld)
         if (!bKeyPressed) {          /* MENU released while F is held */
             gWasFKeyPressed = false;
             HideFKeyIcon();
+            gBeepToPlay = BEEP_1KHZ_60MS_OPTIONAL;
             gRequestDisplayScreen = DISPLAY_BT;
         }
         return;

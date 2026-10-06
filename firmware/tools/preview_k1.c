@@ -15,6 +15,7 @@
 #include "app/app.h"
 #include "app/bt.h"
 #include "audio.h"
+#include "driver/audio_path.h"
 #include "driver/backlight.h"
 #include "driver/gpio.h"
 #include "driver/keyboard.h"
@@ -95,6 +96,44 @@ static void check_bt_gains(void)
     if (!ok) failures++;
 }
 
+static void check_bt_audio_route_override(void)
+{
+    bool ok;
+
+    bt_set_enabled(true);
+    bt_set_speaker_switch(false);
+    bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
+    ok = !audio_path_is_on();
+    printf("[audio route] %s BT link initially mutes the local path\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+
+    /* The K1 audio/beep path may request PC13 high after the BT link policy.
+     * BT-exclusive routing must remain authoritative over that request. */
+    GPIO_EnableAudioPath();
+    ok = !audio_path_is_on();
+    printf("[audio route] %s local audio enable cannot override linked-BT mute\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+
+    gCurrentFunction = FUNCTION_RECEIVE;
+    gEeprom.BEEP_CONTROL = true;
+    host_beeper_reset_counts();
+    AUDIO_PlayKeyBeep(BEEP_1KHZ_60MS_OPTIONAL);
+    ok = host_beeper_play_count() == 1u &&
+         host_beeper_plays_path_on() == 0u && !audio_path_is_on();
+    printf("[audio route] %s key beep does not reopen the local path while linked\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+
+    bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
+    ok = audio_path_is_on();
+    printf("[audio route] %s BT disconnect restores the local audio path\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+    bt_set_enabled(false);
+}
+
 /* One pass of the firmware's own loop (firmware/App/main.c): the application
  * state machine and panel, the port's transmit check, then the 10 ms slice --
  * which is where the K1's CheckKeys() lives and therefore the only place a key
@@ -152,6 +191,7 @@ int main(void)
     SETTINGS_InitEEPROM();
     check_bt_speaker_switch();
     check_bt_gains();
+    check_bt_audio_route_override();
     SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
 
     /* ---- the image: the import must have given the K1 real channels -------
@@ -661,6 +701,9 @@ int main(void)
      * keys changes the backlight countdown the checks above rely on. */
     {
         bool ok;
+        static const char found_device[] = "A1B2C3D4E5F6,Test headset,-42";
+        uint8_t before_connecting[sizeof gFrameBuffer];
+        uint8_t before_connected[sizeof gFrameBuffer];
         unsigned int i;
 
         gScreenToDisplay      = DISPLAY_MAIN;
@@ -669,7 +712,15 @@ int main(void)
             step();
         gWasFKeyPressed       = true;
         gKeyInputCountdown    = key_input_timeout_500ms;
+        gBeepToPlay = BEEP_NONE;
+        gEeprom.BEEP_CONTROL = true;
+        host_beeper_reset_counts();
         press(KEY_MENU);
+
+        ok = host_beeper_play_count() == 1u;
+        printf("[beep] %s F+MENU transition beeps once (%u plays)\n",
+               ok ? "ok  " : "FAIL", host_beeper_play_count());
+        if (!ok) failures++;
 
         ok = (gScreenToDisplay == DISPLAY_BT);
         printf("\n[bt] %s F+MENU -> screen %u (DISPLAY_BT = %u, not DISPLAY_MENU)\n",
@@ -688,10 +739,40 @@ int main(void)
         render("UI_DisplayBT(): the Bluetooth menu");
 
         /* Enter Pairing (item 1) and render the scan/device screen. */
-        BT_ProcessKeys(KEY_DOWN, true, false);   /* cursor -> Pair */
+        BT_ProcessKeys(KEY_UP, true, false);     /* cursor -> Pair from Paired */
         BT_ProcessKeys(KEY_MENU, true, false);   /* enter Pairing */
         UI_DisplayBT();
         render("UI_DisplayBT(): Pairing (scanning)");
+
+        gUpdateDisplay = false;
+        bt_service_event(BT_EV_EARDEV, found_device,
+                         (unsigned)(sizeof found_device - 1u));
+        ok = bt_found_count() == 1u && gUpdateDisplay;
+        printf("[bt] %s found device refreshes pairing screen immediately\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+        UI_DisplayBT();
+        memcpy(before_connecting, gFrameBuffer, sizeof before_connecting);
+        render("UI_DisplayBT(): found device");
+
+        BT_ProcessKeys(KEY_MENU, true, false);   /* select and connect */
+        UI_DisplayBT();
+        ok = memcmp(before_connecting, gFrameBuffer, sizeof before_connecting) != 0;
+        printf("[bt] %s MENU selection visibly shows connection progress\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+        memcpy(before_connected, gFrameBuffer, sizeof before_connected);
+
+        bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
+        UI_DisplayBT();
+        ok = bt_connected() &&
+             memcmp(before_connected, gFrameBuffer, sizeof before_connected) != 0;
+        printf("[bt] %s successful connection visibly confirms the device "
+               "(linked=%u changed=%u)\n", ok ? "ok  " : "FAIL",
+               (unsigned)bt_connected(),
+               memcmp(before_connected, gFrameBuffer, sizeof before_connected) != 0);
+        if (!ok) failures++;
+        render("UI_DisplayBT(): connection confirmation");
 
         /* UI_DisplayBT must stay inside gFrameBuffer[0..6]: a 7th item row
          * would run off the end into gStatusLine, and the inverse highlight

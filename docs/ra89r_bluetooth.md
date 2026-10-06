@@ -485,8 +485,11 @@ The port's BT screen (`App/ui/bt.c`) now renders in the K1 menu's own layout
 index/count below) with six-character labels, and every item acts: BT Switch,
 Pair, Hold, Scan, Volume, Mic and PTT set their fields and/or send the stock's
 command; Paired and Info are read-outs.  Pairing uses the scan-and-auto-connect
-path; the per-device pick still needs the binary `+IM_EARDEV` record captured on
-the radio.
+path and also keeps the explicit found-device list.  A received `+IM_EARDEV`
+now marks the display dirty so the list appears without a key press. Selecting a
+device shows `Connecting...`; `+IM_BT_EAR_CONN` changes the screen to a visible
+`Connected` confirmation with the device name. These screen transitions have
+host-preview coverage; a live pairing-session check is still required.
 
 ## Probing for a data (SPP / BLE-GATT) path -- result
 
@@ -605,21 +608,23 @@ whether this is what makes the headset mic reach the transmitted signal; the
 radio-mic mute/analog route is still unidentified, so do not assume the gain
 alone fixes it.
 
-The missing menu key beep is not specific to the BT screen: `BT_ProcessKeys`
+The missing menu key beep was not specific to the BT screen: `BT_ProcessKeys`
 did not request a beep, and the shared K1 `AUDIO_PlayBeep()` returned early while
 `gCurrentFunction` is RECEIVE or MONITOR (`App/audio.c`). The port now routes
 normal-menu feedback through `AUDIO_PlayKeyBeep()` and requests the same optional
-1 kHz beep for a non-held BT-menu key. This path honors the Beep setting and
-does not repeat on held events. `preview_k1` exercises both menu paths in
-RECEIVE using the host beeper.
+1 kHz beep for a non-held BT-menu key. F+MENU now requests the same beep when the
+BT screen is entered (the transition occurs on MENU release). This path honors
+the Beep setting and does not repeat on held events. `preview_k1` exercises
+normal-menu, BT-menu and F+MENU feedback in RECEIVE using the host beeper.
 
-The **destination is still unverified**: `AUDIO_PlayKeyBeep()` uses the existing
-PA4/DAC beeper and temporarily enables the PC13 audio path, whose physical
-destination has not been established. The BT link controls remain the stock
-PC13 level and BK4829 `0x33` pin-2 output; neither host readback nor the current
-radio report (audio heard through both endpoints) proves exclusive routing or
-that a DAC beep reaches the BT headset. Do not claim linked beeps are headset-only
-until the radio is checked, and do not add a speculative route write.
+The local-output path now has BT-exclusive arbitration: `bt.c` holds the
+PC13-controlled `audio_path` off while linked, and the low-level driver ignores
+later K1/RF/beeper enable requests until link loss. The host preview verifies
+that a later local enable cannot override the BT hold and that disconnect restores
+the local path. This is a code-level fix for the reported local-audio leak; the
+hardware route is **not yet validated**. The PA4/DAC beep still uses this same
+local path, so linked beep delivery to the headset remains unresolved pending a
+radio test. Do not claim the beep is audible in the headset from host readback.
 
 For transmit, the user confirms the stock silences the radio's own mic while in
 BT mode, and ordinary port TX currently still uses the radio mic.  The earpiece

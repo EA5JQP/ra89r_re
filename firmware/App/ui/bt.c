@@ -34,6 +34,7 @@ static uint8_t s_cursor;
 static bool    s_editing;   /* MENU entered the item; UP/DOWN change its value */
 static bool    s_scan;      /* transient: the Scan item is an action, not a setting */
 static bool    s_pairing;   /* showing the found-device list */
+static bool    s_connecting;/* a found device was selected; show progress/result */
 static uint8_t s_pair_cursor;
 
 unsigned BT_MenuCount(void)
@@ -133,6 +134,22 @@ void UI_DisplayBT(void)
 
     if (s_pairing) {
         const unsigned n = bt_found_count();
+
+        if (s_connecting) {
+            const bool connected = bt_connected();
+            const char *name = connected ? bt_linked_name()
+                             : (gEeprom.BT_PairedName[0] != '\0'
+                                ? gEeprom.BT_PairedName : "Device");
+
+            UI_PrintStringSmallNormal(connected ? "Connected" : "Connecting...",
+                                      0, 0, 0);
+            GUI_DisplaySmallest(name, 0, 22, false, true);
+            UI_PrintStringSmallNormal(connected ? "Press EXIT" : "Please wait",
+                                      0, 0, 4);
+            ST7565_BlitStatusLine();
+            ST7565_BlitFullScreen();
+            return;
+        }
 
         UI_PrintStringSmallNormal("Pairing", 0, 0, 0);
 
@@ -285,6 +302,7 @@ void BT_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 
         case KEY_MENU:
             if (bKeyPressed && !bKeyHeld && bt_found_count() > 0u) {
+                s_connecting = true;
                 bt_connect_dev(s_pair_cursor);
                 strncpy(gEeprom.BT_PairedName, bt_found_dev(s_pair_cursor),
                         sizeof gEeprom.BT_PairedName - 1u);
@@ -298,6 +316,7 @@ void BT_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
             if (bKeyPressed && !bKeyHeld) {
                 bt_stop_connect();
                 s_pairing     = false;
+                s_connecting  = false;
                 s_pair_cursor = 0;
                 gUpdateDisplay = true;
             }
@@ -337,6 +356,7 @@ void BT_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
                 s_editing = false;          /* confirm */
             } else if (s_cursor == 1u) {    /* Pair: scan and pick */
                 s_pairing     = true;
+                s_connecting  = false;
                 s_pair_cursor = 0;
                 bt_start_connect();
             } else if (bt_item_is_value(s_cursor)) {

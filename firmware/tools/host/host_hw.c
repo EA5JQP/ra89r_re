@@ -4,6 +4,7 @@
 #include "py32f4xx.h"
 
 #include "driver/backlight.h"
+#include "driver/audio_path.h"
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
 #include "driver/systick.h"
@@ -102,8 +103,8 @@ int16_t  BK4819_GetRSSI_dBm(void) { return -120; }
 /* More of the same: the menu's action path calls these, and the host compiles
  * no audio engine and no GPIO driver. */
 void BK4819_ToggleGpioOut(BK4819_GPIO_PIN_t pin, bool enable) { (void)pin; (void)enable; }
-/* BT audio-path hardware is not present in the screen/key preview. */
-void audio_path_drive(int on) { (void)on; }
+/* The preview links the real audio_path driver; only the RF-side BT pin remains
+ * a stub here. */
 void pa_set_bt_audio(bool on) { (void)on; }
 
 
@@ -322,15 +323,12 @@ void     BK4819_WriteRegister(BK4819_REGISTER_t Register, uint16_t Data)
 uint16_t BK4819_ReadRegister(BK4819_REGISTER_t Register) { (void)Register; return 0; }
 void     BK4819_PickRXFilterPathBasedOnFrequency(uint32_t Frequency) { (void)Frequency; }
 
-/* The amplifier enable (PC13).  The beeper's DAC tone only reaches the speaker
- * through it, and the idle receive path leaves it off, so a beep has to turn it
- * on.  The previews track it so that can be asserted (see tools/preview_k1.c). */
-static int s_host_audio_path;
+/* The real audio_path driver is linked in the preview, so policy and reported
+ * state exercise the target implementation rather than a separate model. */
+void GPIO_EnableAudioPath(void) { audio_path_drive(1); }
+void GPIO_DisableAudioPath(void) { audio_path_drive(0); }
 
-void GPIO_EnableAudioPath(void) { s_host_audio_path = 1; }
-void GPIO_DisableAudioPath(void) { s_host_audio_path = 0; }
-
-bool host_audio_path_is_on(void) { return s_host_audio_path != 0; }
+bool host_audio_path_is_on(void) { return audio_path_is_on(); }
 
 void systick_delay_ms(uint32_t ms) { (void)ms; }
 

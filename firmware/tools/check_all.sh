@@ -51,7 +51,7 @@ $CC $HOST_FLAGS -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
     App/board.c App/settings.c App/version.c App/dcs.c App/frequencies.c \
     App/helper/battery.c App/helper/boot.c App/driver/system.c App/font.c \
     App/bitmaps.c App/driver/st7565.c App/driver/keyboard.c \
-    App/driver/backlight.c -o /tmp/ra89r_preview_k1
+    App/driver/backlight.c App/driver/audio_path.c -o /tmp/ra89r_preview_k1
 /tmp/ra89r_preview_k1 | tail -3
 
 if [ -n "${ARM_TOOLCHAIN_ROOT:-}" ] && [ -d "$ARM_TOOLCHAIN_ROOT" ]; then

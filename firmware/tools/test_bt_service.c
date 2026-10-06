@@ -16,15 +16,28 @@
 #include <string.h>
 
 #include "app/bt.h"
+#include "driver/audio_path.h"
 #include "driver/bluetooth.h"
+
+bool gUpdateDisplay;
 
 extern void bt_set_speaker_switch(bool enabled);
 extern void bt_set_radio_tx_active(bool active);
 
 static int host_audio_path = 1;
 static int host_bt_rf_path;
+static bool host_bt_exclusive;
 
-void audio_path_drive(int on) { host_audio_path = on != 0; }
+void audio_path_drive(int on)
+{
+    host_audio_path = (on != 0) && !host_bt_exclusive;
+}
+void audio_path_set_bt_exclusive(bool enabled)
+{
+    host_bt_exclusive = enabled;
+    if (enabled)
+        host_audio_path = 0;
+}
 void pa_set_bt_audio(bool on) { host_bt_rf_path = on ? 1 : 0; }
 
 #define MAX_CMDS 40
@@ -203,6 +216,18 @@ int main(void)
     bt_set_scan(false);
     check(rec_last_is("AT+BT_SCAN=OFF\r\n"), "scan off -> AT+BT_SCAN=OFF");
 
+    /* A found device arrives asynchronously while the BT pairing screen is
+     * open.  The UI must be scheduled immediately, not wait for another key. */
+    {
+        static const char device[] = "A1B2C3D4E5F6,Test headset,-42";
+
+        bt_start_connect();
+        gUpdateDisplay = false;
+        bt_service_event(BT_EV_EARDEV, device, (unsigned)strlen(device));
+        check(bt_found_count() == 1u && gUpdateDisplay,
+              "new pairing device schedules an immediate BT-menu refresh");
+    }
+
     /* The earpiece PTT button (`+IM_EAR_PTT_KEYDOWN/UP`) keys the transmitter. */
     check(!bt_ptt_down(), "earpiece PTT starts up");
     bt_service_event(BT_EV_EAR_PTT_DOWN, NULL, 0);
@@ -278,13 +303,16 @@ int main(void)
     rec_reset();
     bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
 
-    /* Stock FUN_080177A8: PC13 follows the Speak Switch setting only while
-     * BT is enabled and linked; chip pin 2 follows the BT link itself. */
+    /* BT link enforces the user's BT-only audio route.  No later K1 audio-path
+     * request may reopen the local speaker until the BT link drops. */
     bt_set_speaker_switch(false);
     check(host_audio_path == 1, "PC13 idles high before the BT link");
     bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
     check(host_audio_path == 0, "Speak Switch off drives PC13 low while linked");
     check(host_bt_rf_path == 1, "BT link sets the stock chip audio output");
+    audio_path_drive(1);
+    check(host_audio_path == 0,
+          "later local audio-path enable cannot override BT-exclusive routing");
     bt_service_event(BT_EV_SCO_DISCONNECT, NULL, 0);
     check(host_audio_path == 0 && host_bt_rf_path == 1,
           "SCO loss alone keeps BT-link-controlled stock paths active");
@@ -294,7 +322,7 @@ int main(void)
 
     bt_set_speaker_switch(true);
     bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
-    check(host_audio_path == 1, "Speak Switch on keeps PC13 high while linked");
+    check(host_audio_path == 0, "BT-exclusive routing overrides Speak Switch while linked");
     bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
     bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
     bt_set_enabled(false);

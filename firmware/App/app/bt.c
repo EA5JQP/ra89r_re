@@ -12,6 +12,7 @@
 
 #include "driver/audio_path.h"
 #include "driver/pa.h"
+#include "misc.h"
 
 #define BT_QUEUE_MAX    8u
 #define BT_RESET_TICKS  200u    /* 2 s at the 10 ms tick */
@@ -72,6 +73,11 @@ static void update_stock_audio_paths(void)
     const bool linked = s_enabled && s_bt_linked;
     const bool pc13_high = !linked || s_speaker_switch;
 
+    /* The K1/RF/beeper paths can independently request PC13 high.  BT's
+     * exclusive-output policy must arbitrate at the low-level driver so none
+     * of those requests can reopen the local speaker while the headset is
+     * linked.  User requirement: BT link means BT output only. */
+    audio_path_set_bt_exclusive(linked);
     audio_path_drive(pc13_high ? 1 : 0);
     if (linked != s_pa_bt_audio_on) {
         pa_set_bt_audio(linked);
@@ -243,6 +249,7 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
             eardev_name(s_found[s_found_n], n, s_found_name[s_found_n],
                         BT_NAME_LEN);
             s_found_n++;
+            gUpdateDisplay = true;
         }
         break;
     }
@@ -254,6 +261,7 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
         if (s_state == BT_STATE_SCAN || s_state == BT_STATE_CONNECT)
             s_state = BT_STATE_CONNECTED;
         update_stock_audio_paths();
+        gUpdateDisplay = true;
         /* Stock FUN_0801AE8C -> FUN_080075A0(0): set the module's mic and
          * speaker gains from codeplug byte 8 before opening the call.  The
          * module's own power-on default is not the CPS value, and the headset
@@ -288,6 +296,7 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
         update_stock_audio_paths();
         if (s_state == BT_STATE_CONNECTED)
             s_state = BT_STATE_IDLE;
+        gUpdateDisplay = true;
         break;
 
     case BT_EV_SCO_DISCONNECT:
