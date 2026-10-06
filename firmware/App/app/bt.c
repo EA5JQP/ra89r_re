@@ -73,11 +73,9 @@ static void update_stock_audio_paths(void)
     const bool linked = s_enabled && s_bt_linked;
     const bool pc13_high = !linked || s_speaker_switch;
 
-    /* The K1/RF/beeper paths can independently request PC13 high.  BT's
-     * exclusive-output policy must arbitrate at the low-level driver so none
-     * of those requests can reopen the local speaker while the headset is
-     * linked.  User requirement: BT link means BT output only. */
-    audio_path_set_bt_exclusive(linked);
+    /* Mirror the stock PC13 level policy.  Its physical role is unresolved;
+     * don't clamp later audio-path clients until the BT/local analog route is
+     * proven, because that hold silenced both audio endpoints on the radio. */
     audio_path_drive(pc13_high ? 1 : 0);
     if (linked != s_pa_bt_audio_on) {
         pa_set_bt_audio(linked);

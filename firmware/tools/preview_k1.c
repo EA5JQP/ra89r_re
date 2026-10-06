@@ -96,7 +96,7 @@ static void check_bt_gains(void)
     if (!ok) failures++;
 }
 
-static void check_bt_audio_route_override(void)
+static void check_bt_audio_path_policy(void)
 {
     bool ok;
 
@@ -108,11 +108,12 @@ static void check_bt_audio_route_override(void)
            ok ? "ok  " : "FAIL");
     if (!ok) failures++;
 
-    /* The K1 audio/beep path may request PC13 high after the BT link policy.
-     * BT-exclusive routing must remain authoritative over that request. */
+    /* PC13's destination is not proven to be a local-only amp.  The radio test
+     * with the BT-exclusive clamp muted both local and BT receive audio, so do
+     * not block the K1 audio feed on this line until its role is mapped. */
     GPIO_EnableAudioPath();
-    ok = !audio_path_is_on();
-    printf("[audio route] %s local audio enable cannot override linked-BT mute\n",
+    ok = audio_path_is_on();
+    printf("[audio route] %s BT link does not clamp the shared audio-path request\n",
            ok ? "ok  " : "FAIL");
     if (!ok) failures++;
 
@@ -121,8 +122,8 @@ static void check_bt_audio_route_override(void)
     host_beeper_reset_counts();
     AUDIO_PlayKeyBeep(BEEP_1KHZ_60MS_OPTIONAL);
     ok = host_beeper_play_count() == 1u &&
-         host_beeper_plays_path_on() == 0u && !audio_path_is_on();
-    printf("[audio route] %s key beep does not reopen the local path while linked\n",
+         host_beeper_plays_path_on() == 1u && !audio_path_is_on();
+    printf("[audio route] %s key beep uses and restores the audio path\n",
            ok ? "ok  " : "FAIL");
     if (!ok) failures++;
 
@@ -191,7 +192,7 @@ int main(void)
     SETTINGS_InitEEPROM();
     check_bt_speaker_switch();
     check_bt_gains();
-    check_bt_audio_route_override();
+    check_bt_audio_path_policy();
     SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
 
     /* ---- the image: the import must have given the K1 real channels -------

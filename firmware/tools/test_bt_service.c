@@ -26,18 +26,8 @@ extern void bt_set_radio_tx_active(bool active);
 
 static int host_audio_path = 1;
 static int host_bt_rf_path;
-static bool host_bt_exclusive;
 
-void audio_path_drive(int on)
-{
-    host_audio_path = (on != 0) && !host_bt_exclusive;
-}
-void audio_path_set_bt_exclusive(bool enabled)
-{
-    host_bt_exclusive = enabled;
-    if (enabled)
-        host_audio_path = 0;
-}
+void audio_path_drive(int on) { host_audio_path = on != 0; }
 void pa_set_bt_audio(bool on) { host_bt_rf_path = on ? 1 : 0; }
 
 #define MAX_CMDS 40
@@ -311,8 +301,9 @@ int main(void)
     check(host_audio_path == 0, "Speak Switch off drives PC13 low while linked");
     check(host_bt_rf_path == 1, "BT link sets the stock chip audio output");
     audio_path_drive(1);
-    check(host_audio_path == 0,
-          "later local audio-path enable cannot override BT-exclusive routing");
+    check(host_audio_path == 1,
+          "later audio-path requests are not clamped by unverified BT routing");
+    audio_path_drive(0);
     bt_service_event(BT_EV_SCO_DISCONNECT, NULL, 0);
     check(host_audio_path == 0 && host_bt_rf_path == 1,
           "SCO loss alone keeps BT-link-controlled stock paths active");
@@ -322,7 +313,7 @@ int main(void)
 
     bt_set_speaker_switch(true);
     bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
-    check(host_audio_path == 0, "BT-exclusive routing overrides Speak Switch while linked");
+    check(host_audio_path == 1, "Speak Switch on retains stock PC13 level while linked");
     bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
     bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
     bt_set_enabled(false);

@@ -617,14 +617,14 @@ BT screen is entered (the transition occurs on MENU release). This path honors
 the Beep setting and does not repeat on held events. `preview_k1` exercises
 normal-menu, BT-menu and F+MENU feedback in RECEIVE using the host beeper.
 
-The local-output path now has BT-exclusive arbitration: `bt.c` holds the
-PC13-controlled `audio_path` off while linked, and the low-level driver ignores
-later K1/RF/beeper enable requests until link loss. The host preview verifies
-that a later local enable cannot override the BT hold and that disconnect restores
-the local path. This is a code-level fix for the reported local-audio leak; the
-hardware route is **not yet validated**. The PA4/DAC beep still uses this same
-local path, so linked beep delivery to the headset remains unresolved pending a
-radio test. Do not claim the beep is audible in the headset from host readback.
+An attempted BT-exclusive PC13 hold made **both** endpoints silent on the radio.
+That disproves the assumption that PC13 is a local-speaker-only mute; commit
+`9308b54`'s hold was removed. The current code again mirrors the stock PC13
+level and allows later audio-path requests. This may let local speaker audio
+return, but it does not establish BT-only routing. The line's physical role and
+the actual local-vs-BT analog split remain open; do not add another mute or route
+write without a radio measurement. The PA4/DAC beep destination is also
+unverified.
 
 For transmit, the user confirms the stock silences the radio's own mic while in
 BT mode, and ordinary port TX currently still uses the radio mic.  The earpiece
