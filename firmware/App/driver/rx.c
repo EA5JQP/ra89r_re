@@ -121,7 +121,6 @@ uint32_t rx_rx_frequency(void)
 void rx_service(void)
 {
     static bool squelch_open;
-    static uint32_t last_freq;
 
     /* The FM feature owns the receiver and the audio while it is up (see
      * rx_set_fm_active()): leave the BK4829 alone so it cannot drive the
@@ -129,22 +128,14 @@ void rx_service(void)
     if (s_fm_active)
         return;
 
-    /* Keep the second transceiver on its own VFO (a no-op unless a VFO selects
-     * the BK4815). */
+    /* Keep both transceivers on their own VFO.  This is now the only place the
+     * BK4829 is retuned from: the primary VFO (the BK4829 one) drives it, so
+     * with one VFO on each chip the BK4829 does not follow the receiver onto
+     * the BK4815's VFO. */
     rf_dual_refresh();
 
     if (rx_ready())
         rx_poll();
-
-    {
-        const uint32_t freq = (gRxVfo != 0) ? gRxVfo->pRX->Frequency : 0u;
-
-        if (freq != last_freq) {
-            last_freq = freq;
-            if (freq != 0u)
-                rx_set_frequency(freq);
-        }
-    }
 
     if (rx_ready() && rx_squelch_open() != squelch_open) {
         squelch_open = rx_squelch_open();
@@ -162,19 +153,32 @@ void rx_service(void)
  * from rx_service() and once at boot. */
 void rf_dual_refresh(void)
 {
-    static int      last_sec  = -2;     /* -2 = "never applied" */
-    static uint32_t last_freq = 0u;
+    static int      last_pri   = -2;    /* -2 = "never applied" */
+    static int      last_sec   = -2;
+    static uint32_t last_pri_f = 0u;
+    static uint32_t last_sec_f = 0u;
     const bool      a_4829 = SETTINGS_GetVfoTransceiver(0u) != RF_XCVR_BK4815;
     const bool      b_4829 = SETTINGS_GetVfoTransceiver(1u) != RF_XCVR_BK4815;
     const rf_dual_roles_t roles = rf_dual_choose(a_4829, b_4829, gEeprom.RX_VFO);
+    uint32_t        pri_freq = 0u;
     uint32_t        sec_freq = 0u;
 
+    if (roles.primary >= 0)
+        pri_freq = gEeprom.VfoInfo[roles.primary].freq_config_RX.Frequency;
     if (roles.secondary >= 0)
         sec_freq = gEeprom.VfoInfo[roles.secondary].freq_config_RX.Frequency;
 
-    if (roles.secondary != last_sec || sec_freq != last_freq) {
+    /* The BK4829 (primary) is retuned here, not from the receiver's VFO: with
+     * one VFO on each chip the receiver may be following the BK4815 one. */
+    if (pri_freq != 0u && (roles.primary != last_pri || pri_freq != last_pri_f)) {
+        rx_set_frequency(pri_freq);
+        last_pri   = roles.primary;
+        last_pri_f = pri_freq;
+    }
+
+    if (roles.secondary != last_sec || sec_freq != last_sec_f) {
         rf_dual_apply(&roles, sec_freq);
-        last_sec  = roles.secondary;
-        last_freq = sec_freq;
+        last_sec   = roles.secondary;
+        last_sec_f = sec_freq;
     }
 }

@@ -96,6 +96,11 @@ VFO" means selecting which VFO is served by the primary (BK4829) and which by
 the secondary (BK4815); a VFO set to `BK4815` is receive-capable but cannot be
 the transmit VFO until BK4815 TX is proven.
 
+**Transmit fallback (deliberate):** transmit always uses the BK4829, at the
+selected TX VFO's frequency, whatever receive transceiver that VFO names. The
+per-VFO choice selects the *receive* part; it never moves transmit onto an
+unproven path. This is a defined fallback, not an error case.
+
 ### Dual-active operation
 
 - `rf_dual` configures the primary for the primary VFO (frequency, band,

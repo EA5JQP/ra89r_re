@@ -12,26 +12,33 @@ cd "$(dirname "$0")/.."
 CC=${CC:-gcc}
 HOST_FLAGS="-std=c11 -I tools/host -I App -I App/driver"
 
-echo "== test_rf (register paths, including stock BT pin semantics) =="
+# Run a test/build command, keep its exit status, and show only its tail.  A
+# plain `cmd | tail` would report tail's status and mask a failure.
+run() {
+    out=$("$@" 2>&1) || { printf '%s\n' "$out"; return 1; }
+    printf '%s\n' "$out" | tail -2
+}
+
+echo "== test_rf (register paths, including the BK4815 synthesizer) =="
 $CC -std=c11 -I tools/host -I App -I App/driver tools/test_rf.c \
     App/driver/bk4829.c App/driver/bk4815.c App/driver/bk4819.c \
     App/driver/pa.c tools/host/host_led.c -o /tmp/ra89r_test_rf
-/tmp/ra89r_test_rf | tail -2
+run /tmp/ra89r_test_rf
 
 echo "== test_rf_dual (two-transceiver coordinator) =="
 $CC -std=c11 -I App -I App/driver tools/test_rf_dual.c \
     App/driver/rf_dual.c App/driver/bk4815.c -o /tmp/ra89r_test_rf_dual
-/tmp/ra89r_test_rf_dual | tail -2
+run /tmp/ra89r_test_rf_dual
 
 echo "== test_beeper (DAC tone math) =="
 $CC -std=c11 -I App -I App/driver tools/test_beeper.c \
     -o /tmp/ra89r_test_beeper
-/tmp/ra89r_test_beeper | tail -2
+run /tmp/ra89r_test_beeper
 
 echo "== test_bk1080 (FM receiver) =="
 $CC -std=c11 -I App -I App/driver tools/test_bk1080.c \
     App/driver/bk1080.c -o /tmp/ra89r_test_bk1080
-/tmp/ra89r_test_bk1080 | tail -2
+run /tmp/ra89r_test_bk1080
 
 echo "== preview_k1 (screens + keys + settings, on a PC) =="
 $CC $HOST_FLAGS -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
@@ -49,11 +56,11 @@ $CC $HOST_FLAGS -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
     App/helper/battery.c App/helper/boot.c App/driver/system.c App/font.c \
     App/bitmaps.c App/driver/st7565.c App/driver/keyboard.c \
     App/driver/backlight.c App/driver/audio_path.c -o /tmp/ra89r_preview_k1
-/tmp/ra89r_preview_k1 | tail -3
+run /tmp/ra89r_preview_k1
 
 if [ -n "${ARM_TOOLCHAIN_ROOT:-}" ] && [ -d "$ARM_TOOLCHAIN_ROOT" ]; then
     echo "== firmware build =="
-    cmake --build build/Debug 2>&1 | tail -4
+    run cmake --build build/Debug
 else
     echo "== firmware build skipped: set ARM_TOOLCHAIN_ROOT =="
 fi

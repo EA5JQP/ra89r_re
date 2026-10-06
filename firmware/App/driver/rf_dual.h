@@ -7,9 +7,13 @@
  * path -- and the BK4815 is a receive-only secondary.
  *
  * Device-header free and gEeprom-free on purpose: `rf_dual_choose` is pure and
- * host-testable, and the caller resolves `AUTO` and reads the VFOs.  A VFO
- * whose transceiver resolves to the BK4815 is receive-only; the transmit VFO
- * must be the BK4829 one.
+ * host-testable, and the caller resolves `AUTO` and reads the VFOs.
+ *
+ * Transmit is always the BK4829, at the selected TX VFO's frequency: it is the
+ * only part with a validated transmit path (`driver/tx.c`), so a VFO whose
+ * receive transceiver is the BK4815 still transmits through the BK4829.  The
+ * per-VFO choice selects the *receive* part; it does not move transmit onto an
+ * unproven path.
  */
 #ifndef DRIVER_RF_DUAL_H
 #define DRIVER_RF_DUAL_H

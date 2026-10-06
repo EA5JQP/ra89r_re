@@ -1058,6 +1058,10 @@ void UI_DisplayMenu(void)
             strcpy(String, gSubMenu_W_N[gSubMenuSelection]);
             break;
 
+        case MENU_RF:
+            strcpy(String, gSubMenu_RF[gSubMenuSelection]);
+            break;
+
 #ifndef ENABLE_FEAT_F4HWN
         case MENU_SCR:
             strcpy(String, gSubMenu_SCRAMBLER[gSubMenuSelection]);
