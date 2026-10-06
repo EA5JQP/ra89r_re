@@ -18,6 +18,11 @@ $CC -std=c11 -I tools/host -I App -I App/driver tools/test_rf.c \
     App/driver/pa.c tools/host/host_led.c -o /tmp/ra89r_test_rf
 /tmp/ra89r_test_rf | tail -2
 
+echo "== test_rf_dual (two-transceiver coordinator) =="
+$CC -std=c11 -I App -I App/driver tools/test_rf_dual.c \
+    App/driver/rf_dual.c App/driver/bk4815.c -o /tmp/ra89r_test_rf_dual
+/tmp/ra89r_test_rf_dual | tail -2
+
 echo "== test_beeper (DAC tone math) =="
 $CC -std=c11 -I App -I App/driver tools/test_beeper.c \
     -o /tmp/ra89r_test_beeper

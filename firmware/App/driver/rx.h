@@ -61,4 +61,10 @@ void rx_service(void);
  * amplifier node out from under the BK1080. */
 void rx_set_fm_active(bool active);
 
+/* Keep both transceivers configured for their VFOs (rf_dual.c): resolve the
+ * per-VFO transceiver setting, pick the primary/secondary roles and tune the
+ * BK4815 secondary when one is active.  Cheap and safe to call from the receive
+ * service; it only retunes when the role or the secondary frequency changes. */
+void rf_dual_refresh(void);
+
 #endif /* DRIVER_RX_H */

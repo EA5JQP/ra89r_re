@@ -1268,6 +1268,9 @@ int main(void)
      * welcome).  Before the settings load BACKLIGHT_TIME is 0 and the K1 driver
      * reads that as "off"; before radio_boot the beep is silent. */
     radio_boot();
+    /* Apply the per-VFO transceiver choice: if a VFO selects the BK4815, tune
+     * it for that VFO alongside the BK4829 primary. */
+    rf_dual_refresh();
     BACKLIGHT_TurnOn();
     uart_printf("backlight: %s, brightness index %u of %u, %u/32 duty\n",
                 BACKLIGHT_IsOn() ? "on" : "off",

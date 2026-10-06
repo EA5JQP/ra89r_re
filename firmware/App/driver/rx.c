@@ -5,6 +5,7 @@
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
 #include "driver/pa.h"
+#include "driver/rf_dual.h"
 #include "driver/tx.h"
 #include "driver/led.h"
 #include "functions.h"
@@ -128,6 +129,10 @@ void rx_service(void)
     if (s_fm_active)
         return;
 
+    /* Keep the second transceiver on its own VFO (a no-op unless a VFO selects
+     * the BK4815). */
+    rf_dual_refresh();
+
     if (rx_ready())
         rx_poll();
 
@@ -149,5 +154,27 @@ void rx_service(void)
             led_set(squelch_open ? LED_GREEN : LED_OFF);
         gUpdateDisplay = true;
         gUpdateStatus  = true;
+    }
+}
+
+/* The gEeprom glue the pure coordinator (rf_dual.c) does not carry: resolve the
+ * per-VFO transceiver setting, choose the roles and tune the secondary.  Called
+ * from rx_service() and once at boot. */
+void rf_dual_refresh(void)
+{
+    static int      last_sec  = -2;     /* -2 = "never applied" */
+    static uint32_t last_freq = 0u;
+    const bool      a_4829 = SETTINGS_GetVfoTransceiver(0u) != RF_XCVR_BK4815;
+    const bool      b_4829 = SETTINGS_GetVfoTransceiver(1u) != RF_XCVR_BK4815;
+    const rf_dual_roles_t roles = rf_dual_choose(a_4829, b_4829, gEeprom.RX_VFO);
+    uint32_t        sec_freq = 0u;
+
+    if (roles.secondary >= 0)
+        sec_freq = gEeprom.VfoInfo[roles.secondary].freq_config_RX.Frequency;
+
+    if (roles.secondary != last_sec || sec_freq != last_freq) {
+        rf_dual_apply(&roles, sec_freq);
+        last_sec  = roles.secondary;
+        last_freq = sec_freq;
     }
 }
