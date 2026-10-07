@@ -101,7 +101,10 @@ static void rx_set_audio_source(bool use_4815)
         return;
 
     s_audio_4815 = use_4815;
-    /* Mute both and let the squelch open the selected one. */
+    /* Mute both and let the squelch open the selected one.  The BK4815's audio
+     * shares the BK4829's AF node (measured: it is only audible while the
+     * BK4829's AF is open, e.g. with the K1 squelch at 0), so the BK4815 source
+     * must open the BK4829's AF as well as its own 0x49. */
     BK4819_SetAF(BK4819_AF_MUTE);
     bk4815_set_af(false);
     s_squelch_open = false;
@@ -115,18 +118,14 @@ void rx_poll(void)
     if (s_audio_4815) {
         s_rssi = bk4815_read_rssi();
 
-        if (s_force_4815_af) {
+        if (s_force_4815_af || (!s_squelch_open && s_rssi >= RX4815_SQUELCH_OPEN_MARK)) {
             s_squelch_open = true;
-            bk4815_set_af(true);
-            return;
-        }
-
-        if (!s_squelch_open && s_rssi >= RX4815_SQUELCH_OPEN_MARK) {
-            s_squelch_open = true;
-            bk4815_set_af(true);
+            bk4815_set_af(true);        /* the BK4815's own mute */
+            BK4819_SetAF(BK4819_AF_FM); /* the shared AF node the audio rides on */
         } else if (s_squelch_open && s_rssi < RX4815_SQUELCH_CLOSE_MARK) {
             s_squelch_open = false;
             bk4815_set_af(false);
+            BK4819_SetAF(BK4819_AF_MUTE);
         }
         return;
     }
