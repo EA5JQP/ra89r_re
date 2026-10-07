@@ -109,15 +109,16 @@ BK4829 and, above 134 MHz, sets the BK4815 to TX mode at the TX frequency
 
 ### Receive audio source
 
-The BK4815 has its own AF output, register `0x49` (`0x1A02` off / `0x9A02` on).
-The stock switches the audio source by the transceiver flag: `FUN_08015F48`
-enables the BK4829's `0x47` for the BK4829 branch and the BK4815's
-`0x49 = 0x9A02` for the BK4815 branch; `FUN_0801CCE8` restores each to off. The
-port mirrors this: the receive audio follows the **selected RX VFO's**
-transceiver — that chip's AF is opened by its own squelch, the other stays
-muted. Squelch for the BK4815 uses its `0x44` RSSI with provisional marks (the
-stock squelches on the BK4829 even for the BK4815, so the marks need tuning on
-the radio).
+The BK4815 has its own AF path, register `0x49` (datasheet REG73: bit 15 is
+"hard mute"; the boot config leaves `0x1A02`, unmuted). The stock switches the
+audio source by the transceiver flag: `FUN_08015F48` mutes the current source
+(`0x9A02` on the BK4815, or the BK4829's `0x47`) and `FUN_0801CCE8` restores it
+(`0x1A02`). The port mirrors this: the receive audio follows the **selected RX
+VFO's** transceiver — that chip's AF is opened by its own squelch
+(`bk4815_set_af(true)` = `0x1A02`), the other stays muted. Squelch for the
+BK4815 uses its `0x44` RSSI (measured: idle ~16, carrier ~41 → open `0x1C`,
+close `0x14`); the stock squelches on the BK4829 even for the BK4815, so these
+marks are the port's own.
 
 ### Dual-active operation
 

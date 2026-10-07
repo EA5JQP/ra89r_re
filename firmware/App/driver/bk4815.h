@@ -44,16 +44,17 @@
  */
 #define BK4815_REG_VCO       0x04u
 #define BK4815_REG_TONE      0x22u
-#define BK4815_REG_AF        0x49u   /* AF output: 0x1A02 off / 0x9A02 on */
+#define BK4815_REG_AF        0x49u   /* AUDIO: volume + bit15 = hard mute */
 #define BK4815_REG_OPCTRL    0x70u
 #define BK4815_REG_FREQ_HI   0x71u
 #define BK4815_REG_FREQ_LO   0x72u
 #define BK4815_REG_CAL       0x7eu
 
-/* Register 0x49's AF-enable values, from the stock's AF source switch
- * (`FUN_08015F48` enables with 0x9A02, `FUN_0801CCE8` restores 0x1A02). */
-#define BK4815_AF_ON   0x9a02u
-#define BK4815_AF_OFF  0x1a02u
+/* Register 0x49 (REG73 in the datasheet): bit 15 is "hard mute" (1 = muted).
+ * The stock's AF switch writes 0x9A02 to mute (`FUN_08015F48`) and 0x1A02 to
+ * unmute (`FUN_0801CCE8`), and its boot config leaves 0x1A02 (unmuted). */
+#define BK4815_AF_ON   0x1a02u   /* hard mute clear */
+#define BK4815_AF_OFF  0x9a02u   /* hard mute set */
 
 /* True when register 0 reads back the BK4815 id. */
 bool bk4815_detect(void);
