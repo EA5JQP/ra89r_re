@@ -245,5 +245,12 @@ void rf_dual_refresh(void)
         rf_dual_apply(&roles, f4815);
         s_dual_sec   = roles.bk4815_vfo;
         s_dual_sec_f = f4815;
+
+        /* The receive RF-path pin follows the transceiver: the stock's BK4815
+         * branch sets the BK4829's 0x33 pin 4 (`FUN_08016CEC` ->
+         * `FUN_080137D4(0x10,0x10)`), the BK4829 branch clears it.  The port's
+         * pa_apply_chip_path() clears both, so set pin 4 for a BK4815 VFO. */
+        BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA,
+                             roles.bk4815_vfo >= 0);
     }
 }
