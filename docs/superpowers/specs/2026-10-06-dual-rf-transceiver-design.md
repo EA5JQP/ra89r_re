@@ -107,6 +107,18 @@ BK4829 and, above 134 MHz, sets the BK4815 to TX mode at the TX frequency
 (`bk4815_set_frequency(freq, true)`) so it is not left on a receive frequency;
 `tx_stop` asks the coordinator to put both back on their receive frequencies.
 
+### Receive audio source
+
+The BK4815 has its own AF output, register `0x49` (`0x1A02` off / `0x9A02` on).
+The stock switches the audio source by the transceiver flag: `FUN_08015F48`
+enables the BK4829's `0x47` for the BK4829 branch and the BK4815's
+`0x49 = 0x9A02` for the BK4815 branch; `FUN_0801CCE8` restores each to off. The
+port mirrors this: the receive audio follows the **selected RX VFO's**
+transceiver — that chip's AF is opened by its own squelch, the other stays
+muted. Squelch for the BK4815 uses its `0x44` RSSI with provisional marks (the
+stock squelches on the BK4829 even for the BK4815, so the marks need tuning on
+the radio).
+
 ### Dual-active operation
 
 - `rf_dual` configures the primary for the primary VFO (frequency, band,

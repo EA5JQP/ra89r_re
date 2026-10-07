@@ -44,10 +44,16 @@
  */
 #define BK4815_REG_VCO       0x04u
 #define BK4815_REG_TONE      0x22u
+#define BK4815_REG_AF        0x49u   /* AF output: 0x1A02 off / 0x9A02 on */
 #define BK4815_REG_OPCTRL    0x70u
 #define BK4815_REG_FREQ_HI   0x71u
 #define BK4815_REG_FREQ_LO   0x72u
 #define BK4815_REG_CAL       0x7eu
+
+/* Register 0x49's AF-enable values, from the stock's AF source switch
+ * (`FUN_08015F48` enables with 0x9A02, `FUN_0801CCE8` restores 0x1A02). */
+#define BK4815_AF_ON   0x9a02u
+#define BK4815_AF_OFF  0x1a02u
 
 /* True when register 0 reads back the BK4815 id. */
 bool bk4815_detect(void);
@@ -123,5 +129,9 @@ void bk4815_set_tone(uint32_t tone_hz);
 
 /* The chip's RSSI indicator: register 0x44, bits 6:0. */
 uint16_t bk4815_read_rssi(void);
+
+/* Enable or mute the chip's AF output (register 0x49).  The stock switches this
+ * as the receive audio source when the BK4815 is the selected transceiver. */
+void bk4815_set_af(bool on);
 
 #endif /* DRIVER_BK4815_H */

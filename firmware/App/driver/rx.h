@@ -31,6 +31,13 @@
 #define RX_SQUELCH_OPEN_MARK   0xCFu
 #define RX_SQUELCH_CLOSE_MARK  0xB4u
 
+/* First-cut squelch marks on the BK4815's register 0x44 (7-bit RSSI), used when
+ * the selected VFO is on the BK4815.  The stock squelches on the BK4829 even
+ * when the BK4815 is the receive part, so these are provisional -- tune them on
+ * the radio. */
+#define RX4815_SQUELCH_OPEN_MARK   0x30u
+#define RX4815_SQUELCH_CLOSE_MARK  0x20u
+
 /* Bring the RF up and start receiving on `freq_10hz` (10 Hz units, the same
  * convention as the codeplug).  Idempotent enough to be called again to retune. */
 void rx_init(uint32_t freq_10hz);

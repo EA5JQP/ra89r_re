@@ -363,6 +363,19 @@ static void test_bk4815_synth(void)
     check(log_len == 1 && xfer_is(&log_[0], BK4815_CS_PIN, 0x89),
           "RSSI read addresses reg 0x44 ((0x44<<1)|1)");
     other_bk4815 = 0u;
+
+    /* AF source: register 0x49, 0x9A02 on / 0x1A02 off (the stock's
+     * FUN_08015F48 / FUN_0801CCE8). */
+    log_reset();
+    bk4815_set_af(true);
+    check(log_len == 1 && xfer_is(&log_[0], BK4815_CS_PIN, 0x92),
+          "AF on addresses reg 0x49 (0x49<<1)");
+    check_hex((uint16_t)((log_[0].data[0] << 8) | log_[0].data[1]), 0x9A02u,
+              "AF on = 0x9A02");
+    log_reset();
+    bk4815_set_af(false);
+    check_hex((uint16_t)((log_[0].data[0] << 8) | log_[0].data[1]), 0x1A02u,
+              "AF off = 0x1A02");
 }
 
 /* The accessors the console's read-back verification walks.  If these are wrong

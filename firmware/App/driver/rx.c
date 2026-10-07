@@ -78,10 +78,41 @@ void rx_set_fm_active(bool active)
     s_fm_active = active;
 }
 
+/* Which chip supplies the receive audio: the selected RX VFO's transceiver.
+ * The stock switches the AF source by the same flag (`FUN_08015F48`: the
+ * BK4829's 0x47 or the BK4815's 0x49 = 0x9A02), so only the selected VFO is
+ * heard.  `s_audio_4815` is that choice. */
+static bool s_audio_4815;
+
+static void rx_set_audio_source(bool use_4815)
+{
+    if (use_4815 == s_audio_4815)
+        return;
+
+    s_audio_4815 = use_4815;
+    /* Mute both and let the squelch open the selected one. */
+    BK4819_SetAF(BK4819_AF_MUTE);
+    bk4815_set_af(false);
+    s_squelch_open = false;
+}
+
 void rx_poll(void)
 {
     if (!s_ready)
         return;
+
+    if (s_audio_4815) {
+        s_rssi = bk4815_read_rssi();
+
+        if (!s_squelch_open && s_rssi >= RX4815_SQUELCH_OPEN_MARK) {
+            s_squelch_open = true;
+            bk4815_set_af(true);
+        } else if (s_squelch_open && s_rssi < RX4815_SQUELCH_CLOSE_MARK) {
+            s_squelch_open = false;
+            bk4815_set_af(false);
+        }
+        return;
+    }
 
     s_rssi = BK4819_GetRSSI();
 
@@ -133,6 +164,10 @@ void rx_service(void)
      * with one VFO on each chip the BK4829 does not follow the receiver onto
      * the BK4815's VFO. */
     rf_dual_refresh();
+
+    /* The receive audio follows the selected VFO's transceiver, so a VFO on the
+     * BK4815 is audible through that chip's own AF. */
+    rx_set_audio_source(SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815);
 
     if (rx_ready())
         rx_poll();
