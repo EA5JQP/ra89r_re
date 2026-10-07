@@ -3,47 +3,54 @@
 
 #include "driver/bk4815.h"
 
-static bool s_secondary_active;
+static bool s_bk4815_active;
 
 rf_dual_roles_t rf_dual_choose(bool a_4829, bool b_4829, uint8_t rx_vfo)
 {
     rf_dual_roles_t r;
+    const uint8_t   sel   = (rx_vfo > 1u) ? 0u : rx_vfo;
+    const uint8_t   other = (uint8_t)(sel ^ 1u);
+    const bool      sel_4829   = (sel   == 0u) ? a_4829 : b_4829;
+    const bool      other_4829 = (other == 0u) ? a_4829 : b_4829;
 
-    r.primary   = -1;
-    r.secondary = -1;
+    r.bk4829_vfo = -1;
+    r.bk4815_vfo = -1;
 
-    if (a_4829 && !b_4829) {
-        r.primary   = 0;
-        r.secondary = 1;
-    } else if (!a_4829 && b_4829) {
-        r.primary   = 1;
-        r.secondary = 0;
-    } else if (a_4829 && b_4829) {
-        /* One BK4829 cannot hold two frequencies; the receiver keeps it. */
-        r.primary = (rx_vfo > 1u) ? 0 : (int8_t)rx_vfo;
+    /* The selected VFO's chip is always tuned to it. */
+    if (sel_4829)
+        r.bk4829_vfo = (int8_t)sel;
+    else
+        r.bk4815_vfo = (int8_t)sel;
+
+    /* The other VFO only if it names the other chip (one part cannot hold two
+     * frequencies). */
+    if (other_4829 != sel_4829) {
+        if (other_4829)
+            r.bk4829_vfo = (int8_t)other;
+        else
+            r.bk4815_vfo = (int8_t)other;
     }
-    /* Neither is the BK4829: no transmit-capable part, so nothing is active. */
 
     return r;
 }
 
-void rf_dual_apply(const rf_dual_roles_t *roles, uint32_t sec_rx_freq_10hz)
+void rf_dual_apply(const rf_dual_roles_t *roles, uint32_t f4815)
 {
-    if (roles != 0 && roles->secondary >= 0 && sec_rx_freq_10hz != 0u) {
+    if (roles != 0 && roles->bk4815_vfo >= 0 && f4815 != 0u) {
         /* Receive mode: register 0x70 = 0xA000. */
-        bk4815_set_frequency(sec_rx_freq_10hz, false);
-        s_secondary_active = true;
+        bk4815_set_frequency(f4815, false);
+        s_bk4815_active = true;
     } else {
-        s_secondary_active = false;
+        s_bk4815_active = false;
     }
 }
 
-bool rf_dual_secondary_active(void)
+bool rf_dual_bk4815_active(void)
 {
-    return s_secondary_active;
+    return s_bk4815_active;
 }
 
-uint16_t rf_dual_secondary_rssi(void)
+uint16_t rf_dual_bk4815_rssi(void)
 {
-    return s_secondary_active ? bk4815_read_rssi() : 0u;
+    return s_bk4815_active ? bk4815_read_rssi() : 0u;
 }

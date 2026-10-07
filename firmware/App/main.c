@@ -678,9 +678,9 @@ static void dual_rf_diag(void)
     uart_printf("  TrVfoA=%u TrVfoB=%u   TX_VFO=%u RX_VFO=%u\n",
                 (unsigned)a, (unsigned)b,
                 (unsigned)gEeprom.TX_VFO, (unsigned)gEeprom.RX_VFO);
-    uart_printf("  roles: primary=%d secondary=%d secondary_active=%d\n",
-                (int)roles.primary, (int)roles.secondary,
-                (int)rf_dual_secondary_active());
+    uart_printf("  tuned: BK4829<-VFO %d   BK4815<-VFO %d   bk4815_active=%d\n",
+                (int)roles.bk4829_vfo, (int)roles.bk4815_vfo,
+                (int)rf_dual_bk4815_active());
     uart_printf("  audio source: %s   squelch %s   rssi 0x%03X\n",
                 rx_audio_is_4815() ? "BK4815" : "BK4829",
                 rx_squelch_open() ? "OPEN" : "closed", (unsigned)rx_rssi());

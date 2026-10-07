@@ -47,35 +47,39 @@ int main(void)
 
     printf("rf dual\n");
 
-    /* A on the BK4829, B on the BK4815: both active. */
+    /* One VFO per chip: both tuned, whichever is selected. */
     r = rf_dual_choose(true, false, 0u);
-    check(r.primary == 0 && r.secondary == 1, "A=4829 B=4815 -> both active");
+    check(r.bk4829_vfo == 0 && r.bk4815_vfo == 1,
+          "A=4829 B=4815, select A -> BK4829 on A, BK4815 on B");
+    r = rf_dual_choose(true, false, 1u);
+    check(r.bk4829_vfo == 0 && r.bk4815_vfo == 1,
+          "A=4829 B=4815, select B -> same two tunings");
 
-    r = rf_dual_choose(false, true, 0u);
-    check(r.primary == 1 && r.secondary == 0, "A=4815 B=4829 -> both active, roles swap");
-
-    /* Both BK4829: one chip, so only the receiver's VFO. */
-    r = rf_dual_choose(true, true, 0u);
-    check(r.primary == 0 && r.secondary == -1, "both 4829 -> primary = RX VFO 0");
-    r = rf_dual_choose(true, true, 1u);
-    check(r.primary == 1 && r.secondary == -1, "both 4829 -> primary = RX VFO 1");
-
-    /* Both BK4815: no transmit-capable part. */
+    /* Both VFOs on the BK4815: the selected one is still tuned. */
     r = rf_dual_choose(false, false, 0u);
-    check(r.primary == -1 && r.secondary == -1, "both 4815 -> nothing active");
+    check(r.bk4829_vfo == -1 && r.bk4815_vfo == 0,
+          "both 4815, select A -> BK4815 tuned to A");
+    r = rf_dual_choose(false, false, 1u);
+    check(r.bk4829_vfo == -1 && r.bk4815_vfo == 1,
+          "both 4815, select B -> BK4815 tuned to B");
 
-    /* Apply: a secondary tunes the BK4815; none leaves it alone. */
-    r = rf_dual_choose(true, false, 0u);
+    /* Both VFOs on the BK4829: only the selected one. */
+    r = rf_dual_choose(true, true, 0u);
+    check(r.bk4829_vfo == 0 && r.bk4815_vfo == -1,
+          "both 4829, select A -> BK4829 tuned to A only");
+
+    /* Apply: a BK4815 role tunes it; none leaves it alone. */
+    r = rf_dual_choose(false, false, 1u);
     writes = 0;
     rf_dual_apply(&r, 43350000u);
-    check(writes == 3 && rf_dual_secondary_active(),
-          "secondary tunes the BK4815 (three transfers)");
+    check(writes == 3 && rf_dual_bk4815_active(),
+          "BK4815 role tunes it (three transfers)");
 
     r = rf_dual_choose(true, true, 0u);
     writes = 0;
     rf_dual_apply(&r, 0u);
-    check(writes == 0 && !rf_dual_secondary_active(),
-          "no secondary leaves the BK4815 untouched");
+    check(writes == 0 && !rf_dual_bk4815_active(),
+          "no BK4815 role leaves it untouched");
 
     printf("\n%d failed\n", fails);
     return fails ? 1 : 0;

@@ -209,25 +209,25 @@ void rf_dual_refresh(void)
     const bool      a_4829 = SETTINGS_GetVfoTransceiver(0u) != RF_XCVR_BK4815;
     const bool      b_4829 = SETTINGS_GetVfoTransceiver(1u) != RF_XCVR_BK4815;
     const rf_dual_roles_t roles = rf_dual_choose(a_4829, b_4829, gEeprom.RX_VFO);
-    uint32_t        pri_freq = 0u;
-    uint32_t        sec_freq = 0u;
+    uint32_t        f4829 = 0u;
+    uint32_t        f4815 = 0u;
 
-    if (roles.primary >= 0)
-        pri_freq = gEeprom.VfoInfo[roles.primary].freq_config_RX.Frequency;
-    if (roles.secondary >= 0)
-        sec_freq = gEeprom.VfoInfo[roles.secondary].freq_config_RX.Frequency;
+    if (roles.bk4829_vfo >= 0)
+        f4829 = gEeprom.VfoInfo[roles.bk4829_vfo].freq_config_RX.Frequency;
+    if (roles.bk4815_vfo >= 0)
+        f4815 = gEeprom.VfoInfo[roles.bk4815_vfo].freq_config_RX.Frequency;
 
-    /* The BK4829 (primary) is retuned here, not from the receiver's VFO: with
-     * one VFO on each chip the receiver may be following the BK4815 one. */
-    if (pri_freq != 0u && (roles.primary != s_dual_pri || pri_freq != s_dual_pri_f)) {
-        rx_set_frequency(pri_freq);
-        s_dual_pri   = roles.primary;
-        s_dual_pri_f = pri_freq;
+    /* The BK4829 is retuned to its VFO here, not from the receiver's VFO: the
+     * receiver may be following the BK4815 one. */
+    if (f4829 != 0u && (roles.bk4829_vfo != s_dual_pri || f4829 != s_dual_pri_f)) {
+        rx_set_frequency(f4829);
+        s_dual_pri   = roles.bk4829_vfo;
+        s_dual_pri_f = f4829;
     }
 
-    if (roles.secondary != s_dual_sec || sec_freq != s_dual_sec_f) {
-        rf_dual_apply(&roles, sec_freq);
-        s_dual_sec   = roles.secondary;
-        s_dual_sec_f = sec_freq;
+    if (roles.bk4815_vfo != s_dual_sec || f4815 != s_dual_sec_f) {
+        rf_dual_apply(&roles, f4815);
+        s_dual_sec   = roles.bk4815_vfo;
+        s_dual_sec_f = f4815;
     }
 }
