@@ -24,6 +24,7 @@
 #include "driver/bk4829.h"
 #include "driver/audio_path.h"
 #include "driver/led.h"
+#include "driver/rf_dual.h"
 #include "driver/rx.h"
 #include "functions.h"
 #include "driver/clock.h"
@@ -241,6 +242,7 @@ static void print_help(void)
               "          j BK1080 FM: init, id probe, tune 100.0 MHz, read status\n"
               "          a FM audio route: toggle the BK4829 AF mute (0x47) under FM\n"
               "          n BK4815 (PB13): boot config, tune 145.7500, read meters\n"
+              "          J dual-RF live state: roles, audio source, BK4815 regs/meters\n"
               "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
@@ -654,6 +656,57 @@ static void bk4815_bench(void)
             for (volatile unsigned d = 0; d < 400000u; d++)
                 ;
         }
+    }
+}
+
+/* The console's 'J': the live dual-RF state, without re-tuning anything.  Shows
+ * the per-VFO transceiver choice, the resolved roles, which chip supplies the
+ * receive audio, the squelch state, and the BK4815's own registers/meters, then
+ * samples its 0x44 RSSI.  This is the one that reflects what the running radio
+ * is actually doing. */
+static void dual_rf_diag(void)
+{
+    const rf_xcvr_t a = SETTINGS_GetVfoTransceiver(0u);
+    const rf_xcvr_t b = SETTINGS_GetVfoTransceiver(1u);
+    const bool      a_4829 = (a != RF_XCVR_BK4815);
+    const bool      b_4829 = (b != RF_XCVR_BK4815);
+    const rf_dual_roles_t roles = rf_dual_choose(a_4829, b_4829, gEeprom.RX_VFO);
+    const uint16_t  af  = bk4815_read_reg(BK4815_REG_AF);
+    unsigned        k;
+
+    uart_puts("\ndual RF\n");
+    uart_printf("  TrVfoA=%u TrVfoB=%u   TX_VFO=%u RX_VFO=%u\n",
+                (unsigned)a, (unsigned)b,
+                (unsigned)gEeprom.TX_VFO, (unsigned)gEeprom.RX_VFO);
+    uart_printf("  roles: primary=%d secondary=%d secondary_active=%d\n",
+                (int)roles.primary, (int)roles.secondary,
+                (int)rf_dual_secondary_active());
+    uart_printf("  audio source: %s   squelch %s   rssi 0x%03X\n",
+                rx_audio_is_4815() ? "BK4815" : "BK4829",
+                rx_squelch_open() ? "OPEN" : "closed", (unsigned)rx_rssi());
+    uart_printf("  VFO A %u.%05u MHz   VFO B %u.%05u MHz\n",
+                (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency / 100000u),
+                (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency % 100000u),
+                (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency / 100000u),
+                (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency % 100000u));
+    uart_printf("  BK4815: 0x04=0x%04X 0x0C=0x%04X 0x49=0x%04X (AF %s)\n",
+                (unsigned)bk4815_read_reg(0x04), (unsigned)bk4815_read_reg(0x0C),
+                (unsigned)af, (af & 0x8000u) ? "MUTED" : "unmuted");
+    uart_printf("          0x70=0x%04X 0x71=0x%04X 0x72=0x%04X 0x75=0x%04X\n",
+                (unsigned)bk4815_read_reg(0x70), (unsigned)bk4815_read_reg(0x71),
+                (unsigned)bk4815_read_reg(0x72), (unsigned)bk4815_read_reg(0x75));
+    uart_printf("          0x43(SNR)=0x%04X 0x44(RSSI)=0x%04X -> %u  (marks open 0x%02X close 0x%02X)\n",
+                (unsigned)bk4815_read_reg(0x43), (unsigned)bk4815_read_reg(0x44),
+                (unsigned)(bk4815_read_reg(0x44) & 0x7fu),
+                (unsigned)RX4815_SQUELCH_OPEN_MARK, (unsigned)RX4815_SQUELCH_CLOSE_MARK);
+    uart_puts("  sampling 0x44 for ~5 s -- key a signal on the selected VFO now:\n");
+
+    for (k = 0; k < 25u; k++) {
+        const uint16_t r = bk4815_read_reg(0x44);
+
+        uart_printf("    0x44 = 0x%04X   RSSI %u\n", (unsigned)r, (unsigned)(r & 0x7fu));
+        for (volatile unsigned d = 0; d < 400000u; d++)
+            ;
     }
 }
 
@@ -1608,6 +1661,9 @@ int main(void)
                             (unsigned)BK4819_ReadRegister(BK4819_REG_47));
                 break;
             }
+            case 'J':
+                dual_rf_diag();
+                break;
             case 'n':
                 bk4815_bench();
                 break;

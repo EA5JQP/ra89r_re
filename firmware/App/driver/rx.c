@@ -130,6 +130,11 @@ bool rx_squelch_open(void)
     return s_squelch_open;
 }
 
+bool rx_audio_is_4815(void)
+{
+    return s_audio_4815;
+}
+
 uint16_t rx_rssi(void)
 {
     return s_rssi;

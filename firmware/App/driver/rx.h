@@ -54,6 +54,10 @@ void rx_poll(void);
 bool rx_squelch_open(void);
 uint16_t rx_rssi(void);
 
+/* True when the receive audio is currently taken from the BK4815 (the selected
+ * RX VFO's transceiver), for the console diagnostic. */
+bool rx_audio_is_4815(void);
+
 /* The frequency the BK4829 was last tuned to, in 10 Hz units, for diagnostics. */
 uint32_t rx_rx_frequency(void);
 
