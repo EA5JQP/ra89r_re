@@ -199,7 +199,7 @@ int main(void)
             if (MenuList[mi].menu_id == MENU_RF_A) found_a = true;
             if (MenuList[mi].menu_id == MENU_RF_B) found_b = true;
         }
-        printf("[dual] %s RF A and RF B menu items exist\n",
+        printf("[dual] %s TrVfoA and TrVfoB menu items exist\n",
                (found_a && found_b) ? "ok  " : "FAIL");
         if (!(found_a && found_b)) failures++;
     }

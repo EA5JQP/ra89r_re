@@ -68,8 +68,8 @@ const t_menu_item MenuList[] =
     {"BusyCL",      MENU_BCL           }, // was "BCL"
     {"Compnd",      MENU_COMPAND       },
     {"Mode",        MENU_AM            }, // was "AM"
-    {"RF A",        MENU_RF_A          }, // VFO A's RF transceiver
-    {"RF B",        MENU_RF_B          }, // VFO B's RF transceiver
+    {"TrVfoA",      MENU_RF_A          }, // VFO A's RF transceiver
+    {"TrVfoB",      MENU_RF_B          }, // VFO B's RF transceiver
 #ifdef ENABLE_FEAT_F4HWN
     {"TXLock",      MENU_TX_LOCK       }, 
 #endif
