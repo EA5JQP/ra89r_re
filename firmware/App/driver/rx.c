@@ -151,12 +151,21 @@ void rx_service(void)
 /* The gEeprom glue the pure coordinator (rf_dual.c) does not carry: resolve the
  * per-VFO transceiver setting, choose the roles and tune the secondary.  Called
  * from rx_service() and once at boot. */
+/* The last applied roles/frequencies, so rf_dual_refresh only retunes on a
+ * change.  -2 = "never applied". */
+static int      s_dual_pri   = -2;
+static int      s_dual_sec   = -2;
+static uint32_t s_dual_pri_f = 0u;
+static uint32_t s_dual_sec_f = 0u;
+
+void rf_dual_reapply(void)
+{
+    s_dual_pri = -2;
+    s_dual_sec = -2;
+}
+
 void rf_dual_refresh(void)
 {
-    static int      last_pri   = -2;    /* -2 = "never applied" */
-    static int      last_sec   = -2;
-    static uint32_t last_pri_f = 0u;
-    static uint32_t last_sec_f = 0u;
     const bool      a_4829 = SETTINGS_GetVfoTransceiver(0u) != RF_XCVR_BK4815;
     const bool      b_4829 = SETTINGS_GetVfoTransceiver(1u) != RF_XCVR_BK4815;
     const rf_dual_roles_t roles = rf_dual_choose(a_4829, b_4829, gEeprom.RX_VFO);
@@ -170,15 +179,15 @@ void rf_dual_refresh(void)
 
     /* The BK4829 (primary) is retuned here, not from the receiver's VFO: with
      * one VFO on each chip the receiver may be following the BK4815 one. */
-    if (pri_freq != 0u && (roles.primary != last_pri || pri_freq != last_pri_f)) {
+    if (pri_freq != 0u && (roles.primary != s_dual_pri || pri_freq != s_dual_pri_f)) {
         rx_set_frequency(pri_freq);
-        last_pri   = roles.primary;
-        last_pri_f = pri_freq;
+        s_dual_pri   = roles.primary;
+        s_dual_pri_f = pri_freq;
     }
 
-    if (roles.secondary != last_sec || sec_freq != last_sec_f) {
+    if (roles.secondary != s_dual_sec || sec_freq != s_dual_sec_f) {
         rf_dual_apply(&roles, sec_freq);
-        last_sec   = roles.secondary;
-        last_sec_f = sec_freq;
+        s_dual_sec   = roles.secondary;
+        s_dual_sec_f = sec_freq;
     }
 }

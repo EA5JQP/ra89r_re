@@ -67,4 +67,9 @@ void rx_set_fm_active(bool active);
  * service; it only retunes when the role or the secondary frequency changes. */
 void rf_dual_refresh(void);
 
+/* Force the next rf_dual_refresh() to re-apply both transceivers' receive
+ * frequencies.  Called after a transmit, which retunes the chips to the TX
+ * frequency. */
+void rf_dual_reapply(void);
+
 #endif /* DRIVER_RX_H */

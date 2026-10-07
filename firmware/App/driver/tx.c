@@ -4,6 +4,7 @@
 #include "driver/bk4819.h"
 #include "driver/led.h"
 #include "driver/pa.h"
+#include "driver/rx.h"
 #include "driver/keyboard.h"
 #include "functions.h"
 #include "misc.h"
@@ -28,6 +29,13 @@ void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source)
      * the PB14 bias PWM from `power`. */
     pa_select_band(freq_10hz);
     pa_tx_enable(power);
+    /* Above 134 MHz the BK4815 is part of the transmit path (the stock's
+     * `0x0C = 0x0203`, with the BK4829 as the modulator and PA control).  Put it
+     * on the TX frequency in TX mode (`0x70 = 0xE000`) rather than leaving it on
+     * whatever receive frequency the coordinator last set -- otherwise a
+     * repeater offset or the other VFO leaves it on the wrong channel. */
+    if (pa_band_is_main())
+        bk4815_set_frequency(freq_10hz, true);
     bk4815_write_reg(0x0C, pa_band_is_main() ? 0x0203u : 0xFFFBu);  /* the T/R path */
     BK4819_SetFrequency(freq_10hz);
     BK4819_WriteRegister(BK4819_REG_7D, TX_REG7D_POWER);
@@ -71,6 +79,11 @@ void tx_stop(void)
     led_set(LED_OFF);
 
     s_active = false;
+
+    /* tx_start retuned the BK4829 (and, above 134 MHz, the BK4815) to the TX
+     * frequency; ask the coordinator to put both back on their receive
+     * frequencies, which matters on an offset channel. */
+    rf_dual_reapply();
 }
 
 bool tx_active(void) { return s_active; }

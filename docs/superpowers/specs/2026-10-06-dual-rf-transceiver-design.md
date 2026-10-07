@@ -97,10 +97,15 @@ VFO" means selecting which VFO is served by the primary (BK4829) and which by
 the secondary (BK4815); a VFO set to `BK4815` is receive-capable but cannot be
 the transmit VFO until BK4815 TX is proven.
 
-**Transmit fallback (deliberate):** transmit always uses the BK4829, at the
-selected TX VFO's frequency, whatever receive transceiver that VFO names. The
-per-VFO choice selects the *receive* part; it never moves transmit onto an
-unproven path. This is a defined fallback, not an error case.
+**Transmit is cooperative, above 134 MHz.** The stock never transmits on the
+BK4815 alone: on TX it runs the BK4829's modulator/tune (`FUN_08017280`) and PA
+control (the BK4829 `0x33` band pin + the `PB14` bias PWM), and above 134 MHz it
+also puts the BK4815 into its transmit state (`0x0C = 0x0203` via
+`FUN_08016228`). So the BK4829 is the modulator and steers the PA; the BK4815 is
+the RF/T-R path above 134 MHz. The port mirrors this: `tx_start` drives the
+BK4829 and, above 134 MHz, sets the BK4815 to TX mode at the TX frequency
+(`bk4815_set_frequency(freq, true)`) so it is not left on a receive frequency;
+`tx_stop` asks the coordinator to put both back on their receive frequencies.
 
 ### Dual-active operation
 
