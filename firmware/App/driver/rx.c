@@ -83,6 +83,17 @@ void rx_set_fm_active(bool active)
  * BK4829's 0x47 or the BK4815's 0x49 = 0x9A02), so only the selected VFO is
  * heard.  `s_audio_4815` is that choice. */
 static bool s_audio_4815;
+static bool s_force_4815_af;    /* console 'A' diagnostic */
+
+void rx_force_bk4815_af(bool on)
+{
+    s_force_4815_af = on;
+}
+
+bool rx_force_bk4815_af_on(void)
+{
+    return s_force_4815_af;
+}
 
 static void rx_set_audio_source(bool use_4815)
 {
@@ -103,6 +114,12 @@ void rx_poll(void)
 
     if (s_audio_4815) {
         s_rssi = bk4815_read_rssi();
+
+        if (s_force_4815_af) {
+            s_squelch_open = true;
+            bk4815_set_af(true);
+            return;
+        }
 
         if (!s_squelch_open && s_rssi >= RX4815_SQUELCH_OPEN_MARK) {
             s_squelch_open = true;

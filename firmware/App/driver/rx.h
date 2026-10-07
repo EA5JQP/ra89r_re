@@ -58,6 +58,11 @@ uint16_t rx_rssi(void);
  * RX VFO's transceiver), for the console diagnostic. */
 bool rx_audio_is_4815(void);
 
+/* Diagnostic (console 'A'): force the BK4815's AF open, bypassing the squelch,
+ * so the audio path can be judged separately from the squelch. */
+void rx_force_bk4815_af(bool on);
+bool rx_force_bk4815_af_on(void);
+
 /* The frequency the BK4829 was last tuned to, in 10 Hz units, for diagnostics. */
 uint32_t rx_rx_frequency(void);
 

@@ -243,6 +243,7 @@ static void print_help(void)
               "          a FM audio route: toggle the BK4829 AF mute (0x47) under FM\n"
               "          n BK4815 (PB13): boot config, tune 145.7500, read meters\n"
               "          J dual-RF live state: roles, audio source, BK4815 regs/meters\n"
+              "          A force the BK4815 AF open (bypass squelch) to test audio\n"
               "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
@@ -1663,6 +1664,11 @@ int main(void)
             }
             case 'J':
                 dual_rf_diag();
+                break;
+            case 'A':
+                rx_force_bk4815_af(!rx_force_bk4815_af_on());
+                uart_printf("\nBK4815 AF forced %s\n",
+                            rx_force_bk4815_af_on() ? "ON (squelch bypassed)" : "off");
                 break;
             case 'n':
                 bk4815_bench();

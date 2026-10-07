@@ -39,6 +39,10 @@ void rf_dual_apply(const rf_dual_roles_t *roles, uint32_t f4815)
     if (roles != 0 && roles->bk4815_vfo >= 0 && f4815 != 0u) {
         /* Receive mode: register 0x70 = 0xA000. */
         bk4815_set_frequency(f4815, false);
+        /* The band register 0x75 follows the tuned frequency (0x0A above
+         * 280 MHz, else 0x11), the same split pa_select_band uses for the
+         * BK4829 path.  It is otherwise left stale by a BK4815-only setup. */
+        bk4815_write_reg(0x75u, (f4815 >= 28000000u) ? 0x0Au : 0x11u);
         s_bk4815_active = true;
     } else {
         s_bk4815_active = false;

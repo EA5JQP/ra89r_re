@@ -72,8 +72,8 @@ int main(void)
     r = rf_dual_choose(false, false, 1u);
     writes = 0;
     rf_dual_apply(&r, 43350000u);
-    check(writes == 3 && rf_dual_bk4815_active(),
-          "BK4815 role tunes it (three transfers)");
+    check(writes == 4 && rf_dual_bk4815_active(),
+          "BK4815 role tunes it (tune + band register)");
 
     r = rf_dual_choose(true, true, 0u);
     writes = 0;
