@@ -180,7 +180,13 @@ void pa_init(void)
     TIM1->PSC = 0;
     TIM1->ARR = PA_PWM_ARR;
     TIM1->CCMR1 = (TIM1->CCMR1 & ~0xFF00u) | 0x6000u;   /* OC2M = PWM mode 1 */
-    TIM1->CCER &= ~0x30u;                                /* CC2P/CC2NE = 0  */
+    /* CC2E (bit 4) must be SET or channel 2's output stays disabled and the PWM
+     * never reaches PB14 -- which is exactly what "the PA is unbiased" looks
+     * like.  CC2P (bit 5) and CC2NE (bit 6) are the polarity bits and are
+     * cleared for active-high.  The old mask here was 0x30, which cleared CC2E
+     * itself (TIM_CCER_CC2E = 0x10 in the device header) -- the PWM was never
+     * actually driven. */
+    TIM1->CCER = (TIM1->CCER & ~0x60u) | 0x10u;
     TIM1->CCR2 = 0;
     TIM1->BDTR |= 0x8000u;                               /* MOE: TIM1 needs it */
     TIM1->EGR = 1u;                                      /* UG */
