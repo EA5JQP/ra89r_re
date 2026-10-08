@@ -118,15 +118,21 @@ void rx_poll(void)
     if (s_audio_4815) {
         s_rssi = bk4815_read_rssi();
 
-        if (s_force_4815_af || (!s_squelch_open && s_rssi >= RX4815_SQUELCH_OPEN_MARK)) {
+        if (s_force_4815_af || (!s_squelch_open && s_rssi >= RX4815_SQUELCH_OPEN_MARK))
             s_squelch_open = true;
-            bk4815_set_af(true);        /* the BK4815's own mute */
-            BK4819_SetAF(BK4819_AF_FM); /* the shared AF node the audio rides on */
-        } else if (s_squelch_open && s_rssi < RX4815_SQUELCH_CLOSE_MARK) {
+        else if (s_squelch_open && s_rssi < RX4815_SQUELCH_CLOSE_MARK)
             s_squelch_open = false;
-            bk4815_set_af(false);
-            BK4819_SetAF(BK4819_AF_MUTE);
-        }
+
+        /* Drive the three gates every poll, not only on a transition.  The K1's
+         * own receive setup (RADIO_SetupRegisters -> RADIO_SetModulation, and
+         * AUDIO_AudioPathOff) writes the shared AF node and the amplifier behind
+         * our back, so a one-shot open at the transition leaves the audio muted
+         * from then on.  The BK4815's own AF (0x49), the BK4829's AF (0x47, the
+         * node the BK4815's audio rides) and the amplifier (PC13) must all be
+         * open together for a BK4815 receive to be heard. */
+        bk4815_set_af(s_squelch_open);
+        BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
+        audio_path_drive(s_squelch_open);
         return;
     }
 

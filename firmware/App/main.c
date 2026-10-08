@@ -690,6 +690,12 @@ static void dual_rf_diag(void)
                 (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency % 100000u),
                 (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency / 100000u),
                 (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency % 100000u));
+    uart_printf("  BK4829: 0x38=0x%04X 0x39=0x%04X -> %u.%05u MHz  0x47(AF)=0x%04X 0x67(RSSI)=0x%04X 0x33=0x%04X\n",
+                (unsigned)BK4819_ReadRegister(0x38), (unsigned)BK4819_ReadRegister(0x39),
+                (unsigned)((((uint32_t)BK4819_ReadRegister(0x39) << 16) | BK4819_ReadRegister(0x38)) / 100000u),
+                (unsigned)((((uint32_t)BK4819_ReadRegister(0x39) << 16) | BK4819_ReadRegister(0x38)) % 100000u),
+                (unsigned)BK4819_ReadRegister(0x47), (unsigned)BK4819_ReadRegister(0x67),
+                (unsigned)BK4819_ReadRegister(0x33));
     uart_printf("  BK4815: 0x04=0x%04X 0x0C=0x%04X 0x49=0x%04X (AF %s)\n",
                 (unsigned)bk4815_read_reg(0x04), (unsigned)bk4815_read_reg(0x0C),
                 (unsigned)af, (af & 0x8000u) ? "MUTED" : "unmuted");
