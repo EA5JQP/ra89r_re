@@ -12,6 +12,7 @@
  * at all, only that we ask correctly.  `R` on the console is the other half.
  */
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -22,6 +23,7 @@
 #include "driver/gpio.h"
 #include "driver/pa.h"
 #include "driver/rf_bus.h"
+#include "driver/tx.h"
 
 /* The GPIO/timer scratch the host device-header double points at.  This test
  * does not link tools/host/host_hw.c, so it supplies its own.  `pa_init()` is
@@ -39,6 +41,16 @@ void gpio_config_output(GPIO_TypeDef *port, uint32_t mask)
     (void)port;
     (void)mask;
 }
+
+/* `driver/tx.c` is linked so `tx_start()`'s register order can be asserted.
+ * Only `tx_start()`/`tx_stop()` are called, so the application hooks the PTT
+ * poller (`tx_poll_ptt()`) references -- the keypad, the K1 function state and
+ * the coordinator's restore -- are stubbed and never reached. */
+void *gTxVfo;
+bool  gUpdateDisplay;
+void  rf_dual_reapply(void) { }
+unsigned KEYBOARD_GetKey(void) { return 0u; }
+void  FUNCTION_Select(int function) { (void)function; }
 
 /* ------------------------------------------------------------- bus stub --- */
 
@@ -543,6 +555,40 @@ static void test_pa_tx_path(void)
     check_hex(pa_last_compare(), PA_PWM_MAX_DUTY, "UHF TX: full power clamps the compare");
 }
 
+/* The last value the bus saw written to a BK4829 register, 0xFFFF if none. */
+static uint16_t last_reg(uint8_t addr)
+{
+    unsigned i;
+
+    for (i = log_len; i-- > 0; )
+        if (xfer_is(&log_[i], BK4829_CS_PIN, addr))
+            return (uint16_t)((log_[i].data[0] << 8) | log_[i].data[1]);
+    return 0xFFFFu;
+}
+
+/* The order inside `tx_start()`: the PA enable (`0x36`, PA-CTL + bias) must be
+ * written **after** `BK4819_PrepareTransmit()`, whose `BK4819_TxOn_Beep()`
+ * writes `0x36 = 0`.  With the two the other way round the PA is disabled for
+ * the whole transmission: the chip's own low-level carrier still radiates (a
+ * nearby receiver hears it) but there is no measurable power at the antenna.
+ * The bench that validated the transmit chain wrote `0x36` after this call
+ * (docs/ra89r_rfpath.md), and the driver extraction reversed it -- this is the
+ * regression guard. */
+static void test_tx_order(void)
+{
+    printf("tx_start register order (PA enable after PrepareTransmit)\n");
+
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    tx_start(14550000u, 0x40u, TX_SOURCE_MIC);
+    check_hex(last_reg(0x36), 0x4088u, "0x36 keeps PA-CTL + bias after PrepareTransmit");
+    check_hex(last_reg(0x7D), TX_REG7D_POWER, "0x7D = the stock's power/bias value");
+    check_hex(last_reg(0x37), 0x9D1F, "0x37 = the stock's TX value");
+    check_hex(last_reg(0x50), TX_REG50_UNMUTE, "0x50 = the stock's TX unmute");
+    tx_stop();
+}
+
 int main(void)
 {
     printf("rf register-layer test (stub bus, no radio)\n\n");
@@ -556,6 +602,7 @@ int main(void)
     test_k1_interface();
     test_pa_rx_path();
     test_pa_tx_path();
+    test_tx_order();
 
     printf("\n%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

@@ -22,7 +22,7 @@ run() {
 echo "== test_rf (register paths, including the BK4815 synthesizer) =="
 $CC -std=c11 -I tools/host -I App -I App/driver tools/test_rf.c \
     App/driver/bk4829.c App/driver/bk4815.c App/driver/bk4819.c \
-    App/driver/pa.c tools/host/host_led.c -o /tmp/ra89r_test_rf
+    App/driver/pa.c App/driver/tx.c tools/host/host_led.c -o /tmp/ra89r_test_rf
 run /tmp/ra89r_test_rf
 
 echo "== test_rf_dual (two-transceiver coordinator) =="

@@ -555,6 +555,15 @@ list the port keeps:
 | BK4815 `0x0C` | `0x0203` | the T/R path's other-branch state |
 | `0x38`/`0x39` | the channel in 10 Hz | |
 
+**Order matters for `0x36`.**  `BK4819_PrepareTransmit()` ends in
+`BK4819_TxOn_Beep()`, which writes `0x36 = 0`; the PA enable must therefore be
+written **after** it, or the whole transmission is unamplified (the chip's own
+low-level carrier only, audible to a nearby receiver but not to a power meter).
+The bench did this correctly; the extraction into `driver/tx.c` reversed the two
+and shipped the PA disabled.  `tools/test_rf.c` now asserts the final `0x36`
+write (`test_tx_order`), and `driver/tx.c` calls `pa_tx_enable()` after
+`BK4819_PrepareTransmit()`.
+
 The chip's own DTMF tone (`BK4819_EnterDTMF_TX` -> `EnableTXLink` ->
 `BK4819_PlayDTMF`) is audible on a second receiver through the same path, and is
 what settled the tone-versus-carrier question when the microphone was silent.

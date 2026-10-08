@@ -24,11 +24,8 @@ void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source)
     if (s_active && source == s_source)
         return;
 
-    /* The band state first (PA0/PA1, the BK4815 0x75 band and the RX path),
-     * then the TX band pin -- pa_tx_enable() overwrites 0x33 and sets 0x36 and
-     * the PB14 bias PWM from `power`. */
+    /* The band state first (PA0/PA1, the BK4815 0x75 band and the RX path). */
     pa_select_band(freq_10hz);
-    pa_tx_enable(power);
     /* Above 134 MHz the BK4815 is part of the transmit path (the stock's
      * `0x0C = 0x0203`, with the BK4829 as the modulator and PA control).  Put it
      * on the TX frequency in TX mode (`0x70 = 0xE000`) rather than leaving it on
@@ -40,6 +37,14 @@ void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source)
     BK4819_SetFrequency(freq_10hz);
     BK4819_WriteRegister(BK4819_REG_7D, TX_REG7D_POWER);
     BK4819_PrepareTransmit();               /* 0x37 = 0x9D1F, 0x30 = 0xC1FE */
+    /* The PA enable (`0x36`, PA-CTL + bias + gain), the TX band pin (`0x33`) and
+     * the PB14 bias PWM must be applied **after** `BK4819_PrepareTransmit()`:
+     * its `BK4819_TxOn_Beep()` writes `0x36 = 0`, so enabling the PA before it
+     * leaves the whole transmission unamplified -- the chip's own low-level
+     * carrier only, which a nearby receiver hears but a power meter reads as
+     * nothing.  The validated bench wrote `0x36` after this call for exactly
+     * this reason (docs/ra89r_rfpath.md, "The transmit configuration"). */
+    pa_tx_enable(power);
     BK4819_SetAF(BK4819_AF_MUTE);
 
     if (source == TX_SOURCE_TONE) {

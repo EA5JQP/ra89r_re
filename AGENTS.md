@@ -158,7 +158,7 @@ python3 tools/ra89r_flash.py --port "$(cat /tmp/ra89r-pty)" flash firmware/build
 # in).
 cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver tools/test_rf.c \
     App/driver/bk4829.c App/driver/bk4815.c App/driver/bk4819.c \
-    App/driver/pa.c tools/host/host_led.c -o /tmp/test_rf && /tmp/test_rf
+    App/driver/pa.c App/driver/tx.c tools/host/host_led.c -o /tmp/test_rf && /tmp/test_rf
 
 # the beeper's tone math (the timer reload and the sine table) on a PC.  It links
 # nothing else: driver/beeper.h is device-header free on purpose, so the tone
