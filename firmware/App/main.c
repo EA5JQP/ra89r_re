@@ -244,7 +244,7 @@ static void print_help(void)
               "          n BK4815 (PB13): boot config, tune 145.7500, read meters\n"
               "          J dual-RF live state: roles, audio source, BK4815 regs/meters\n"
               "          A force the BK4815 AF open (bypass squelch) to test audio\n"
-              "          T TX path/duty read-out   x cycle the TX band pin\n"
+              "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
               "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
@@ -926,7 +926,9 @@ static void tx_diag(void)
     uart_printf("  TX filter 0x43=0x%04X   BK4815 band 0x75=0x%04X  T/R 0x0C=0x%04X\n",
                 (unsigned)BK4819_ReadRegister(0x43),
                 (unsigned)bk4815_read_reg(0x75), (unsigned)bk4815_read_reg(0x0C));
-    uart_puts("  'x' cycles the TX path pin, 'Y' steps the PA duty\n");
+    uart_printf("  TX variant ('w'): %u -- %s\n",
+                (unsigned)tx_variant(), tx_variant_name());
+    uart_puts("  'x' cycles the TX path pin, 'Y' steps the PA duty, 'w' the TX variant\n");
 }
 
 static void radio_tx(int on, tx_source_t source)
@@ -1834,6 +1836,16 @@ int main(void)
                 uart_puts("  hold PTT and press 'T' to read 0x33 and the PA duty back\n");
                 break;
             }
+            case 'w':
+                /* The stock TX register sweep: the K1 chain omits these, so step
+                 * them while PTT is held and watch the power meter. */
+                tx_variant_next();
+                uart_printf("\nTX variant: %u -- %s\n",
+                            (unsigned)tx_variant(), tx_variant_name());
+                if (tx_active())
+                    tx_variant_apply();
+                uart_puts("  hold PTT, press 'w' to step, and watch the meter\n");
+                break;
             case 'Y': {
                 /* The PA bias PWM compare: the one transmit level worth tuning
                  * by ear or S-meter now that the amplifier works.  The steps

@@ -1,5 +1,6 @@
 #include "driver/tx.h"
 
+#include "driver/audio_path.h"
 #include "driver/bk4815.h"
 #include "driver/bk4819.h"
 #include "driver/led.h"
@@ -13,6 +14,49 @@
 
 static bool s_active;
 static tx_source_t s_source;
+
+/* The 'w' sweep: one extra stock TX register on top of the K1 chain, cycled
+ * while PTT is held so the radio can settle which one the PA needs. */
+static uint8_t s_variant;
+
+uint8_t tx_variant(void) { return s_variant; }
+
+void tx_variant_next(void) { s_variant = (uint8_t)((s_variant + 1u) % 7u); }
+
+const char *tx_variant_name(void)
+{
+    static const char *const names[] = {
+        "base: the K1 chain as measured",
+        "0x30 = 0xBFF1 (the stock's TX value)",
+        "0x47 = 0x6142 (the stock's Normal AF)",
+        "0x13 = 0x03FF (the squelch ramp max)",
+        "0x36 = 0x8822 (the bench's value)",
+        "0x31 bit 2 cleared",
+        "PC13 high (the stock's T/R line)",
+    };
+
+    return names[s_variant];
+}
+
+/* Apply the current variant to the chip.  Called from tx_start() and from the
+ * console ('w'), so a running transmission can be changed without re-keying. */
+void tx_variant_apply(void)
+{
+    switch (s_variant) {
+        case 1: BK4819_WriteRegister(BK4819_REG_30, 0xBFF1u); break;
+        case 2: BK4819_WriteRegister(BK4819_REG_47, 0x6142u); break;
+        case 3: BK4819_WriteRegister(BK4819_REG_13, 0x03FFu); break;
+        case 4: BK4819_WriteRegister(BK4819_REG_36, 0x8822u); break;
+        case 5: {
+            const uint16_t v = BK4819_ReadRegister(BK4819_REG_31);
+
+            BK4819_WriteRegister(BK4819_REG_31, (uint16_t)(v & ~(1u << 2)));
+            break;
+        }
+        case 6: audio_path_drive(1); break;
+        default: break;
+    }
+}
 
 void tx_init(void)
 {
@@ -59,6 +103,11 @@ void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source)
         BK4819_WriteRegister(BK4819_REG_40,
                              (uint16_t)(0x3000u | ((uint16_t)TX_MIC_GAIN << 4)));
     }
+
+    /* The 'w' sweep: one extra stock register on top of the K1 chain.  The
+     * stock's own TX (`FUN_08016228`) sends these and the K1 chain does not, so
+     * this is what settles which one the PA needs. */
+    tx_variant_apply();
 
     led_set(LED_RED);                       /* red = transmit, as the stock shows it */
 

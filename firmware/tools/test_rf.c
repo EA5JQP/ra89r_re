@@ -51,6 +51,7 @@ bool  gUpdateDisplay;
 void  rf_dual_reapply(void) { }
 unsigned KEYBOARD_GetKey(void) { return 0u; }
 void  FUNCTION_Select(int function) { (void)function; }
+void  audio_path_drive(int on) { (void)on; }   /* the 'w' variant's PC13 step */
 
 /* ------------------------------------------------------------- bus stub --- */
 
