@@ -907,9 +907,15 @@ static void tx_diag(void)
     uart_printf("  PA duty (PB14/TIM1_CH2 compare): %u of %u   (pa_last_compare %u)\n",
                 (unsigned)TIM1->CCR2, (unsigned)PA_PWM_ARR,
                 (unsigned)pa_last_compare());
-    uart_printf("  power: OUTPUT_POWER=%u  TXP_CalculatedSetting=%u -> compare %u\n",
-                (unsigned)gTxVfo->OUTPUT_POWER, (unsigned)gTxVfo->TXP_CalculatedSetting,
-                (unsigned)(((uint32_t)gTxVfo->TXP_CalculatedSetting * PA_PWM_ARR) / 255u));
+    {
+        uint32_t want = ((uint32_t)gTxVfo->TXP_CalculatedSetting * PA_PWM_ARR) / 255u;
+
+        if (want > PA_PWM_MAX_DUTY)
+            want = PA_PWM_MAX_DUTY;                 /* the stock's ARR/2 clamp */
+        uart_printf("  power: OUTPUT_POWER=%u  TXP_CalculatedSetting=%u -> compare %u\n",
+                    (unsigned)gTxVfo->OUTPUT_POWER,
+                    (unsigned)gTxVfo->TXP_CalculatedSetting, (unsigned)want);
+    }
     uart_printf("  TX path pin: mode %u -- %s -> band bits 0x%04X\n",
                 (unsigned)pa_tx_path_mode(), pa_tx_path_name(),
                 (unsigned)pa_tx_path_bits());
