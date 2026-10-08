@@ -690,6 +690,9 @@ static void dual_rf_diag(void)
                 (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency % 100000u),
                 (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency / 100000u),
                 (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency % 100000u));
+    uart_printf("  TX power: TX_VFO OUTPUT_POWER=%u  TXP_CalculatedSetting=%u  (menu 'Power'; USER global=%u)\n",
+                (unsigned)gTxVfo->OUTPUT_POWER, (unsigned)gTxVfo->TXP_CalculatedSetting,
+                (unsigned)gSetting_set_pwr);
     uart_printf("  BK4829: 0x38=0x%04X 0x39=0x%04X -> %u.%05u MHz  0x47(AF)=0x%04X 0x67(RSSI)=0x%04X 0x33=0x%04X\n",
                 (unsigned)BK4819_ReadRegister(0x38), (unsigned)BK4819_ReadRegister(0x39),
                 (unsigned)((((uint32_t)BK4819_ReadRegister(0x39) << 16) | BK4819_ReadRegister(0x38)) / 100000u),
