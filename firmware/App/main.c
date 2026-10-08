@@ -244,7 +244,8 @@ static void print_help(void)
               "          n BK4815 (PB13): boot config, tune 145.7500, read meters\n"
               "          J dual-RF live state: roles, audio source, BK4815 regs/meters\n"
               "          A force the BK4815 AF open (bypass squelch) to test audio\n"
-              "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
+              "          T TX path/duty read-out   x cycle the TX band pin\n"
+              "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
               "          5 save settings   6 flash write test   e flash dump\n"
@@ -880,6 +881,46 @@ static void bench_screen(unsigned duty, uint16_t r50, uint16_t r36, uint16_t r7d
 
     ui_bench(title, detail);
     lcd_refresh();
+}
+
+/* Console 'T': what the transmit path is actually doing, without keying it.
+ * Transmit is PTT's (or the bench's) -- this is the read-out: the PA bias PWM
+ * compare in force, the power the app would ask for, the chip band/path pin
+ * ('x' changes it), and the TX registers (`0x43` is the TX filter, `0x75` the
+ * BK4815's band, `0x0C` its T/R state). */
+static void tx_diag(void)
+{
+    const bool active = tx_active();
+
+    uart_puts("\nTX path\n");
+    if (active) {
+        const uint32_t f = gTxVfo->freq_config_TX.Frequency;
+
+        uart_printf("  transmitting (%s)  %u.%05u MHz  band %s  TX_VFO %u\n",
+                    tx_source() == TX_SOURCE_TONE ? "tone" : "mic",
+                    (unsigned)(f / 100000u), (unsigned)(f % 100000u),
+                    pa_band_is_uhf() ? "UHF" : "VHF", (unsigned)gEeprom.TX_VFO);
+    } else {
+        uart_puts("  idle -- hold PTT to transmit\n");
+    }
+
+    uart_printf("  PA duty (PB14/TIM1_CH2 compare): %u of %u   (pa_last_compare %u)\n",
+                (unsigned)TIM1->CCR2, (unsigned)PA_PWM_ARR,
+                (unsigned)pa_last_compare());
+    uart_printf("  power: OUTPUT_POWER=%u  TXP_CalculatedSetting=%u -> compare %u\n",
+                (unsigned)gTxVfo->OUTPUT_POWER, (unsigned)gTxVfo->TXP_CalculatedSetting,
+                (unsigned)(((uint32_t)gTxVfo->TXP_CalculatedSetting * PA_PWM_ARR) / 255u));
+    uart_printf("  TX path pin: mode %u -- %s -> band bits 0x%04X\n",
+                (unsigned)pa_tx_path_mode(), pa_tx_path_name(),
+                (unsigned)pa_tx_path_bits());
+    uart_printf("  BK4829: 0x33=0x%04X 0x36=0x%04X 0x7D=0x%04X 0x30=0x%04X 0x50=0x%04X\n",
+                (unsigned)BK4819_ReadRegister(0x33), (unsigned)BK4819_ReadRegister(0x36),
+                (unsigned)BK4819_ReadRegister(0x7D), (unsigned)BK4819_ReadRegister(0x30),
+                (unsigned)BK4819_ReadRegister(0x50));
+    uart_printf("  TX filter 0x43=0x%04X   BK4815 band 0x75=0x%04X  T/R 0x0C=0x%04X\n",
+                (unsigned)BK4819_ReadRegister(0x43),
+                (unsigned)bk4815_read_reg(0x75), (unsigned)bk4815_read_reg(0x0C));
+    uart_puts("  'x' cycles the TX path pin, 'Y' steps the PA duty\n");
 }
 
 static void radio_tx(int on, tx_source_t source)
@@ -1772,8 +1813,21 @@ int main(void)
                 audio_path_toggle();
                 break;
             case 'T':
-                radio_tx(!tx_on, TX_SOURCE_TONE);
+                tx_diag();
                 break;
+            case 'x': {
+                /* The TX band/path pin (`0x33` bit 0x40 VHF / 0x20 UHF).  AUTO
+                 * is the stock's rule; the other modes force one so the radio
+                 * can settle which pin the PA actually needs. */
+                uint8_t mode = (uint8_t)((pa_tx_path_mode() + 1u) % PA_TX_PATH_MODES);
+
+                pa_set_tx_path_mode(mode);
+                uart_printf("\nTX path pin: mode %u -- %s (band bits 0x%04X)\n",
+                            (unsigned)mode, pa_tx_path_name(),
+                            (unsigned)pa_tx_path_bits());
+                uart_puts("  hold PTT and press 'T' to read 0x33 and the PA duty back\n");
+                break;
+            }
             case 'Y': {
                 /* The PA bias PWM compare: the one transmit level worth tuning
                  * by ear or S-meter now that the amplifier works.  The steps
