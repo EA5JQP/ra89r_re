@@ -535,6 +535,27 @@ path the pin selects.  (That the `0x40`/`0x20` pin physically routes the bias to
 the selected PA is the reading that fits one PWM + one path pin set together and
 the two-PA board; a scope on `PB14` plus the two chip pins would confirm it.)
 
+**Validated on the radio (2026-10).**  The PWM output was dead from the start:
+`pa_init()` wrote `TIM1->CCER &= ~0x30u` (meaning to clear `CC2P`/`CC2NE`), but
+`TIM_CCER_CC2E` is bit 4 (`0x10`), so the mask cleared the enable itself.  The
+enable that actually drives `PB14` is **`CC2NE`** (bit 6, `0x40`): `PB14` is
+`TIM1_CH2N` (datasheet AF4), the complementary output, and the stock enables it
+in `FUN_08012f26` -> `FUN_0801de58(TIM1, 4, 4)` before `BDTR |= MOE` and
+`CR1 |= CEN`.  With `CC2NE` set the PA biases and a power meter reads ~7.5 W
+(the `Y` duty sweep moves it).  The K1 chain's `0x30 = 0xC1FE` is also required:
+the stock's `0x30 = 0xBFF1` (sendable with the `w` sweep) clears the PA-gain bit
+and drops the output to nothing.
+
+**The duty arithmetic matches the stock.**  The stock's compare is
+`FUN_08018A88(value)` = `(value * ARR) / 0xFF`, clamped by `FUN_080167B4` to
+`ARR/2`; the multiplier `*DAT_08018AA0` is the same RAM cell (`0x20000012`) that
+`FUN_08016C58` stores the period in, so it is the ARR.  The port's `pa_power()`
+is the same: `value * PA_PWM_ARR / 255`, clamped to `PA_PWM_ARR / 2`.  With
+ARR = 1439 the maximum compare is **719** on both sides.  The one difference is
+the *frequency*: the stock's APB2 is 144 MHz, so ARR 1439 gives 100 kHz, while
+this port runs at 48 MHz and the same ARR gives ~33 kHz -- the duty ratio is
+identical, the PWM is just slower.
+
 ### The transmit configuration, validated on the radio
 
 Voice was heard on a second receiver with exactly these values, so this is the
