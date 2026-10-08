@@ -22,7 +22,7 @@
 ## Review Focus
 
 - **Both VFOs select the same transceiver:** a single BK4829 cannot receive two frequencies at once; the coordinator must fall back to single-VFO rather than mis-tune the shared chip. Tested in Task 4.
-- **Erased/invalid saved value:** an absent or out-of-range `rf_xcvr` byte must resolve to `AUTO`, not to a random chip. Tested in Task 1.
+- **Erased/invalid saved value:** legacy zero (formerly `AUTO`) and out-of-range `rf_xcvr` bytes resolve to BK4829, not to a random chip. Tested in Task 1.
 - **Transmit VFO set to BK4815:** must be refused or resolved to the primary, never silently transmit on an unproven path. Tested in Task 4.
 - **BK4815 tune at band edges / non-ham frequencies:** the r4 selection and the register-4 band byte must not corrupt the band register `0x75`. Tested on the radio in Task 5.
 - **Host preview regression:** the new menu item must not shift or hide existing items. Tested in Task 2.
@@ -36,7 +36,7 @@
 - Test: `firmware/tools/preview_k1.c` (the storage round-trip section)
 
 **Interfaces:**
-- Produce: `typedef enum { RF_XCVR_AUTO=0, RF_XCVR_BK4829=1, RF_XCVR_BK4815=2 } rf_xcvr_t;` in `settings.h`.
+- Produce: `typedef enum { RF_XCVR_LEGACY_DEFAULT=0, RF_XCVR_BK4829=1, RF_XCVR_BK4815=2 } rf_xcvr_t;` in `settings.h`; legacy zero is normalized to BK4829 and is not a menu choice.
 - Produce: `rf_xcvr_t SETTINGS_GetVfoTransceiver(uint8_t vfo);` and `void SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr);` (`vfo` 0=A, 1=B).
 - Consumes: the existing `settings_extra_t` save/load path (`storage_set_extra` / `storage_get_extra`, `EXTRA_MAGIC`).
 
@@ -47,8 +47,8 @@
 SETTINGS_SetVfoTransceiver(0u, RF_XCVR_BK4829);
 SETTINGS_SetVfoTransceiver(1u, RF_XCVR_BK4815);
 ok = storage_save_settings();
-SETTINGS_SetVfoTransceiver(0u, RF_XCVR_AUTO);
-SETTINGS_SetVfoTransceiver(1u, RF_XCVR_AUTO);
+SETTINGS_SetVfoTransceiver(0u, RF_XCVR_BK4829);
+SETTINGS_SetVfoTransceiver(1u, RF_XCVR_BK4829);
 ok = ok && storage_load_settings();
 ok = ok && SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829 &&
      SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815;
@@ -66,10 +66,10 @@ Expected: compile error (no `SETTINGS_GetVfoTransceiver`), so the test cannot pa
 - [ ] **Step 3: Implement the setting.** In `settings.h` add the `rf_xcvr_t` enum and the two prototypes. In `settings.c`:
   - Add `uint8_t rf_xcvr[2];` to `settings_extra_t`, bump `EXTRA_VERSION` to `3u`.
   - Keep a file-static `static uint8_t s_rf_xcvr[2];`.
-  - `SETTINGS_SetVfoTransceiver(vfo, xcvr)`: ignore `vfo > 1`; store `xcvr` if it is one of the three enum values, else store `RF_XCVR_AUTO`.
-  - `SETTINGS_GetVfoTransceiver(vfo)`: return `s_rf_xcvr[vfo]` for `vfo <= 1`, else `RF_XCVR_AUTO`.
+  - `SETTINGS_SetVfoTransceiver(vfo, xcvr)`: ignore `vfo > 1`; store BK4829 or BK4815, else store BK4829.
+  - `SETTINGS_GetVfoTransceiver(vfo)`: return the stored explicit chip; normalize legacy zero, invalid values, and invalid VFO indices to BK4829.
   - In `storage_save_settings()` copy `s_rf_xcvr` into `extra.rf_xcvr`; in the load path copy `extra.rf_xcvr` back when `version == EXTRA_VERSION`.
-  - Initialise `s_rf_xcvr` to `AUTO` in `SettingsDefaults()`.
+  - Initialise `s_rf_xcvr` to BK4829 in `SettingsDefaults()`.
 
 - [ ] **Step 4: Run and confirm GREEN.**
 
@@ -90,7 +90,7 @@ git commit -m "settings: store a per-VFO RF transceiver choice"
 
 **Interfaces:**
 - Consumes: `SETTINGS_GetVfoTransceiver` / `SETTINGS_SetVfoTransceiver`, `RF_XCVR_*`, and the current VFO index `gEeprom.TX_VFO`.
-- Produces: `MENU_RF` id and a `MenuList[]` row `{"RF", MENU_RF}`; a `gSubMenu_RF[] = {"Auto","4829","4815"}` label array (declare `extern` in `ui/menu.h`).
+- Produces: two per-VFO menu entries and a `gSubMenu_RF[] = {"4829","4815"}` label array (declare `extern` in `ui/menu.h`).
 
 - [ ] **Step 1: Write the failing test** in the menu section of `preview_k1.c`: assert the item is present in `MenuList[]` and that accepting it edits the selected VFO.
 
@@ -177,11 +177,11 @@ git commit -m "rf: add the BK4815 receive service"
 - Consumes: `SETTINGS_GetVfoTransceiver`, `RF_XCVR_*`, `bk4815_rx_tune`, `gEeprom.VfoInfo[]`, `gEeprom.TX_VFO`, `gEeprom.RX_VFO`.
 - Produces: `rf_xcvr_t rf_dual_resolve(uint8_t vfo);` and `void rf_dual_refresh(void);` and `bool rf_dual_secondary_active(void);`
 
-- [ ] **Step 1: Write the failing test** `test_rf_dual.c` (pure logic; stub `SETTINGS_GetVfoTransceiver` via a settable table): assert that (a) `AUTO` resolves to `BK4829`, (b) two VFOs selecting the same chip leave only the primary active, (c) a TX VFO selecting `BK4815` resolves the primary to the other VFO or is refused.
+  - [ ] **Step 1: Write the failing test** `test_rf_dual.c` (pure logic; stub `SETTINGS_GetVfoTransceiver` via a settable table): assert that (a) legacy zero resolves to `BK4829`, (b) two VFOs selecting the same chip leave only the primary active, (c) a TX VFO selecting `BK4815` resolves the primary to the other VFO or is refused.
 
 - [ ] **Step 2: Run and confirm RED.** Expected undefined reference to `rf_dual_resolve`.
 
-- [ ] **Step 3: Implement `rf_dual.c`:** `rf_dual_resolve` maps `AUTO` → `BK4829`, otherwise the stored value. `rf_dual_refresh` picks the primary VFO (the one whose resolved chip is `BK4829`; if both are `BK4829`, the primary is `gEeprom.RX_VFO` and the secondary is inactive), tunes the secondary with `bk4815_rx_tune(gEeprom.VfoInfo[secondary].freq_config_RX.Frequency, band)`, and records `s_secondary_active`.
+  - [ ] **Step 3: Implement `rf_dual.c`:** settings normalize legacy zero to `BK4829`; `rf_dual_refresh` picks the primary VFO (the one whose chip is `BK4829`; if both are `BK4829`, the primary is `gEeprom.RX_VFO` and the secondary is inactive), tunes the secondary with `bk4815_rx_tune(gEeprom.VfoInfo[secondary].freq_config_RX.Frequency, band)`, and records `s_secondary_active`.
 
 - [ ] **Step 4: Wire it in:** call `rf_dual_refresh()` from `rx_service()` when a VFO frequency changes, and call it from `main.c` after settings load. Do not touch the external flash from the 10 ms slice.
 

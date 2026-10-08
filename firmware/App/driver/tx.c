@@ -120,6 +120,12 @@ void tx_stop(void)
 
     pa_rx_enable();                         /* 0x33 back, 0x36 = 0, compare 0 */
     bk4815_write_reg(0x0C, pa_band_is_main() ? 0x0A03u : 0xFFFBu);
+    /* A TX above 134 MHz switched the BK4815's operation-control register
+     * (0x70) to E000 in bk4815_set_frequency(..., true).  Restore its RX mode
+     * even when neither VFO is assigned to it: rf_dual_reapply() only retunes
+     * an assigned BK4815, so otherwise the unused part remains in TX mode and
+     * can load the shared RF path after PTT is released. */
+    bk4815_write_reg(0x70u, 0xA000u);
     BK4819_RX_TurnOn();
     BK4819_SetAF(BK4819_AF_MUTE);
     /* Back to receive, so the audio path goes to its ON value (`0x3B20`), not

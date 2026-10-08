@@ -567,6 +567,17 @@ static uint16_t last_reg(uint8_t addr)
     return 0xFFFFu;
 }
 
+static uint16_t last_bk4815_reg70(void)
+{
+    unsigned i;
+
+    for (i = log_len; i-- > 0; )
+        if (!log_[i].is_read && xfer_is(&log_[i], BK4815_CS_PIN, 0xE0) &&
+            log_[i].len >= 2u)
+            return (uint16_t)((log_[i].data[0] << 8) | log_[i].data[1]);
+    return 0xFFFFu;
+}
+
 /* The order inside `tx_start()`: the PA enable (`0x36`, PA-CTL + bias) must be
  * written **after** `BK4819_PrepareTransmit()`, whose `BK4819_TxOn_Beep()`
  * writes `0x36 = 0`.  With the two the other way round the PA is disabled for
@@ -588,6 +599,8 @@ static void test_tx_order(void)
     check_hex(last_reg(0x37), 0x9D1F, "0x37 = the stock's TX value");
     check_hex(last_reg(0x50), TX_REG50_UNMUTE, "0x50 = the stock's TX unmute");
     tx_stop();
+    check_hex(last_bk4815_reg70(), 0xA000u,
+              "BK4815 0x70 restored from TX E000 to RX A000 after tx_stop");
 }
 
 int main(void)

@@ -11,6 +11,7 @@
  * AGENTS.md, "Offline checks", has the current command.
  */
 #include <stdio.h>
+#include <string.h>
 
 #include "app/app.h"
 #include "app/fm.h"
@@ -195,6 +196,8 @@ int main(void)
     {
         bool found_a = false, found_b = false;
         unsigned mi;
+        bool labels_ok = strcmp(gSubMenu_RF[0], "4829") == 0 &&
+                         strcmp(gSubMenu_RF[1], "4815") == 0;
         for (mi = 0; MenuList[mi].name[0] != '\0'; mi++) {
             if (MenuList[mi].menu_id == MENU_RF_A) found_a = true;
             if (MenuList[mi].menu_id == MENU_RF_B) found_b = true;
@@ -202,13 +205,16 @@ int main(void)
         printf("[dual] %s TrVfoA and TrVfoB menu items exist\n",
                (found_a && found_b) ? "ok  " : "FAIL");
         if (!(found_a && found_b)) failures++;
+        printf("[dual] %s transceiver menu offers only 4829 and 4815\n",
+               labels_ok ? "ok  " : "FAIL");
+        if (!labels_ok) failures++;
     }
     gIsInSubMenu = true;
     gMenuCursor  = UI_MENU_GetViewPos(MENU_RF_A);
-    gSubMenuSelection = 1;              /* BK4829 */
+    gSubMenuSelection = 0;              /* BK4829 */
     MENU_AcceptSetting();
     gMenuCursor  = UI_MENU_GetViewPos(MENU_RF_B);
-    gSubMenuSelection = 2;              /* BK4815 */
+    gSubMenuSelection = 1;              /* BK4815 */
     MENU_AcceptSetting();
     {
         bool ok = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829 &&
@@ -219,6 +225,17 @@ int main(void)
         if (!ok) failures++;
     }
     gIsInSubMenu = false;
+    {
+        bool ok;
+
+        /* An older settings blob stored AUTO as 0 in the reserved bytes;
+         * with Auto removed, that legacy value must default to BK4829. */
+        SETTINGS_SetVfoTransceiver(0u, (rf_xcvr_t)0);
+        ok = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829;
+        printf("[dual] %s legacy/invalid RF value 0 resolves to BK4829\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+    }
 
     /* The status bar with a charged pack: the icon must show bars, and (with
      * gSetting_battery_text = 2) the percentage beside it. */
@@ -257,8 +274,8 @@ int main(void)
             SETTINGS_SetVfoTransceiver(0u, RF_XCVR_BK4829);
             SETTINGS_SetVfoTransceiver(1u, RF_XCVR_BK4815);
             SETTINGS_SaveSettings();
-            SETTINGS_SetVfoTransceiver(0u, RF_XCVR_AUTO);
-            SETTINGS_SetVfoTransceiver(1u, RF_XCVR_AUTO);
+            SETTINGS_SetVfoTransceiver(0u, RF_XCVR_BK4829);
+            SETTINGS_SetVfoTransceiver(1u, RF_XCVR_BK4829);
             SETTINGS_InitEEPROM();
             ok = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829 &&
                  SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815;

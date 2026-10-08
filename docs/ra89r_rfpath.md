@@ -597,6 +597,13 @@ The chip's own DTMF tone (`BK4819_EnterDTMF_TX` -> `EnableTXLink` ->
 `BK4819_PlayDTMF`) is audible on a second receiver through the same path, and is
 what settled the tone-versus-carrier question when the microphone was silent.
 
+When TX above 134 MHz ends, `bk4815_set_frequency(..., true)` has left the
+BK4815 operation-control register `0x70 = 0xE000` (TX).  `tx_stop()` must restore
+`0x70 = 0xA000` (RX) even if no VFO is assigned to the BK4815: in that case the
+coordinator correctly skips retuning it, which otherwise left the unused
+transceiver parked in TX mode after PTT release.  The register-order host test
+checks this TX cleanup as well as the PA-enable ordering.
+
 With that in place the CPU-side TX picture is complete: chip registers
 (`0x30`/`0x37`/`0x47`/`0x50`/`0x7D`), the band/path pins (`PA1 = 1, PA0 = 0`, chip
 PA_ENABLE on -- `FUN_0800948C(1)` -> `FUN_0801B018` -> `FUN_08013A70(2)`), the

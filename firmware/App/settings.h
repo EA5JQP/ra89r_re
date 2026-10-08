@@ -365,11 +365,12 @@ void SETTINGS_UpdateChannel(uint16_t channel, const VFO_Info_t *pVFO, bool keep)
     void SETTINGS_ResetTxLock(void);
 #endif
 
-/* Which RF transceiver a VFO uses.  AUTO keeps the port's default (the
- * BK4829); the other values pin a VFO to a specific part.  The choice lives in
- * the port's own settings blob, not the read-only stock codeplug. */
+/* Which RF transceiver a VFO uses.  Value 0 is reserved for old settings blobs
+ * written when the menu had an Auto entry; getters normalize it to BK4829.
+ * The choice lives in the port's own settings blob, not the read-only stock
+ * codeplug. */
 typedef enum {
-    RF_XCVR_AUTO   = 0,
+    RF_XCVR_LEGACY_DEFAULT = 0,
     RF_XCVR_BK4829 = 1,
     RF_XCVR_BK4815 = 2
 } rf_xcvr_t;

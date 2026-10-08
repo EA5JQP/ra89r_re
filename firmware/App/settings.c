@@ -137,17 +137,16 @@ typedef struct {
 #define EXTRA_VERSION 2u
 
 /* The per-VFO RF transceiver choice, mirrored into the blob on save. */
-static uint8_t s_rf_xcvr[2] = { RF_XCVR_AUTO, RF_XCVR_AUTO };
+static uint8_t s_rf_xcvr[2] = { RF_XCVR_BK4829, RF_XCVR_BK4829 };
 
 rf_xcvr_t SETTINGS_GetVfoTransceiver(uint8_t vfo)
 {
-    const uint8_t v = (vfo > 1u) ? (uint8_t)RF_XCVR_AUTO : s_rf_xcvr[vfo];
+    const uint8_t v = (vfo > 1u) ? (uint8_t)RF_XCVR_BK4829 : s_rf_xcvr[vfo];
 
-    /* Normalise: a loaded or corrupt byte that is not one of the three values
-     * reads back as AUTO. */
-    if (v != (uint8_t)RF_XCVR_AUTO && v != (uint8_t)RF_XCVR_BK4829 &&
-        v != (uint8_t)RF_XCVR_BK4815)
-        return RF_XCVR_AUTO;
+    /* Old settings blobs contain 0 for Auto in these former reserved bytes;
+     * invalid values also safely fall back to the fixed BK4829 default. */
+    if (v != (uint8_t)RF_XCVR_BK4829 && v != (uint8_t)RF_XCVR_BK4815)
+        return RF_XCVR_BK4829;
     return (rf_xcvr_t)v;
 }
 
@@ -155,8 +154,8 @@ void SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr)
 {
     if (vfo > 1u)
         return;
-    if (xcvr != RF_XCVR_AUTO && xcvr != RF_XCVR_BK4829 && xcvr != RF_XCVR_BK4815)
-        xcvr = RF_XCVR_AUTO;
+    if (xcvr != RF_XCVR_BK4829 && xcvr != RF_XCVR_BK4815)
+        xcvr = RF_XCVR_BK4829;
     s_rf_xcvr[vfo] = (uint8_t)xcvr;
 }
 
@@ -164,8 +163,8 @@ void SettingsDefaults(void)
 {
     memset(&gEeprom, 0, sizeof gEeprom);
 
-    s_rf_xcvr[0] = (uint8_t)RF_XCVR_AUTO;
-    s_rf_xcvr[1] = (uint8_t)RF_XCVR_AUTO;
+    s_rf_xcvr[0] = (uint8_t)RF_XCVR_BK4829;
+    s_rf_xcvr[1] = (uint8_t)RF_XCVR_BK4829;
 
     gEeprom.RX_VFO = 0;
     gEeprom.TX_VFO = 0;

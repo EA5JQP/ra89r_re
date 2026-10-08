@@ -231,7 +231,6 @@ const char* const gSubMenu_W_N[] =
 /* Which RF transceiver the selected VFO uses (rf_xcvr_t in settings.h). */
 const char* const gSubMenu_RF[] =
 {
-    "Auto",
     "4829",
     "4815"
 };

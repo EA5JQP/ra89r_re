@@ -63,16 +63,17 @@ answer and each has an explicit gate.
 
 ### Per-VFO transceiver selection
 
-- Add `uint8_t RF_Transceiver` to each VFO's port-side settings with values
-  `RF_XCVR_AUTO`, `RF_XCVR_BK4829`, `RF_XCVR_BK4815`. `AUTO` preserves today's
-  behaviour (the port uses the BK4829 for both bands).
+- Add a per-VFO transceiver value to the port-side settings. The user-facing
+  choices are explicit: `RF_XCVR_BK4829` or `RF_XCVR_BK4815`. The old stored
+  value `0` (formerly `AUTO`) and invalid values normalize to BK4829, preserving
+  existing settings blobs without exposing a redundant menu choice.
 - The field is the port's own setting, stored in the port's versioned settings
   blob, **not** in the read-only stock codeplug. It is a per-VFO value, so it
   survives reboot.
 - Two main-menu items, `TrVfoA` and `TrVfoB`, are added to `MenuList[]` next to
   the other per-VFO items. Each names its VFO explicitly and writes that VFO's
   transceiver, independent of which VFO is selected on the main screen, so the
-  operator does not have to switch VFOs to configure them. `AUTO` is the
+  operator does not have to switch VFOs to configure them. BK4829 is the
   default.
 
 ### Transceiver service layer
