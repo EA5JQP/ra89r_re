@@ -1776,8 +1776,10 @@ int main(void)
                 break;
             case 'Y': {
                 /* The PA bias PWM compare: the one transmit level worth tuning
-                 * by ear or S-meter now that the amplifier works. */
-                static const uint16_t steps[] = { 64, 96, 128, 160, 192, 224 };
+                 * by ear or S-meter now that the amplifier works.  The steps
+                 * run past the stock's clamp (ARR/2 = 719, the 50 % the app's
+                 * own power setting reaches) so the full range can be swept. */
+                static const uint16_t steps[] = { 64, 128, 192, 256, 384, 512, 719 };
                 static unsigned i;
 
                 pa_duty = steps[i];

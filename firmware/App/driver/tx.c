@@ -104,6 +104,14 @@ void tx_poll_ptt(void)
     const KEY_Code_t key  = KEYBOARD_GetKey();
     const bool       down = (key == KEY_PTT) || (key == KEY_PTT2);
 
+    /* A console-bench transmission ('T', the chip's own DTMF tone) is not PTT:
+     * it must hold until the console stops it.  Otherwise this poller sees
+     * "PTT not pressed" while tx_active() is true and cancels the bench TX on
+     * the very next loop pass -- the radio emits only a brief burst, which is
+     * exactly what a power meter reads as nothing. */
+    if (!down && tx_active() && tx_source() == TX_SOURCE_TONE)
+        return;
+
     if (down == tx_active())
         return;
 
