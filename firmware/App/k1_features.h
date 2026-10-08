@@ -35,6 +35,21 @@
 #define ENABLE_KEEP_MEM_NAME 1
 #define ENABLE_WIDE_RX 1
 
+/* Scanning: the K1's scan engine (App/app/chFrScanner.c, App/app/scanner.c) is
+ * imported verbatim and carries the F4HWN fast-RSSI sweep and the scan-range
+ * engine behind these flags, so the port turns them on rather than adding code
+ * to the imported files.  The fast sweep is the "Scan faster" setting
+ * (`gSetting_set_scn`): it reads the chip RSSI and only fully tunes a channel
+ * whose RSSI clears the learned noise floor.  `ENABLE_FEAT_F4HWN_SCAN_RSSI`
+ * draws the sweep sparkline; `ENABLE_SCAN_RANGES` is the range engine the fast
+ * path prechecks.  The K1's `ENABLE_FEAT_F4HWN_RESUME_STATE` is left off: it
+ * needs `SETTINGS_WriteCurrentState`, which is a scan-state EEPROM record the
+ * port has no equivalent of, and it is not needed for the fast sweep.  None of
+ * this is validated on the radio yet. */
+#define ENABLE_SCAN_RANGES 1
+#define ENABLE_FEAT_F4HWN_SCAN_FASTER 1
+#define ENABLE_FEAT_F4HWN_SCAN_RSSI 1
+
 /* FM broadcast: the RA89R *does* carry a BK1080 FM receiver (docs/ra89r_bk1080.md),
  * on its own bus (PC14/PB2, driver/i2c_bus.c).  The K1's own feature is imported
  * (App/driver/bk1080.c, App/app/fm.c, App/ui/fmradio.c) and the K1 CMake's rule

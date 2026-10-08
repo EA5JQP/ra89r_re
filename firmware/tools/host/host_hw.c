@@ -350,6 +350,7 @@ void GPIO_DisableAudioPath(void) { s_host_audio_path = 0; }
 bool host_audio_path_is_on(void) { return s_host_audio_path != 0; }
 
 void systick_delay_ms(uint32_t ms) { (void)ms; }
+void SYSTICK_DelayUs(uint32_t us) { (void)us; }
 
 bool tx_active(void) { return false; }
 void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source) { (void)freq_10hz; (void)power; (void)source; }
