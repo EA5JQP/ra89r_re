@@ -456,6 +456,19 @@ int main(void)
         }
     }
 
+    /* Resuming after a hit is also a fresh pass: the override must not leak
+     * into the next sweep. */
+    {
+        rx_set_scan_source_override(RX_SCAN_SOURCE_BK4829);
+        CHFRSCANNER_ContinueScanning();
+        {
+            const bool ok = rx_scan_source_override() == RX_SCAN_SOURCE_DEFAULT;
+            printf("[scan] %s scan resume clears the RX scan-source override\n",
+                   ok ? "ok  " : "FAIL");
+            if (!ok) failures++;
+        }
+    }
+
     /* The status bar with a charged pack: the icon must show bars, and (with
      * gSetting_battery_text = 2) the percentage beside it. */
     UI_DisplayStatus();

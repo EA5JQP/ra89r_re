@@ -42,6 +42,10 @@ bool scan_dual_rssi_candidate(scan_lane_state_t *lane, uint16_t rssi,
 
     lane->last_rssi = rssi;
 
+    /* A zero squelch mark means the caller has disabled this lane. */
+    if (squelch_open == 0u)
+        return false;
+
     if (lane->noise_floor == SCAN_LANE_FLOOR_UNSET) {
         /* Seed the floor from the first reading.  The squelch mark decides
          * whether that reading is already a candidate. */

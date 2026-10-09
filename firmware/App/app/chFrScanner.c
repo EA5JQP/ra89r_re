@@ -273,6 +273,13 @@ static void CHFRSCANNER_AbortActiveReception(void)
 #define SCAN_FAST_RSSI_MARGIN       16
 #define SCAN_FAST_SQUELCH_MARGIN     8
 #define SCAN_FAST_WEAK_MARGIN        8
+/* The BK4815 reports a 7-bit RSSI (0x44), about a quarter of the BK4829's
+ * 9-bit scale (0x67), so the dual lane uses its own, smaller margins rather
+ * than comparing scales.  These are unvalidated until measured on the radio
+ * (docs/ra89r_scan.md). */
+#define SCAN_FAST4815_RSSI_MARGIN    4
+#define SCAN_FAST4815_SQUELCH_MARGIN 2
+#define SCAN_FAST4815_WEAK_MARGIN    2
 #define SCAN_FAST_RECHECK_DELAY_US 350
 #define SCAN_FAST_FINE_STEP_LIMIT   250
 #define SCAN_FAST_FINE_REFINE_SPAN 1000
@@ -748,6 +755,7 @@ static void SetMemScanProgressChannel(uint16_t channel)
  * fallback, so list priority/rotation stays exactly as validated. */
 static scan_dual_state_t scanBothState;
 static uint8_t           scanBothLastBand = 0xFFu;
+static uint32_t          scanBothPrevFrequency;
 
 static bool ScanBothEnabled(void)
 {
@@ -761,6 +769,7 @@ static void ScanBothReset(void)
     scanBothState.mode   = (uint8_t)SCAN_TRANSCEIVER_BOTH;
     scanBothState.active = true;
     scanBothLastBand     = 0xFFu;
+    scanBothPrevFrequency = 0;
 }
 
 #ifdef ENABLE_SCAN_RANGES
@@ -777,8 +786,9 @@ static uint16_t ScanBothProbe(const scan_candidate_t *c)
 
     if (lane == SCAN_LANE_BK4815) {
         bk4815_set_frequency(c->frequency_10hz, false);
-        bk4815_write_reg(0x75u, (c->frequency_10hz >= 28000000u) ? 0x0Au : 0x11u);
+        bk4815_write_reg(0x75u, (c->frequency_10hz >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
         SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
+        bk4815_read_rssi();          /* discard the first, possibly stale read */
         return bk4815_read_rssi();
     }
 
@@ -800,6 +810,12 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
     if (gRxVfo->SquelchOpenRSSIThresh == 0)
         return SCAN_FAST_DISABLED;
 
+    /* Seed the BK4829 control register the way ScanRangeFastPrecheck does, with
+     * the AF DAC bit cleared: ScanFastTune() writes 0 and then this value, so
+     * without it the chip would be left with 0x30 = 0 (disabled). */
+    scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
+    scanBothState.selected_hit = SCAN_LANE_NONE;
+
     for (i = 0; i < 2u * SCAN_FAST_PRECHECK_STEPS; i++) {
         if (!CHFRSCANNER_NextCandidate(&cands[n]))
             break;
@@ -812,17 +828,33 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
         const scan_lane_chip_t lane = scan_dual_assign_candidate(&cands[i]);
         const uint16_t         rssi = ScanBothProbe(&cands[i]);
         scan_lane_state_t     *lane_state = &scanBothState.lanes[lane];
-        const uint16_t         squelch = (lane == SCAN_LANE_BK4815)
-                                             ? RX4815_SQUELCH_OPEN_MARK
-                                             : gRxVfo->SquelchOpenRSSIThresh;
+        const bool             is_4815 = (lane == SCAN_LANE_BK4815);
+        const uint16_t         squelch = is_4815 ? RX4815_SQUELCH_OPEN_MARK
+                                                 : gRxVfo->SquelchOpenRSSIThresh;
+        const uint16_t         noise_margin = is_4815 ? SCAN_FAST4815_RSSI_MARGIN
+                                                      : SCAN_FAST_RSSI_MARGIN;
+        const uint16_t         squelch_margin = is_4815 ? SCAN_FAST4815_SQUELCH_MARGIN
+                                                        : SCAN_FAST_SQUELCH_MARGIN;
+        const uint16_t         weak_margin = is_4815 ? SCAN_FAST4815_WEAK_MARGIN
+                                                     : SCAN_FAST_WEAK_MARGIN;
+
+        /* A range wrap (forward and lower, or backward and higher) is a new
+         * pass: re-warm both lanes' floors, as the Default precheck does. */
+        if (scanBothPrevFrequency != 0 &&
+            ((gScanStateDir > 0 && cands[i].frequency_10hz < scanBothPrevFrequency) ||
+             (gScanStateDir < 0 && cands[i].frequency_10hz > scanBothPrevFrequency)))
+        {
+            ScanBothReset();
+            scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
+        }
+        scanBothPrevFrequency = cands[i].frequency_10hz;
 
         lane_state->last_frequency_10hz = cands[i].frequency_10hz;
         lane_state->candidates++;
 
         if (scan_dual_rssi_candidate(lane_state, rssi, squelch,
-                                     SCAN_FAST_RSSI_MARGIN, SCAN_FAST_SQUELCH_MARGIN,
-                                     SCAN_FAST_WEAK_MARGIN)) {
-            if (lane == SCAN_LANE_BK4815) {
+                                     noise_margin, squelch_margin, weak_margin)) {
+            if (is_4815) {
                 if (!hit_4815 || cands[i].ordinal < ord_4815) {
                     hit_4815 = true;
                     ord_4815 = cands[i].ordinal;
@@ -865,6 +897,15 @@ bool CHFRSCANNER_GetScanDualStats(scan_dual_stats_t *out)
     out->mode   = (uint8_t)SETTINGS_GetScanTransceiverMode();
     out->active = scanBothState.active && ScanBothEnabled() && gScanStateDir != SCAN_OFF;
     return out->active;
+}
+#else
+bool CHFRSCANNER_GetScanDualStats(scan_dual_stats_t *out)
+{
+    if (out != 0) {
+        memset(out, 0, sizeof *out);
+        out->selected_hit = SCAN_LANE_NONE;
+    }
+    return false;
 }
 #endif /* ENABLE_FEAT_F4HWN_SCAN_FASTER */
 
@@ -984,6 +1025,9 @@ void CHFRSCANNER_ContinueScanning(void)
 
 void CHFRSCANNER_ContinueScanning(void)
 {
+    /* A resumed scan is a fresh pass: drop any paused-hit receive override so
+     * the receiver follows the saved VFO route again until the next hit. */
+    rx_clear_scan_source_override();
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
     if (scanFastLastFullTuneCandidate &&
         gCurrentFunction != FUNCTION_INCOMING &&

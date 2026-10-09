@@ -89,6 +89,11 @@ static bool s_force_4815_af;    /* console 'A' diagnostic */
  * VFO's own transceiver; the other values pin the hit's chip until cleared. */
 static rx_scan_source_t s_scan_source = RX_SCAN_SOURCE_DEFAULT;
 
+/* The override actually applied to the chips, so rx_service() retunes only on a
+ * change instead of on every loop. */
+static rx_scan_source_t s_scan_source_applied = RX_SCAN_SOURCE_DEFAULT;
+static uint32_t         s_scan_source_freq;
+
 void rx_set_scan_source_override(rx_scan_source_t source)
 {
     s_scan_source = source;
@@ -210,6 +215,7 @@ void rx_service(void)
      * with one VFO on each chip the BK4829 does not follow the receiver onto
      * the BK4815's VFO. */
     if (s_scan_source == RX_SCAN_SOURCE_DEFAULT) {
+        s_scan_source_applied = RX_SCAN_SOURCE_DEFAULT;
         rf_dual_refresh();
 
         /* The receive audio follows the selected VFO's transceiver, so a VFO on
@@ -217,15 +223,21 @@ void rx_service(void)
         rx_set_audio_source(SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815);
     } else {
         /* A paused scan hit: follow the chip that found it, not the saved VFO
-         * assignment.  The K1 receive setup drives the BK4829, so a BK4815 hit
-         * has to be pointed at the hit frequency on the BK4815 itself. */
-        const bool use_4815 = (s_scan_source == RX_SCAN_SOURCE_BK4815);
+         * assignment.  The K1 receive setup only tunes the BK4829 when the
+         * selected VFO is assigned to it, so each hit's chip is retuned here
+         * (a BK4815 hit on the BK4815, a BK4829 hit on the BK4829). */
+        const bool     use_4815 = (s_scan_source == RX_SCAN_SOURCE_BK4815);
+        const uint32_t f        = gRxVfo->freq_config_RX.Frequency;
 
-        if (use_4815) {
-            const uint32_t f = gRxVfo->freq_config_RX.Frequency;
-
-            bk4815_set_frequency(f, false);
-            bk4815_write_reg(0x75u, (f >= 28000000u) ? 0x0Au : 0x11u);
+        if (s_scan_source_applied != s_scan_source || s_scan_source_freq != f) {
+            if (use_4815) {
+                bk4815_set_frequency(f, false);
+                bk4815_write_reg(0x75u, (f >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+            } else {
+                rx_set_frequency(f);
+            }
+            s_scan_source_applied = s_scan_source;
+            s_scan_source_freq    = f;
         }
         rx_set_audio_source(use_4815);
     }

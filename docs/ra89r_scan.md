@@ -74,15 +74,23 @@ exactly as validated; the spec allows this as the conservative fallback.  This i
 a deliberate limit, not an accident, and is the first thing to revisit if the
 list is to be split too.
 
+**`Default` and a BK4815-assigned VFO:** the K1 fast precheck is hardcoded to the
+BK4829, so with `TrVfoA/B = 4815` the `Default` precheck probes the BK4829 while
+the full verify path follows the BK4815 assignment.  Making the single-lane
+precheck lane-aware is future work; `Both` is the mode that uses both chips
+explicitly.
+
 ## The RX scan-source override
 
 A paused hit may have been found by the BK4815 while the selected VFO is normally
 assigned to the BK4829 (or vice versa).  `driver/rx.c` gained a temporary
 override (`rx_set_scan_source_override` / `rx_clear_scan_source_override`,
 `rx_scan_source_t`): while set, `rx_service()` follows the hit's chip and
-frequency instead of the saved VFO route, retuning the BK4815 to the hit
-frequency for a BK4815 hit.  It never modifies the saved `TrVfoA`/`TrVfoB`
-values, and it is cleared on scan start and stop (checked in `preview_k1.c`).
+frequency instead of the saved VFO route, retuning the hit's chip explicitly —
+the BK4815 for a BK4815 hit, the BK4829 for a BK4829 hit (the K1 receive setup
+only tunes the BK4829 when the selected VFO is assigned to it).  It never
+modifies the saved `TrVfoA`/`TrVfoB` values, and it is cleared on scan start,
+resume and stop (checked in `preview_k1.c`).
 
 ## Diagnostics
 

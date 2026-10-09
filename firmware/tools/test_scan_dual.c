@@ -116,6 +116,18 @@ int main(void)
               "reading at the floor is not a candidate");
     }
 
+    /* A disabled lane (squelch mark 0) never reports a candidate and learns no
+     * floor; the caller is expected to skip it. */
+    {
+        scan_dual_state_t st;
+
+        scan_dual_reset(&st);
+        check(scan_dual_rssi_candidate(&st.lanes[0], 200u, 0u, 20u, 20u, 10u) == false,
+              "a disabled lane never reports a candidate");
+        check(st.lanes[0].noise_floor == SCAN_LANE_FLOOR_UNSET,
+              "a disabled lane learns no floor");
+    }
+
     /* Hit arbitration: the lower original ordinal wins when both lanes hit. */
     {
         scan_lane_chip_t sel;
