@@ -188,9 +188,11 @@ static uint8_t *host_flash_ptr(uint32_t addr)
     return 0;
 }
 
-/* A codeplug shaped like the one this radio shipped with: four channels with
+/* A codeplug shaped like the one this radio shipped with: five channels with
  * the stock's 21-byte records (rx, tx, rx tone, tx tone, three flag bytes, six
- * characters of name) and both bitmaps marking those four channels. */
+ * characters of name) and both bitmaps marking those five channels.  The last
+ * is deliberately below the 134 MHz split, so the dual-scan lane rule (the
+ * BK4815 is only used above it) can be exercised through the real cursor. */
 static void host_codeplug_defaults(void)
 {
     static const struct {
@@ -199,18 +201,20 @@ static void host_codeplug_defaults(void)
         uint16_t rx_tone;              /* 0x0FFF = none */
         uint16_t tx_tone;
         const char *name;
-    } channels[4] = {
+    } channels[5] = {
         { 14497500u, 14497500u, 0x0FFFu, 0x0FFFu, "CH-01 " },
         { 14575000u, 14575000u, 0x0FFFu, 0x0FFFu, "CH-02 " },
         /* 885 = CTCSS 88.5 Hz; 0x0013 + bit 15 = DCS 023 inverted. */
         { 43037500u, 43037500u, 0x0375u, 0x8013u, "CH-03 " },
         { 43865000u, 43865000u, 0x0FFFu, 0x0FFFu, "CH-04 " },
+        /* Below the stock's 134 MHz split: a BK4829-only scan candidate. */
+        {  5000000u,  5000000u, 0x0FFFu, 0x0FFFu, "CH-05 " },
     };
     unsigned int i;
 
     memset(s_host_codeplug, 0xFF, sizeof s_host_codeplug);
 
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < 5; i++) {
         uint8_t *record = s_host_codeplug + i * 21u;
 
         record[0] = (uint8_t)(channels[i].rx);
@@ -231,9 +235,9 @@ static void host_codeplug_defaults(void)
         memcpy(record + 15, channels[i].name, 6);
     }
 
-    /* 7936: channel used; 7968: scan allow.  Both mark the first four. */
-    s_host_codeplug[7936] = 0x0Fu;
-    s_host_codeplug[7968] = 0x0Fu;
+    /* 7936: channel used; 7968: scan allow.  Both mark the first five. */
+    s_host_codeplug[7936] = 0x1Fu;
+    s_host_codeplug[7968] = 0x1Fu;
 }
 
 void spi_flash_init(void)

@@ -4,6 +4,7 @@
 
 #include "app/app.h"
 #include "app/chFrScanner.h"
+#include "app/scan_dual.h"
 #include "audio.h"
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 #include "driver/systick.h"
@@ -57,6 +58,10 @@ typedef enum {
 scan_next_chan_t    currentScanList;
 uint32_t            initialFrqOrChan;
 uint8_t             initialCROSS_BAND_RX_TX;
+
+/* The ordinal the shared candidate cursor hands out (CHFRSCANNER_NextCandidate
+ * below).  Reset when a scan starts. */
+static uint32_t scanCandidateOrdinal;
 
 #ifndef ENABLE_FEAT_F4HWN
     uint32_t lastFoundFrqOrChan;
@@ -759,6 +764,7 @@ void CHFRSCANNER_Start(const bool storeBackupSettings, const int8_t scan_directi
     gNextMrChannel   = gRxVfo->CHANNEL_SAVE;
     currentScanList = SCAN_NEXT_CHAN_SCANLIST1;
     gScanStateDir    = scan_direction;
+    scanCandidateOrdinal = 0;
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
     ScanRssiSparklineReset();
@@ -1042,16 +1048,17 @@ static void NextFreqChannel(void)
     gUpdateDisplay     = true;
 }
 
-static void NextMemChannel(void)
+/* The memory-scan cursor: pick the next valid list channel, honouring the
+ * configured scan list, the two priority channels, the direction and the wrap.
+ * It updates currentScanList/gNextMrChannel exactly as the K1 does; the RF work
+ * and the fast precheck stay in NextMemChannel(), and CHFRSCANNER_NextCandidate
+ * reuses it for the dual-lane path. */
+static uint16_t CHFRSCANNER_NextMemCursor(const bool enabled)
 {
     static uint16_t prev_mr_chan = 0;
-    const bool      enabled      = (gEeprom.SCAN_LIST_DEFAULT > 0 && gEeprom.SCAN_LIST_DEFAULT <= MR_CHANNELS_LIST + 1) ? gEeprom.SCAN_LIST_ENABLED : true;
     const int16_t   chan1        = (gEeprom.SCAN_LIST_DEFAULT > 0 && gEeprom.SCAN_LIST_DEFAULT <= MR_CHANNELS_LIST + 1 && gEeprom.SCANLIST_PRIORITY_CH[0] != MR_CHANNELS_MAX) ? gEeprom.SCANLIST_PRIORITY_CH[0] : -1;
     const int16_t   chan2        = (gEeprom.SCAN_LIST_DEFAULT > 0 && gEeprom.SCAN_LIST_DEFAULT <= MR_CHANNELS_LIST + 1 && gEeprom.SCANLIST_PRIORITY_CH[1] != MR_CHANNELS_MAX) ? gEeprom.SCANLIST_PRIORITY_CH[1] : -1;
-    const uint16_t  prev_chan    = gNextMrChannel;
     uint16_t        chan         = 0;
-
-    //char str[64] = "";
 
     if (enabled)
     {
@@ -1160,6 +1167,16 @@ static void NextMemChannel(void)
         //LogUart(str);
     }
 
+    return gNextMrChannel;
+}
+
+static void NextMemChannel(void)
+{
+    const bool     enabled   = (gEeprom.SCAN_LIST_DEFAULT > 0 && gEeprom.SCAN_LIST_DEFAULT <= MR_CHANNELS_LIST + 1) ? gEeprom.SCAN_LIST_ENABLED : true;
+    const uint16_t prev_chan = gNextMrChannel;
+
+    (void)CHFRSCANNER_NextMemCursor(enabled);
+
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
     SetMemScanProgressChannel(gNextMrChannel);
 
@@ -1202,4 +1219,47 @@ static void NextMemChannel(void)
         if (++currentScanList >= SCAN_NEXT_NUM)
             currentScanList = SCAN_NEXT_CHAN_SCANLIST1;  // back round we go
 #endif
+}
+
+/* The shared candidate cursor the dual-lane scanner draws from.  It advances
+ * the same K1 order as NextFreqChannel()/NextMemChannel() -- range
+ * step/limits/skip for a frequency sweep, list membership/priority/direction/
+ * wrap for channels -- and tags each item with a monotonically increasing
+ * ordinal.  It does not tune or precheck; the caller does.  Returns false when
+ * there is nothing to visit. */
+bool CHFRSCANNER_NextCandidate(scan_candidate_t *out)
+{
+    if (out == 0)
+        return false;
+
+#ifdef ENABLE_SCAN_RANGES
+    if (gScanRangeStart)
+    {
+        out->frequency_10hz    = ScanRangeNextFrequency();
+        out->channel           = 0;
+        out->band              = (uint8_t)FREQUENCY_GetBand(out->frequency_10hz);
+        out->is_memory_channel = false;
+        out->ordinal           = scanCandidateOrdinal++;
+        return true;
+    }
+#endif
+
+    {
+        const bool     enabled = (gEeprom.SCAN_LIST_DEFAULT > 0 && gEeprom.SCAN_LIST_DEFAULT <= MR_CHANNELS_LIST + 1) ? gEeprom.SCAN_LIST_ENABLED : true;
+        const uint16_t chan    = CHFRSCANNER_NextMemCursor(enabled);
+        ChannelScanDisplayInfo_t info;
+
+        if (!IS_MR_CHANNEL(chan))
+            return false;
+
+        if (!SETTINGS_FetchChannelScanDisplayInfo(chan, &info))
+            return false;
+
+        out->channel           = chan;
+        out->is_memory_channel = true;
+        out->frequency_10hz    = info.rx.Frequency;
+        out->band              = (uint8_t)FREQUENCY_GetBand(out->frequency_10hz);
+        out->ordinal           = scanCandidateOrdinal++;
+        return true;
+    }
 }

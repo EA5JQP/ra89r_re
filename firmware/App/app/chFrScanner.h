@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "app/scan_dual.h"
 #include "radio.h"
 
 // scan direction, if not equal SCAN_OFF indicates 
@@ -32,6 +33,10 @@ void CHFRSCANNER_Stop(void);
 void CHFRSCANNER_Start(const bool storeBackupSettings, const int8_t scan_direction);
 void CHFRSCANNER_ManualResume(const int8_t scan_direction);
 void CHFRSCANNER_ContinueScanning(void);
+
+/* The ordered candidate stream the dual-lane scanner draws from.  See the
+ * definition in chFrScanner.c; it preserves the K1 range/list order. */
+bool CHFRSCANNER_NextCandidate(scan_candidate_t *out);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 const VFO_Info_t *CHFRSCANNER_GetScanDisplayVfo(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI

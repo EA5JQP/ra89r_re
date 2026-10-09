@@ -338,6 +338,111 @@ int main(void)
         if (!ok) failures++;
     }
 
+    /* The dual-lane candidate source: it must preserve the K1 order and tag
+     * every item with an increasing ordinal, so the two lanes can interleave
+     * without dropping or duplicating a step. */
+    {
+        const unsigned vfo = gEeprom.RX_VFO;
+        scan_candidate_t c;
+        bool range_ok = true;
+        bool list_ok  = true;
+        unsigned i;
+
+        /* Frequency range: 145.0000 .. 145.1000 MHz in 25 kHz steps, forward.
+         * Start one step below so the first candidate is 145.0000. */
+        gEeprom.ScreenChannel[vfo] = FREQ_CHANNEL_FIRST;
+        gEeprom.FreqChannel[vfo]   = FREQ_CHANNEL_FIRST;
+        gRxVfo->freq_config_RX.Frequency = 14497500u;
+        gRxVfo->StepFrequency            = 2500u;
+        gScanRangeStart = 14500000u;
+        gScanRangeStop  = 14510000u;
+        gScanStateDir   = SCAN_FWD;
+
+        {
+            uint32_t prev     = 0;
+            uint32_t ordinal0 = 0;
+            unsigned n        = 0;
+
+            for (i = 0; i < 5u; i++) {
+                if (!CHFRSCANNER_NextCandidate(&c)) { range_ok = false; break; }
+                if (c.is_memory_channel)            { range_ok = false; break; }
+                if (i == 0u) {
+                    ordinal0 = c.ordinal;
+                    if (c.frequency_10hz != 14500000u) range_ok = false;
+                } else {
+                    if (c.frequency_10hz != prev + 2500u) range_ok = false;
+                    if (c.ordinal != ordinal0 + i)        range_ok = false;
+                }
+                if (scan_dual_assign_candidate(&c) !=
+                    ((c.ordinal & 1u) ? SCAN_LANE_BK4815 : SCAN_LANE_BK4829))
+                    range_ok = false;
+                prev = c.frequency_10hz;
+                n++;
+            }
+            if (n != 5u) range_ok = false;   /* five in-range steps */
+
+            /* The next step wraps back to the start. */
+            if (!CHFRSCANNER_NextCandidate(&c) || c.frequency_10hz != 14500000u)
+                range_ok = false;
+        }
+
+        /* Memory list: drive the same cursor in channel mode and check that
+         * each eligible channel is visited exactly once per pass, in K1 order,
+         * with the below-split channel staying on the BK4829. */
+        gScanRangeStart = 0;
+        gEeprom.SCAN_LIST_DEFAULT = MR_CHANNELS_LIST + 1;   /* ALL */
+        gEeprom.SCAN_LIST_ENABLED = false;
+        gNextMrChannel = 0;
+        gScanStateDir  = SCAN_FWD;
+
+        {
+            uint16_t seen[8];
+            unsigned n        = 0;
+            uint32_t ordinal0 = 0;
+            bool     wrapped  = false;
+
+            for (i = 0; i < 8u && !wrapped; i++) {
+                unsigned j;
+
+                if (!CHFRSCANNER_NextCandidate(&c)) { list_ok = false; break; }
+                if (!c.is_memory_channel)           { list_ok = false; break; }
+
+                for (j = 0; j < n; j++) {
+                    if (seen[j] == c.channel) { wrapped = true; break; }
+                }
+                if (wrapped)
+                    break;
+
+                if (i == 0u)
+                    ordinal0 = c.ordinal;
+                else if (c.ordinal != ordinal0 + i)
+                    list_ok = false;
+
+                if (scan_dual_assign_candidate(&c) !=
+                    (c.frequency_10hz > SCAN_DUAL_BK4815_MIN_FREQUENCY_10HZ
+                         ? ((c.ordinal & 1u) ? SCAN_LANE_BK4815 : SCAN_LANE_BK4829)
+                         : SCAN_LANE_BK4829))
+                    list_ok = false;
+
+                if (n < 8u)
+                    seen[n] = c.channel;
+                n++;
+            }
+
+            if (n != 5u) list_ok = false;   /* the fixture's five channels, once each */
+        }
+
+        printf("[scan] %s the candidate source keeps K1 range order and ordinals\n",
+               range_ok ? "ok  " : "FAIL");
+        if (!range_ok) failures++;
+        printf("[scan] %s the candidate source walks each list channel once\n",
+               list_ok ? "ok  " : "FAIL");
+        if (!list_ok) failures++;
+
+        gScanRangeStart = 0;
+        gScanStateDir   = SCAN_OFF;
+    }
+
     /* The status bar with a charged pack: the icon must show bars, and (with
      * gSetting_battery_text = 2) the percentage beside it. */
     UI_DisplayStatus();
