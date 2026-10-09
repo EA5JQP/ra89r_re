@@ -72,4 +72,12 @@ typedef struct {
 
 void scan_dual_reset(scan_dual_state_t *state);
 
+/* Choose the hit when one or both lanes report a candidate.  Returns false when
+ * neither lane hit.  Otherwise picks the lower original ordinal, so a batch
+ * where both lanes hit still resumes on the earlier candidate in scan order.
+ * `selected` may be NULL. */
+bool scan_dual_choose_hit(bool hit_4829, uint32_t ordinal_4829,
+                          bool hit_4815, uint32_t ordinal_4815,
+                          scan_lane_chip_t *selected);
+
 #endif

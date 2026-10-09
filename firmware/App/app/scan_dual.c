@@ -75,3 +75,21 @@ void scan_dual_reset(scan_dual_state_t *state)
     state->lanes[1].noise_floor = SCAN_LANE_FLOOR_UNSET;
     state->selected_hit         = SCAN_LANE_NONE;
 }
+
+bool scan_dual_choose_hit(bool hit_4829, uint32_t ordinal_4829,
+                          bool hit_4815, uint32_t ordinal_4815,
+                          scan_lane_chip_t *selected)
+{
+    if (!hit_4829 && !hit_4815)
+        return false;
+
+    if (hit_4829 && (!hit_4815 || ordinal_4829 <= ordinal_4815)) {
+        if (selected)
+            *selected = SCAN_LANE_BK4829;
+    } else {
+        if (selected)
+            *selected = SCAN_LANE_BK4815;
+    }
+
+    return true;
+}

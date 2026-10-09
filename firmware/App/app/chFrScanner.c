@@ -6,6 +6,9 @@
 #include "app/chFrScanner.h"
 #include "app/scan_dual.h"
 #include "audio.h"
+#include "driver/bk4815.h"
+#include "driver/pa.h"
+#include "driver/rx.h"
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 #include "driver/systick.h"
 #endif
@@ -74,6 +77,7 @@ static void NextFreqChannel(void);
 static void NextMemChannel(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 static void ScanFastResetState(void);
+static void ScanBothReset(void);
 #endif
 
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
@@ -367,6 +371,7 @@ static void ScanFastResetState(void)
     scanFastPrevFrequency         = 0;
     scanFastLastFullTuneCandidate = false;
     scanFastDisplayVfoValid       = false;
+    ScanBothReset();
 }
 
 static void ScanFastResetNoiseFloor(void)
@@ -731,6 +736,125 @@ static void SetMemScanProgressChannel(uint16_t channel)
 }
 #endif
 
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+/* The "Both" scan: two lanes, one per transceiver.  The candidate stream is
+ * split by ordinal (scan_dual_assign_candidate) and each lane keeps its own
+ * RSSI floor, because the BK4829 (0x67) and BK4815 (0x44) report RSSI on
+ * different scales.  The RF path is shared, so the lanes are time-multiplexed,
+ * not simultaneous; this whole path is radio-validated work (docs/ra89r_scan.md).
+ *
+ * Only the frequency range is interleaved for now: the scan list keeps the K1's
+ * single-lane fast precheck, which the spec allows as the conservative
+ * fallback, so list priority/rotation stays exactly as validated. */
+static scan_dual_state_t scanBothState;
+static uint8_t           scanBothLastBand = 0xFFu;
+
+static bool ScanBothEnabled(void)
+{
+    return ScanFastEnabled() &&
+           SETTINGS_GetScanTransceiverMode() == SCAN_TRANSCEIVER_BOTH;
+}
+
+static void ScanBothReset(void)
+{
+    scan_dual_reset(&scanBothState);
+    scanBothState.mode   = (uint8_t)SCAN_TRANSCEIVER_BOTH;
+    scanBothState.active = true;
+    scanBothLastBand     = 0xFFu;
+}
+
+#ifdef ENABLE_SCAN_RANGES
+/* Point the shared front-end at a candidate's band and read that candidate's
+ * chip.  The band switch only happens when the band actually changes. */
+static uint16_t ScanBothProbe(const scan_candidate_t *c)
+{
+    const scan_lane_chip_t lane = scan_dual_assign_candidate(c);
+
+    if (c->band != scanBothLastBand) {
+        pa_select_band(c->frequency_10hz);
+        scanBothLastBand = c->band;
+    }
+
+    if (lane == SCAN_LANE_BK4815) {
+        bk4815_set_frequency(c->frequency_10hz, false);
+        bk4815_write_reg(0x75u, (c->frequency_10hz >= 28000000u) ? 0x0Au : 0x11u);
+        SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
+        return bk4815_read_rssi();
+    }
+
+    ScanFastTune(c->frequency_10hz);
+    return ScanFastReadCandidateRssi();
+}
+
+/* One interval of the dual-lane range sweep: a full fast batch per lane, in
+ * ordinal order, and the earliest ordinal wins if both lanes hit. */
+static scan_fast_result_t ScanBothFastPrecheck(void)
+{
+    scan_candidate_t cands[2u * SCAN_FAST_PRECHECK_STEPS];
+    unsigned         n = 0;
+    unsigned         i;
+    bool             hit_4829 = false, hit_4815 = false;
+    uint32_t         ord_4829 = 0, ord_4815 = 0;
+    scan_lane_chip_t sel = SCAN_LANE_NONE;
+
+    if (gRxVfo->SquelchOpenRSSIThresh == 0)
+        return SCAN_FAST_DISABLED;
+
+    for (i = 0; i < 2u * SCAN_FAST_PRECHECK_STEPS; i++) {
+        if (!CHFRSCANNER_NextCandidate(&cands[n]))
+            break;
+        n++;
+    }
+    if (n == 0u)
+        return SCAN_FAST_DISABLED;
+
+    for (i = 0; i < n; i++) {
+        const scan_lane_chip_t lane = scan_dual_assign_candidate(&cands[i]);
+        const uint16_t         rssi = ScanBothProbe(&cands[i]);
+        scan_lane_state_t     *lane_state = &scanBothState.lanes[lane];
+        const uint16_t         squelch = (lane == SCAN_LANE_BK4815)
+                                             ? RX4815_SQUELCH_OPEN_MARK
+                                             : gRxVfo->SquelchOpenRSSIThresh;
+
+        lane_state->last_frequency_10hz = cands[i].frequency_10hz;
+        lane_state->candidates++;
+
+        if (scan_dual_rssi_candidate(lane_state, rssi, squelch,
+                                     SCAN_FAST_RSSI_MARGIN, SCAN_FAST_SQUELCH_MARGIN,
+                                     SCAN_FAST_WEAK_MARGIN)) {
+            if (lane == SCAN_LANE_BK4815) {
+                if (!hit_4815 || cands[i].ordinal < ord_4815) {
+                    hit_4815 = true;
+                    ord_4815 = cands[i].ordinal;
+                }
+            } else if (!hit_4829 || cands[i].ordinal < ord_4829) {
+                hit_4829 = true;
+                ord_4829 = cands[i].ordinal;
+            }
+        }
+    }
+
+    if (scan_dual_choose_hit(hit_4829, ord_4829, hit_4815, ord_4815, &sel)) {
+        const uint32_t win = (sel == SCAN_LANE_BK4815) ? ord_4815 : ord_4829;
+
+        for (i = 0; i < n; i++) {
+            if (cands[i].ordinal == win) {
+                gRxVfo->freq_config_RX.Frequency = cands[i].frequency_10hz;
+                break;
+            }
+        }
+        scanBothState.selected_hit = sel;
+        rx_set_scan_source_override(sel == SCAN_LANE_BK4815
+                                        ? RX_SCAN_SOURCE_BK4815
+                                        : RX_SCAN_SOURCE_BK4829);
+        return SCAN_FAST_CANDIDATE;
+    }
+
+    return SCAN_FAST_QUIET_BATCH;
+}
+#endif /* ENABLE_SCAN_RANGES */
+#endif /* ENABLE_FEAT_F4HWN_SCAN_FASTER */
+
 #if defined(ENABLE_FEAT_F4HWN_RESUME_STATE) || defined(ENABLE_SCAN_RANGES)
     void CHFRSCANNER_ScanRange(void) {
         if (gScanRangeStart) {
@@ -765,6 +889,7 @@ void CHFRSCANNER_Start(const bool storeBackupSettings, const int8_t scan_directi
     currentScanList = SCAN_NEXT_CHAN_SCANLIST1;
     gScanStateDir    = scan_direction;
     scanCandidateOrdinal = 0;
+    rx_clear_scan_source_override();
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
     ScanRssiSparklineReset();
@@ -956,6 +1081,7 @@ void CHFRSCANNER_Stop(void)
     }
     
     gScanStateDir = SCAN_OFF;
+    rx_clear_scan_source_override();
 #if defined(ENABLE_FEAT_F4HWN_SCAN_FASTER) && defined(ENABLE_FEAT_F4HWN_SCAN_RSSI)
     ScanRssiSparklineReset();
 #endif
@@ -995,7 +1121,29 @@ static void NextFreqChannel(void)
 #ifdef ENABLE_SCAN_RANGES
     if(gScanRangeStart) {
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
-        if (ScanFastEnabled())
+        if (ScanBothEnabled())
+        {
+            const scan_fast_result_t bothResult = ScanBothFastPrecheck();
+
+            if (bothResult == SCAN_FAST_QUIET_BATCH)
+            {
+                scanFastLastFullTuneCandidate = false;
+                gScanPauseDelayIn_10ms = 1;
+                gUpdateDisplay = true;
+                return;
+            }
+
+            if (bothResult == SCAN_FAST_DISABLED)
+            {
+                scanFastLastFullTuneCandidate = false;
+                gRxVfo->freq_config_RX.Frequency = ScanRangeNextFrequency();
+            }
+            else
+            {
+                scanFastLastFullTuneCandidate = true;
+            }
+        }
+        else if (ScanFastEnabled())
         {
             const scan_fast_result_t fastResult = ScanRangeFastPrecheck();
 

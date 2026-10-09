@@ -5,8 +5,11 @@
 
 #include "driver/backlight.h"
 #include "driver/bk1080.h"
+#include "driver/bk4815.h"
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
+#include "driver/pa.h"
+#include "driver/rx.h"
 #include "driver/systick.h"
 #include "driver/tx.h"
 #include <string.h>
@@ -84,6 +87,22 @@ void     bk1080_init(void) { }
 /* driver/rx.c's FM gate.  The preview never runs rx_service(), so the host only
  * has to satisfy the reference. */
 void     rx_set_fm_active(bool active) { (void)active; }
+
+/* The dual-scan path in app/chFrScanner.c references the BK4815, the shared
+ * band path and the RX scan-source override.  The preview does not run the RF
+ * scan; these stand in so it links, and the override is recorded so a preview
+ * check can confirm it is cleared on stop. */
+void     pa_select_band(uint32_t freq_10hz) { (void)freq_10hz; }
+void     bk4815_set_frequency(uint32_t freq_10hz, bool tx) { (void)freq_10hz; (void)tx; }
+void     bk4815_write_reg(uint8_t reg, uint16_t value) { (void)reg; (void)value; }
+uint16_t bk4815_read_rssi(void) { return 0; }
+
+static int s_host_scan_source;
+
+void             rx_set_scan_source_override(rx_scan_source_t source) { s_host_scan_source = (int)source; }
+void             rx_clear_scan_source_override(void) { s_host_scan_source = 0; }
+rx_scan_source_t rx_scan_source_override(void) { return (rx_scan_source_t)s_host_scan_source; }
+int              host_rx_scan_source(void) { return s_host_scan_source; }
 
 /* Keypad: the RA89R reads an ADC ladder, so the host stands in with a key the
  * preview sets by hand -- that is how the port's key loop (port_gui.c) is

@@ -29,4 +29,8 @@ void host_beeper_reset_counts(void);
  * (`BK4819_AF_MUTE` = 0) while it owns the audio; see docs/ra89r_bk1080.md. */
 int host_bk4819_last_af(void);
 
+/* The host's scan-source override state (driver/rx.h's rx_scan_source_t as an
+ * int): the dual-scan lifecycle check confirms it returns to DEFAULT on stop. */
+int host_rx_scan_source(void);
+
 #endif /* HOST_HW_H */

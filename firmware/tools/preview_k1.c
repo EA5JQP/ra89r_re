@@ -443,6 +443,19 @@ int main(void)
         gScanStateDir   = SCAN_OFF;
     }
 
+    /* A paused dual-scan hit pins the receive route to the chip that found it;
+     * stopping the scan must restore the saved per-VFO route. */
+    {
+        rx_set_scan_source_override(RX_SCAN_SOURCE_BK4815);
+        CHFRSCANNER_Stop();
+        {
+            const bool ok = rx_scan_source_override() == RX_SCAN_SOURCE_DEFAULT;
+            printf("[scan] %s scan stop clears the RX scan-source override\n",
+                   ok ? "ok  " : "FAIL");
+            if (!ok) failures++;
+        }
+    }
+
     /* The status bar with a charged pack: the icon must show bars, and (with
      * gSetting_battery_text = 2) the percentage beside it. */
     UI_DisplayStatus();

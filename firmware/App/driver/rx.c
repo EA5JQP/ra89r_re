@@ -85,6 +85,25 @@ void rx_set_fm_active(bool active)
 static bool s_audio_4815;
 static bool s_force_4815_af;    /* console 'A' diagnostic */
 
+/* A temporary scan-hit receive route (see rx.h).  DEFAULT follows the selected
+ * VFO's own transceiver; the other values pin the hit's chip until cleared. */
+static rx_scan_source_t s_scan_source = RX_SCAN_SOURCE_DEFAULT;
+
+void rx_set_scan_source_override(rx_scan_source_t source)
+{
+    s_scan_source = source;
+}
+
+void rx_clear_scan_source_override(void)
+{
+    s_scan_source = RX_SCAN_SOURCE_DEFAULT;
+}
+
+rx_scan_source_t rx_scan_source_override(void)
+{
+    return s_scan_source;
+}
+
 void rx_force_bk4815_af(bool on)
 {
     s_force_4815_af = on;
@@ -190,11 +209,26 @@ void rx_service(void)
      * BK4829 is retuned from: the primary VFO (the BK4829 one) drives it, so
      * with one VFO on each chip the BK4829 does not follow the receiver onto
      * the BK4815's VFO. */
-    rf_dual_refresh();
+    if (s_scan_source == RX_SCAN_SOURCE_DEFAULT) {
+        rf_dual_refresh();
 
-    /* The receive audio follows the selected VFO's transceiver, so a VFO on the
-     * BK4815 is audible through that chip's own AF. */
-    rx_set_audio_source(SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815);
+        /* The receive audio follows the selected VFO's transceiver, so a VFO on
+         * the BK4815 is audible through that chip's own AF. */
+        rx_set_audio_source(SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815);
+    } else {
+        /* A paused scan hit: follow the chip that found it, not the saved VFO
+         * assignment.  The K1 receive setup drives the BK4829, so a BK4815 hit
+         * has to be pointed at the hit frequency on the BK4815 itself. */
+        const bool use_4815 = (s_scan_source == RX_SCAN_SOURCE_BK4815);
+
+        if (use_4815) {
+            const uint32_t f = gRxVfo->freq_config_RX.Frequency;
+
+            bk4815_set_frequency(f, false);
+            bk4815_write_reg(0x75u, (f >= 28000000u) ? 0x0Au : 0x11u);
+        }
+        rx_set_audio_source(use_4815);
+    }
 
     if (rx_ready())
         rx_poll();

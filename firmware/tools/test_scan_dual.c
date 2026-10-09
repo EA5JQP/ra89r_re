@@ -116,6 +116,26 @@ int main(void)
               "reading at the floor is not a candidate");
     }
 
+    /* Hit arbitration: the lower original ordinal wins when both lanes hit. */
+    {
+        scan_lane_chip_t sel;
+
+        check(scan_dual_choose_hit(false, 0, false, 0, &sel) == false,
+              "no lane hit -> no hit");
+        check(scan_dual_choose_hit(true, 4u, false, 0, &sel) == true &&
+              sel == SCAN_LANE_BK4829, "only BK4829 hit -> BK4829");
+        check(scan_dual_choose_hit(false, 0, true, 5u, &sel) == true &&
+              sel == SCAN_LANE_BK4815, "only BK4815 hit -> BK4815");
+        check(scan_dual_choose_hit(true, 4u, true, 5u, &sel) == true &&
+              sel == SCAN_LANE_BK4829, "both hit, 4829 earlier -> BK4829");
+        check(scan_dual_choose_hit(true, 7u, true, 6u, &sel) == true &&
+              sel == SCAN_LANE_BK4815, "both hit, 4815 earlier -> BK4815");
+        check(scan_dual_choose_hit(true, 6u, true, 6u, &sel) == true &&
+              sel == SCAN_LANE_BK4829, "tie -> BK4829");
+        check(scan_dual_choose_hit(true, 4u, false, 0, NULL) == true,
+              "NULL selected is safe");
+    }
+
     if (failures) {
         printf("\n%d failure(s)\n", failures);
         return 1;
