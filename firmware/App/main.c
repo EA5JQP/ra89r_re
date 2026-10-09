@@ -675,7 +675,7 @@ static void scan_rate_benchmark(void)
     const uint32_t step  = gRxVfo->StepFrequency ? gRxVfo->StepFrequency : 2500u;
     const uint32_t start = FREQUENCY_RoundToStep(gRxVfo->freq_config_RX.Frequency, (uint16_t)step);
     const uint32_t stop  = start + 100000u;   /* 1 MHz, in 10 Hz units */
-    static const char *const names[2] = { "Default", "Both" };
+    static const char *const names[2] = { "Default", "Both   " };
     scan_bench_result_t res[2];
     unsigned m;
 
@@ -700,7 +700,7 @@ static void scan_rate_benchmark(void)
             APP_TimeSlice10ms();
         }
         CHFRSCANNER_BenchmarkFinish(&res[m]);
-        uart_printf("  %-7s probes=%u elapsed=%u ms  %u probes/s\n",
+        uart_printf("  %s probes=%u elapsed=%u ms  %u probes/s\n",
                     names[m], (unsigned)res[m].probes, (unsigned)res[m].elapsed_ms,
                     (unsigned)res[m].probes_per_second);
     }
