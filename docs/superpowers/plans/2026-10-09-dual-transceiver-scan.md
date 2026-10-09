@@ -43,12 +43,14 @@
 - Produce `MENU_SC_TR_MODE`, a `ScTrMd` menu row, and `gSubMenu_SCAN_TRANSCEIVER[] = {"Default", "Both"}`.
 - Persist the setting in `settings_extra_t`; bump `EXTRA_VERSION` from 2 to 3. Decode v2 using an explicit v2 layout, preserving its existing fields and setting the new mode to Default. Continue accepting v3. Invalid values normalize to Default.
 
-- [ ] **Step 1: Write failing preview assertions.** Verify the ScTrMd row/labels, selection 0 maps to Default, selection 1 maps to Both, and save/load preserves Both.
-- [ ] **Step 2: Add a v2-extra migration regression.** Build the old v2 extra payload with `rf_xcvr={BK4829,BK4815}`, a known frequency snapshot, and FM-memory bytes; store/load it through the host flash path and assert those fields survive while scan mode reads Default. Keep the exact old v2 layout in the test, including the conditional FM-memory tail.
-- [ ] **Step 3: Run the preview and verify RED.** Run `firmware/tools/check_all.sh`; expected: the new menu/API assertions fail before the setting exists.
-- [ ] **Step 4: Implement the menu and migration.** Append the new byte to the v3 extra layout; retain an exact v2 layout for loading old payloads; map menu indices explicitly rather than casting.
-- [ ] **Step 5: Run the preview and full host checks.** Expected: both-mode round-trip and v2 migration pass.
-- [ ] **Step 6: Commit** `feat(scan): add persistent Default/Both scan mode`.
+- [ ] **Step 1: Write the failing menu/API behavior test** in `preview_k1.c`. Find the menu row by the string `ScTrMd` (so the pre-feature test still compiles); assert it exists, has exactly `Default`/`Both`, accepts indices 0/1, and reopening the item reports the selected index.
+- [ ] **Step 2: Run the preview and verify RED.** Run `firmware/tools/check_all.sh`; expected: a runtime assertion reports the missing `ScTrMd` row (not a compiler error).
+- [ ] **Step 3: Implement the mode API and menu.** Add the enum/getter/setter, menu row/labels, explicit index mapping, and v3 `settings_extra_t` save/load for the new byte. Test save/load of `Both` through the menu.
+- [ ] **Step 4: Write the failing v2 migration test.** In `preview_k1.c`, save a current fixture, construct the exact old v2 extra prefix (magic/version, RF A/B bytes, frequency snapshot, conditional FM memories), store it with `storage_set_extra` and `storage_save_settings`, then call `SETTINGS_InitEEPROM`. Assert scan mode defaults and all old extra fields survive the upgrade.
+- [ ] **Step 5: Run the preview and verify RED.** Expected: old v2 extra is rejected or its saved fields are not migrated.
+- [ ] **Step 6: Implement v2-extra migration.** Decode the v2 prefix explicitly; preserve old fields and set the newly introduced mode to Default. Keep the v3 loader and invalid-value normalization.
+- [ ] **Step 7: Run the preview and full host checks.** Expected: both-mode round-trip and v2 migration pass.
+- [ ] **Step 8: Commit** `feat(scan): add persistent Default/Both scan mode`.
 
 ### Task 2: Candidate stream and deterministic lane assignment
 
@@ -60,7 +62,7 @@
 - Modify: `firmware/tools/check_all.sh`
 
 **Interfaces:**
-- `scan_dual.h` defines `scan_candidate_t { uint32_t ordinal; uint32_t frequency_10hz; uint16_t channel; uint8_t band; bool is_memory_channel; }`, `scan_lane_chip_t { SCAN_LANE_BK4829=0, SCAN_LANE_BK4815=1, SCAN_LANE_NONE=2 }`, and `scan_dual_assign_candidate(const scan_candidate_t *)`. The BK4815 lane is eligible only above the stock's 134 MHz split (`frequency_10hz > 13400000`); for eligible candidates, even ordinals go to BK4829 and odd ordinals to BK4815. At/below the split, assign to BK4829 so no candidate is lost to an unvalidated BK4815 band. Also define `scan_lane_state_t { uint16_t noise_floor; uint32_t last_frequency_10hz; uint32_t candidates; uint16_t last_rssi; }` and `bool scan_dual_rssi_candidate(scan_lane_state_t *, uint16_t rssi, uint16_t squelch_open, uint16_t noise_margin, uint16_t squelch_margin, uint16_t weak_margin)`.
+- `scan_dual.h` defines `scan_candidate_t { uint32_t ordinal; uint32_t frequency_10hz; uint16_t channel; uint8_t band; bool is_memory_channel; }`, `scan_lane_chip_t { SCAN_LANE_BK4829=0, SCAN_LANE_BK4815=1, SCAN_LANE_NONE=2 }`, and `scan_dual_assign_candidate(const scan_candidate_t *)`. The BK4815 lane is eligible only above the stock's 134 MHz split (`frequency_10hz > 13400000`); for eligible candidates, even ordinals go to BK4829 and odd ordinals to BK4815. At/below the split, assign to BK4829 so no candidate is lost to an unvalidated BK4815 band. Also define `scan_lane_state_t { uint16_t noise_floor; uint32_t last_frequency_10hz; uint32_t candidates; uint16_t last_rssi; }`, `scan_dual_state_t { scan_lane_state_t lanes[2]; uint32_t next_ordinal; uint8_t mode; bool active; scan_lane_chip_t selected_hit; }`, `scan_dual_reset(scan_dual_state_t *)`, and `bool scan_dual_rssi_candidate(scan_lane_state_t *, uint16_t rssi, uint16_t squelch_open, uint16_t noise_margin, uint16_t squelch_margin, uint16_t weak_margin)`.
 - In `chFrScanner.c`, factor the existing range/list cursor advance into a private `bool CHFRSCANNER_NextCandidate(scan_candidate_t *out)`. It must preserve `ScanRangeNextFrequency`, range exclusions, `RADIO_FindNextChannel`, scan-list enable, priority channel order, direction, and wrap; return false if a list/range has no valid candidate. `Default` uses one lane selected from the RX VFO's `TrVfoA/B` setting; Both uses the lane assignment helper.
 - Candidate source is single-owner; it must not clone `currentScanList`, `gNextMrChannel`, or K1 global scan state per transceiver.
 
@@ -68,8 +70,9 @@
 - [ ] **Step 2: Run the focused test and verify RED.** Compile `test_scan_dual.c` with `App/app/scan_dual.c`; expected: missing interface/test assertions fail.
 - [ ] **Step 3: Implement `scan_candidate_t`, lane assignment, and `scan_dual_rssi_candidate(scan_lane_state_t *, uint16_t rssi, uint16_t squelch_open, uint16_t noise_margin, uint16_t squelch_margin, uint16_t weak_margin)` in `firmware/App/app/scan_dual.c`.** Keep this policy module device-header-free and host-testable; use the `frequency_10hz > 13400000` BK4815 eligibility boundary.
 - [ ] **Step 4: Extract the candidate traversal from `NextFreqChannel`/`NextMemChannel` into `CHFRSCANNER_NextCandidate(scan_candidate_t *out)`.** Do not change ordering or frequency-step rounding. Leave the existing Default single-lane call path intact.
-- [ ] **Step 5: Run focused and full host tests.** Expected: candidate order/parity tests pass, preview assertions cover frequency order plus mixed-band list order, and the existing single-scan movement regression remains green.
-- [ ] **Step 6: Commit** `refactor(scan): expose the K1 candidate stream and dual-lane policy`.
+- [ ] **Step 5: Extend `preview_k1.c` with an integration regression.** Feed a short frequency range and a mixed-band scan-list fixture through the actual `CHFRSCANNER` candidate source; assert each eligible item appears once and in K1 order, with lane selection matching its ordinal/support.
+- [ ] **Step 6: Run focused and full host tests.** Expected: candidate order/parity tests pass, the preview range/list integration regression passes, and the existing single-scan movement regression remains green.
+- [ ] **Step 7: Commit** `refactor(scan): expose the K1 candidate stream and dual-lane policy`.
 
 ### Task 3: Two RF fast-probe lanes and scan-hit arbitration
 
