@@ -2,6 +2,8 @@
 #ifndef HOST_HW_H
 #define HOST_HW_H
 
+#include <stdint.h>
+
 #include "driver/keypad.h"
 
 /* The key the host's keypad reader reports; KEY_INVALID = nothing pressed. */
@@ -9,6 +11,7 @@ void host_set_key(KEY_Code_t key);
 
 /* The PTT2 line (PB9) the boot-mode check reads: true = held. */
 void host_set_ptt2(bool pressed);
+void host_systick_advance(uint32_t milliseconds);
 
 /* How many sector erases the stand-in flash has seen.  A regression check for
  * the one thing that must not happen on a timer: a save that rewrites the blob

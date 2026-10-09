@@ -94,10 +94,30 @@ resume and stop (checked in `preview_k1.c`).
 
 ## Diagnostics
 
-Console `J` (`App/main.c`) now also prints `ScTrMd`, the override state, and the
+Console `J` (`App/main.c`) now also prints `ScTrMd`, the override state, the
 `scan_dual_stats_t` snapshot (per-lane candidate counts, last frequency, last
-RSSI, selected hit) via `CHFRSCANNER_GetScanDualStats()`.  It reads state only;
-it never tunes hardware to print.
+RSSI, selected hit), and **total RSSI probes / elapsed wall time / probes per
+second** via `CHFRSCANNER_GetScanDualStats()`.  Rate timing starts when a new
+scan starts and includes scheduler cadence and serialized bus work; the count
+includes completed RSSI probes, including range-refinement samples.  The
+diagnostic reads state only; it never tunes hardware to print.
+
+### Required speed comparison
+
+Compare `Default` and `Both` on the radio before judging the feature:
+
+1. Use the same quiet frequency range, direction, step, and fast-scan setting
+   for both runs. Avoid ranges with active signals, which intentionally pause
+   scanning.
+2. Start one mode, let it scan for the same fixed duration (for example 30 s),
+   then invoke console `J` and record `probes/s` and the per-lane counts. The
+   rate is sampled before `J`'s existing register/RSSI diagnostic loop blocks
+   the main loop, so compare runs by running the scan for the same time before
+   invoking `J`.
+3. Repeat each mode at least twice under similar RF conditions. `Both` is useful
+   only if its measured rate is repeatably higher; otherwise do not claim a
+   speed-up or merge the feature. Revisit the serialized-probe design or remove
+   `Both` if it cannot beat `Default`.
 
 ## Open / radio-validation gates
 
@@ -105,8 +125,9 @@ Everything below is **unvalidated**: it builds, the host tests pass, and the
 Default scan behaviour is unchanged in the host preview, but none of the dual-RF
 behaviour has run on the radio.
 
-* Candidate throughput in `Both` vs `Default` (candidates per second) for a range
-  sweep and a same-band list.
+* Candidate throughput in `Both` vs `Default` (probes per second) for a range
+  sweep; the scan-list path is currently the documented single-lane fallback
+  and is not expected to speed up.
 * Whether the shared band/path switch lets a lane's RSSI reading be meaningful
   after the other lane moved the path (cross-band interleaving).
 * The BK4815 lane's squelch mark and margins (currently

@@ -52,6 +52,7 @@ static int failures;
  * at a radio that is not listening. */
 static void step(void)
 {
+    host_systick_advance(10u);
     APP_Update();
     tx_poll_ptt();
     APP_TimeSlice10ms();
@@ -321,6 +322,21 @@ int main(void)
                moved ? "ok  " : "FAIL", (unsigned)f0,
                (unsigned)gRxVfo->freq_config_RX.Frequency);
         if (!moved) failures++;
+
+        {
+            scan_dual_stats_t stats;
+            bool ok;
+
+            (void)CHFRSCANNER_GetScanDualStats(&stats);
+            ok = stats.rate.candidates > 0u && stats.rate.elapsed_ms >= 10u &&
+                 stats.rate.candidates_per_second > 0u;
+            printf("[scan] %s scan-rate diagnostic counts probes over elapsed time "
+                   "(n=%u elapsed=%u ms rate=%u/s)\n",
+                   ok ? "ok  " : "FAIL", (unsigned)stats.rate.candidates,
+                   (unsigned)stats.rate.elapsed_ms,
+                   (unsigned)stats.rate.candidates_per_second);
+            if (!ok) failures++;
+        }
 
         if (gScanStateDir != SCAN_OFF)
             ACTION_Scan(false);                      /* stop */

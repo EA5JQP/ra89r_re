@@ -691,6 +691,9 @@ static void dual_rf_diag(void)
                     (sm == SCAN_TRANSCEIVER_BOTH) ? "Both" : "Default",
                     (unsigned)rx_scan_source_override(),
                     (int)st.active, (unsigned)st.selected_hit);
+        uart_printf("  scan probes=%u elapsed=%u ms rate=%u candidates/s\n",
+                    (unsigned)st.rate.candidates, (unsigned)st.rate.elapsed_ms,
+                    (unsigned)st.rate.candidates_per_second);
         uart_printf("    lane BK4829: cand=%u last=%u.%05u MHz rssi=%u\n",
                     (unsigned)st.candidates[0],
                     (unsigned)(st.last_frequency_10hz[0] / 100000u),

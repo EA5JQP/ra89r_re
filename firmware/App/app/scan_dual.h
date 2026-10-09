@@ -80,16 +80,38 @@ bool scan_dual_choose_hit(bool hit_4829, uint32_t ordinal_4829,
                           bool hit_4815, uint32_t ordinal_4815,
                           scan_lane_chip_t *selected);
 
+/* Wall-clock throughput counter shared by Default and Both scans.  Candidate
+ * count means RSSI probes completed, elapsed time means wall time since scan
+ * start (so scheduler cadence and serialized bus work are included). */
+typedef struct {
+    uint32_t started_ms;
+    uint32_t candidates;
+    bool     started;
+} scan_candidate_rate_t;
+
+typedef struct {
+    uint32_t candidates;
+    uint32_t elapsed_ms;
+    uint32_t candidates_per_second;
+} scan_candidate_rate_stats_t;
+
 /* A read-only snapshot for diagnostics (console 'J'). */
 typedef struct {
-    bool             active;
-    uint8_t          mode;
-    uint32_t         candidates[2];
-    uint32_t         last_frequency_10hz[2];
-    uint16_t         last_rssi[2];
-    scan_lane_chip_t selected_hit;
+    bool                          active;
+    uint8_t                       mode;
+    uint32_t                      candidates[2];
+    uint32_t                      last_frequency_10hz[2];
+    uint16_t                      last_rssi[2];
+    scan_lane_chip_t              selected_hit;
+    scan_candidate_rate_stats_t   rate;
 } scan_dual_stats_t;
 
 void scan_dual_get_stats(const scan_dual_state_t *state, scan_dual_stats_t *out);
+
+void scan_candidate_rate_reset(scan_candidate_rate_t *counter, uint32_t now_ms);
+void scan_candidate_rate_add(scan_candidate_rate_t *counter, uint32_t candidates);
+void scan_candidate_rate_snapshot(const scan_candidate_rate_t *counter,
+                                  uint32_t now_ms,
+                                  scan_candidate_rate_stats_t *out);
 
 #endif

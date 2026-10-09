@@ -35,6 +35,43 @@ static scan_candidate_t cand(uint32_t ordinal, uint32_t freq, uint16_t channel, 
 
 int main(void)
 {
+    /* Candidate throughput uses wall-clock time since scan start, so the two
+     * modes can be compared despite their different work per scheduler batch. */
+    {
+        scan_candidate_rate_t counter;
+        scan_candidate_rate_stats_t stats;
+
+        scan_candidate_rate_reset(&counter, 100u);
+        scan_candidate_rate_add(&counter, 60u);
+        scan_candidate_rate_snapshot(&counter, 1100u, &stats);
+        check(stats.candidates == 60u && stats.elapsed_ms == 1000u &&
+              stats.candidates_per_second == 60u,
+              "rate: candidates per second over one second");
+
+        scan_candidate_rate_add(&counter, 30u);
+        scan_candidate_rate_snapshot(&counter, 2500u, &stats);
+        check(stats.candidates == 90u && stats.elapsed_ms == 2400u &&
+              stats.candidates_per_second == 37u,
+              "rate: cumulative elapsed wall time");
+
+        scan_candidate_rate_reset(&counter, 500u);
+        scan_candidate_rate_snapshot(&counter, 500u, &stats);
+        check(stats.elapsed_ms == 0u && stats.candidates_per_second == 0u,
+              "rate: zero elapsed avoids divide by zero");
+
+        scan_candidate_rate_reset(&counter, UINT32_MAX - 499u);
+        scan_candidate_rate_add(&counter, 20u);
+        scan_candidate_rate_snapshot(&counter, 500u, &stats);
+        check(stats.elapsed_ms == 1000u && stats.candidates_per_second == 20u,
+              "rate: SysTick millisecond wrap is handled");
+
+        scan_candidate_rate_reset(NULL, 0u);
+        scan_candidate_rate_add(NULL, 10u);
+        scan_candidate_rate_snapshot(NULL, 10u, &stats);
+        check(stats.candidates == 0u && stats.candidates_per_second == 0u,
+              "rate: NULL counter is safe");
+    }
+
     /* Above the stock's split, even ordinals are the BK4829 and odd the
      * BK4815, so consecutive candidates interleave across the two lanes. */
     {

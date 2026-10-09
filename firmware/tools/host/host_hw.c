@@ -88,6 +88,20 @@ void     bk1080_init(void) { }
  * has to satisfy the reference. */
 void     rx_set_fm_active(bool active) { (void)active; }
 
+/* The preview's step() advances this counter by 10 ms, matching one
+ * scheduler_tick_10ms().  The target links the real SysTick implementation. */
+static uint32_t s_host_millis;
+
+uint32_t systick_millis(void)
+{
+    return s_host_millis;
+}
+
+void host_systick_advance(uint32_t milliseconds)
+{
+    s_host_millis += milliseconds;
+}
+
 /* The dual-scan path in app/chFrScanner.c references the BK4815, the shared
  * band path and the RX scan-source override.  The preview does not run the RF
  * scan; these stand in so it links, and the override is recorded so a preview

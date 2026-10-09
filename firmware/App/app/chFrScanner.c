@@ -308,6 +308,7 @@ static uint32_t scanFastPrevFrequency;
 static bool     scanFastLastFullTuneCandidate;
 static VFO_Info_t scanFastDisplayVfo;
 static bool       scanFastDisplayVfoValid;
+static scan_candidate_rate_t scanCandidateRate;
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
 static uint16_t scanRssiSparkline[CHFRSCANNER_RSSI_SPARKLINE_WIDTH];
 static uint8_t  scanRssiSparklineWrite;
@@ -618,6 +619,7 @@ static void ScanRangeFastRefineCandidate(uint16_t firstRssi)
         ScanFastTune(freq);
 
         const uint16_t rssi = ScanFastReadRssi();
+        scan_candidate_rate_add(&scanCandidateRate, 1u);
         if (rssi > bestRssi)
         {
             bestRssi = rssi;
@@ -670,6 +672,7 @@ static scan_fast_result_t ScanRangeFastPrecheck(void)
         ScanFastTune(freq);
 
         const uint16_t rssi = ScanFastReadCandidateRssi();
+        scan_candidate_rate_add(&scanCandidateRate, 1u);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
         ScanRssiSparklinePush(rssi);
 #endif
@@ -709,6 +712,7 @@ static bool MemChannelFastPrecheck(uint16_t channel)
     ScanFastTune(frequency);
 
     const uint16_t rssi = ScanFastReadCandidateRssi();
+    scan_candidate_rate_add(&scanCandidateRate, 1u);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
     ScanRssiSparklinePush(rssi);
 #endif
@@ -838,6 +842,8 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
         const uint16_t         weak_margin = is_4815 ? SCAN_FAST4815_WEAK_MARGIN
                                                      : SCAN_FAST_WEAK_MARGIN;
 
+        scan_candidate_rate_add(&scanCandidateRate, 1u);
+
         /* A range wrap (forward and lower, or backward and higher) is a new
          * pass: re-warm both lanes' floors, as the Default precheck does. */
         if (scanBothPrevFrequency != 0 &&
@@ -896,6 +902,7 @@ bool CHFRSCANNER_GetScanDualStats(scan_dual_stats_t *out)
     scan_dual_get_stats(&scanBothState, out);
     out->mode   = (uint8_t)SETTINGS_GetScanTransceiverMode();
     out->active = scanBothState.active && ScanBothEnabled() && gScanStateDir != SCAN_OFF;
+    scan_candidate_rate_snapshot(&scanCandidateRate, systick_millis(), &out->rate);
     return out->active;
 }
 #else
@@ -944,6 +951,10 @@ void CHFRSCANNER_Start(const bool storeBackupSettings, const int8_t scan_directi
     gScanStateDir    = scan_direction;
     scanCandidateOrdinal = 0;
     rx_clear_scan_source_override();
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+    if (storeBackupSettings)
+        scan_candidate_rate_reset(&scanCandidateRate, systick_millis());
+#endif
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
     ScanRssiSparklineReset();
