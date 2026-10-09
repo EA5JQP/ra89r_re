@@ -662,6 +662,62 @@ static void bk4815_bench(void)
     }
 }
 
+/* A controlled Default-vs-Both range-scan comparison, run by the console's 'J'.
+ * It forces the selected RX VFO onto a frequency channel over one shared range,
+ * then runs each mode for SCAN_BENCH_MS, pumping the same app loop the main loop
+ * runs, and reports probes over elapsed wall time.  The timing is wall-clock, so
+ * the display and bit-banged bus cost are included, as they are when scanning by
+ * hand.  It restores the saved VFO, range and scan mode before returning. */
+#define SCAN_BENCH_MS 3000u
+
+static void scan_rate_benchmark(void)
+{
+    const uint32_t step  = gRxVfo->StepFrequency ? gRxVfo->StepFrequency : 2500u;
+    const uint32_t start = FREQUENCY_RoundToStep(gRxVfo->freq_config_RX.Frequency, (uint16_t)step);
+    const uint32_t stop  = start + 100000u;   /* 1 MHz, in 10 Hz units */
+    static const char *const names[2] = { "Default", "Both" };
+    scan_bench_result_t res[2];
+    unsigned m;
+
+    uart_printf("\nscan benchmark: %u.%05u .. %u.%05u MHz, step %u.%01u kHz, %u ms per mode\n",
+                (unsigned)(start / 100000u), (unsigned)(start % 100000u),
+                (unsigned)(stop / 100000u), (unsigned)(stop % 100000u),
+                (unsigned)(step / 100u), (unsigned)((step % 100u) / 10u),
+                (unsigned)SCAN_BENCH_MS);
+    uart_printf("  ScnRev=%u  SetScn=%s  ScTrMd(menu)=%s\n",
+                (unsigned)gEeprom.SCAN_RESUME_MODE,
+                gSetting_set_scn ? "FAST" : "NORMAL",
+                SETTINGS_GetScanTransceiverMode() == SCAN_TRANSCEIVER_BOTH ? "Both" : "Default");
+
+    CHFRSCANNER_BenchmarkArm(start, stop);
+    for (m = 0; m < 2u; m++) {
+        uint32_t t0;
+
+        CHFRSCANNER_BenchmarkRun((uint8_t)m);
+        t0 = systick_millis();
+        while ((uint32_t)(systick_millis() - t0) < SCAN_BENCH_MS) {
+            APP_Update();
+            APP_TimeSlice10ms();
+        }
+        CHFRSCANNER_BenchmarkFinish(&res[m]);
+        uart_printf("  %-7s probes=%u elapsed=%u ms  %u probes/s\n",
+                    names[m], (unsigned)res[m].probes, (unsigned)res[m].elapsed_ms,
+                    (unsigned)res[m].probes_per_second);
+    }
+    CHFRSCANNER_BenchmarkDisarm();
+
+    if (res[0].probes_per_second > 0u) {
+        const uint32_t pct = (res[1].probes_per_second * 100u) / res[0].probes_per_second;
+
+        uart_printf("  Both/Default = %u.%02ux  (%s)\n",
+                    (unsigned)(pct / 100u), (unsigned)(pct % 100u),
+                    (res[1].probes_per_second > res[0].probes_per_second)
+                        ? "faster" : "not faster");
+    } else {
+        uart_puts("  Default measured 0 probes/s: check squelch and the range\n");
+    }
+}
+
 /* The console's 'J': the live dual-RF state, without re-tuning anything.  Shows
  * the per-VFO transceiver choice, the resolved roles, which chip supplies the
  * receive audio, the squelch state, and the BK4815's own registers/meters, then
@@ -735,6 +791,9 @@ static void dual_rf_diag(void)
                 (unsigned)bk4815_read_reg(0x43), (unsigned)bk4815_read_reg(0x44),
                 (unsigned)(bk4815_read_reg(0x44) & 0x7fu),
                 (unsigned)RX4815_SQUELCH_OPEN_MARK, (unsigned)RX4815_SQUELCH_CLOSE_MARK);
+
+    scan_rate_benchmark();
+
     uart_puts("  sampling 0x44 for ~5 s -- key a signal on the selected VFO now:\n");
 
     for (k = 0; k < 25u; k++) {

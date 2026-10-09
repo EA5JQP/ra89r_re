@@ -102,22 +102,24 @@ scan starts and includes scheduler cadence and serialized bus work; the count
 includes completed RSSI probes, including range-refinement samples.  The
 diagnostic reads state only; it never tunes hardware to print.
 
-### Required speed comparison
+`J` then runs the automated benchmark below; the probe/elapsed figures are
+sampled while the app loop is still live, before the diagnostic sampling pauses
+it.
 
-Compare `Default` and `Both` on the radio before judging the feature:
+### Required speed comparison (automated)
 
-1. Use the same quiet frequency range, direction, step, and fast-scan setting
-   for both runs. Avoid ranges with active signals, which intentionally pause
-   scanning.
-2. Start one mode, let it scan for the same fixed duration (for example 30 s),
-   then invoke console `J` and record `probes/s` and the per-lane counts. The
-   rate is sampled before `J`'s existing register/RSSI diagnostic loop blocks
-   the main loop, so compare runs by running the scan for the same time before
-   invoking `J`.
-3. Repeat each mode at least twice under similar RF conditions. `Both` is useful
-   only if its measured rate is repeatably higher; otherwise do not claim a
-   speed-up or merge the feature. Revisit the serialized-probe design or remove
-   `Both` if it cannot beat `Default`.
+Console `J` runs the comparison for you.  It arms one shared range on the selected
+RX VFO (forcing it to a frequency channel, so the range path is taken), then runs
+`Default` and `Both` for 3 s each, pumping the app loop, and prints
+`probes / elapsed ms / probes/s` for both plus the `Both/Default` ratio.  It
+restores the saved VFO, range and scan mode before returning, so the manual
+`F+5` range arming and menu switching are not needed.
+
+`J` also prints `ScTrMd`, `SetScn` and `ScnRev` so the menu wiring is visible; it
+uses a 1 MHz span at the VFO's step, starting at the current frequency.  Run it
+over a quiet range, repeat a few times, and treat `Both` as useful only if its
+measured rate is repeatably higher.  If it cannot beat `Default`, the serialized
+probe design should be revisited or `Both` removed.
 
 ## Open / radio-validation gates
 

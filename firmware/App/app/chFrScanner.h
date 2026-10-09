@@ -41,6 +41,20 @@ bool CHFRSCANNER_NextCandidate(scan_candidate_t *out);
 /* Diagnostics: the dual-lane snapshot (console 'J').  Returns true while a
  * "Both" scan is active. */
 bool CHFRSCANNER_GetScanDualStats(scan_dual_stats_t *out);
+
+/* A controlled Default-vs-Both range benchmark for console 'J'.  Arm once with
+ * the shared range, then for each mode: Run, pump the app loop, Finish.  Disarm
+ * restores the saved VFO, range and scan mode.  Host-testable (preview_k1.c). */
+typedef struct {
+    uint32_t probes;
+    uint32_t elapsed_ms;
+    uint32_t probes_per_second;
+} scan_bench_result_t;
+
+void CHFRSCANNER_BenchmarkArm(uint32_t start_10hz, uint32_t stop_10hz);
+void CHFRSCANNER_BenchmarkRun(uint8_t mode);          /* scan_transceiver_mode_t */
+void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out);
+void CHFRSCANNER_BenchmarkDisarm(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 const VFO_Info_t *CHFRSCANNER_GetScanDisplayVfo(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI

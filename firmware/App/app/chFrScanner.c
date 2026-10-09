@@ -916,6 +916,117 @@ bool CHFRSCANNER_GetScanDualStats(scan_dual_stats_t *out)
 }
 #endif /* ENABLE_FEAT_F4HWN_SCAN_FASTER */
 
+#if defined(ENABLE_SCAN_RANGES) && defined(ENABLE_FEAT_F4HWN_SCAN_FASTER)
+/* The console benchmark (see chFrScanner.h).  It forces the selected RX VFO
+ * onto a frequency channel and a shared range so CHFRSCANNER_Start() takes the
+ * range path, then runs each mode for the caller. */
+static struct {
+    bool     armed;
+    uint8_t  rx_vfo;
+    uint16_t screen;
+    uint16_t freq_chan;
+    uint16_t channel_save;
+    uint16_t band;
+    uint32_t rx_freq;
+    uint32_t tx_freq;
+    uint32_t range_start;
+    uint32_t range_stop;
+    uint8_t  mode;
+} scanBench;
+
+void CHFRSCANNER_BenchmarkArm(uint32_t start_10hz, uint32_t stop_10hz)
+{
+    const uint8_t rx = gEeprom.RX_VFO;
+
+    scanBench.armed        = true;
+    scanBench.rx_vfo       = rx;
+    scanBench.screen       = gEeprom.ScreenChannel[rx];
+    scanBench.freq_chan    = gEeprom.FreqChannel[rx];
+    scanBench.channel_save = gRxVfo->CHANNEL_SAVE;
+    scanBench.band         = gRxVfo->Band;
+    scanBench.rx_freq      = gRxVfo->freq_config_RX.Frequency;
+    scanBench.tx_freq      = gRxVfo->freq_config_TX.Frequency;
+    scanBench.range_start  = gScanRangeStart;
+    scanBench.range_stop   = gScanRangeStop;
+    scanBench.mode         = (uint8_t)SETTINGS_GetScanTransceiverMode();
+
+    /* Frequency mode, so Start() arms the range instead of the memory cursor. */
+    gRxVfo->Band              = (uint16_t)FREQUENCY_GetBand(start_10hz);
+    gEeprom.ScreenChannel[rx] = (uint16_t)(FREQ_CHANNEL_FIRST + gRxVfo->Band);
+    gEeprom.FreqChannel[rx]   = gEeprom.ScreenChannel[rx];
+    gRxVfo->CHANNEL_SAVE      = gEeprom.ScreenChannel[rx];
+    gRxVfo->freq_config_RX.Frequency = start_10hz;
+    gRxVfo->freq_config_TX.Frequency = start_10hz;
+    gScanRangeStart = start_10hz;
+    gScanRangeStop  = stop_10hz;
+}
+
+void CHFRSCANNER_BenchmarkRun(uint8_t mode)
+{
+    if (!scanBench.armed)
+        return;
+
+    SETTINGS_SetScanTransceiverMode(mode == (uint8_t)SCAN_TRANSCEIVER_BOTH
+                                        ? SCAN_TRANSCEIVER_BOTH
+                                        : SCAN_TRANSCEIVER_DEFAULT);
+    CHFRSCANNER_Start(true, SCAN_FWD);
+}
+
+void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out)
+{
+    scan_dual_stats_t st;
+
+    if (gScanStateDir != SCAN_OFF)
+        CHFRSCANNER_Stop();
+
+    CHFRSCANNER_GetScanDualStats(&st);
+    if (out != 0) {
+        out->probes            = st.rate.candidates;
+        out->elapsed_ms        = st.rate.elapsed_ms;
+        out->probes_per_second = st.rate.candidates_per_second;
+    }
+}
+
+void CHFRSCANNER_BenchmarkDisarm(void)
+{
+    const uint8_t rx = scanBench.rx_vfo;
+
+    if (!scanBench.armed)
+        return;
+
+    gEeprom.ScreenChannel[rx] = scanBench.screen;
+    gEeprom.FreqChannel[rx]   = scanBench.freq_chan;
+    gRxVfo->CHANNEL_SAVE      = scanBench.channel_save;
+    gRxVfo->Band              = scanBench.band;
+    gRxVfo->freq_config_RX.Frequency = scanBench.rx_freq;
+    gRxVfo->freq_config_TX.Frequency = scanBench.tx_freq;
+    gScanRangeStart = scanBench.range_start;
+    gScanRangeStop  = scanBench.range_stop;
+    SETTINGS_SetScanTransceiverMode((scan_transceiver_mode_t)scanBench.mode);
+    RADIO_ConfigureChannel(rx, VFO_CONFIGURE_RELOAD);
+    scanBench.armed = false;
+}
+#else
+void CHFRSCANNER_BenchmarkArm(uint32_t start_10hz, uint32_t stop_10hz)
+{
+    (void)start_10hz;
+    (void)stop_10hz;
+}
+
+void CHFRSCANNER_BenchmarkRun(uint8_t mode) { (void)mode; }
+
+void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out)
+{
+    if (out != 0) {
+        out->probes            = 0u;
+        out->elapsed_ms        = 0u;
+        out->probes_per_second = 0u;
+    }
+}
+
+void CHFRSCANNER_BenchmarkDisarm(void) { }
+#endif
+
 #if defined(ENABLE_FEAT_F4HWN_RESUME_STATE) || defined(ENABLE_SCAN_RANGES)
     void CHFRSCANNER_ScanRange(void) {
         if (gScanRangeStart) {

@@ -297,9 +297,46 @@ int main(void)
         }
     }
 
-    /* The scan must actually step.  Regression: the port's SysTick handler only
-     * counted milliseconds, so the K1's scan-pause countdown never ran and the
-     * scan started but stayed put (the "S" showed and nothing moved). */
+    /* SetScn is the K1's fast-scan switch ("NORMAL"/"FAST"); the benchmark
+     * relies on being able to set it. */
+    {
+        bool found = false;
+        unsigned mi;
+        uint8_t id = 0;
+        const bool before = gSetting_set_scn;
+
+        for (mi = 0; MenuList[mi].name[0] != '\0'; mi++) {
+            if (strcmp(MenuList[mi].name, "SetScn") == 0) {
+                found = true;
+                id = MenuList[mi].menu_id;
+            }
+        }
+        printf("[scan] %s the SetScn menu row exists\n", found ? "ok  " : "FAIL");
+        if (!found) failures++;
+
+        if (found) {
+            bool ok;
+
+            gIsInSubMenu = true;
+            gMenuCursor  = UI_MENU_GetViewPos(id);
+
+            gSubMenuSelection = 1;              /* FAST */
+            MENU_AcceptSetting();
+            ok = gSetting_set_scn == 1;
+            printf("[scan] %s SetScn index 1 selects FAST\n", ok ? "ok  " : "FAIL");
+            if (!ok) failures++;
+
+            gSubMenuSelection = 0;              /* NORMAL */
+            MENU_AcceptSetting();
+            ok = gSetting_set_scn == 0;
+            printf("[scan] %s SetScn index 0 selects NORMAL\n", ok ? "ok  " : "FAIL");
+            if (!ok) failures++;
+
+            gSetting_set_scn = before;
+            gIsInSubMenu = false;
+        }
+    }
+
     {
         const unsigned int vfo = gEeprom.RX_VFO;
         unsigned i;
@@ -340,6 +377,38 @@ int main(void)
 
         if (gScanStateDir != SCAN_OFF)
             ACTION_Scan(false);                      /* stop */
+    }
+
+    /* The dual-scan benchmark must arm one shared range, run a mode, report a
+     * probe count over elapsed time, and restore the saved scan mode. */
+    {
+        const scan_transceiver_mode_t before = SETTINGS_GetScanTransceiverMode();
+        const uint32_t saved_start = gScanRangeStart;
+        scan_bench_result_t res;
+        unsigned i;
+        bool ok;
+
+        SETTINGS_SetScanTransceiverMode(SCAN_TRANSCEIVER_DEFAULT);
+        CHFRSCANNER_BenchmarkArm(14500000u, 14600000u);
+        CHFRSCANNER_BenchmarkRun((uint8_t)SCAN_TRANSCEIVER_BOTH);
+        for (i = 0; i < 30u; i++)
+            step();
+        CHFRSCANNER_BenchmarkFinish(&res);
+        CHFRSCANNER_BenchmarkDisarm();
+
+        ok = res.probes > 0u && res.elapsed_ms > 0u && res.probes_per_second > 0u;
+        printf("[scan] %s benchmark reports probes over time (n=%u elapsed=%u ms rate=%u/s)\n",
+               ok ? "ok  " : "FAIL", (unsigned)res.probes,
+               (unsigned)res.elapsed_ms, (unsigned)res.probes_per_second);
+        if (!ok) failures++;
+
+        ok = SETTINGS_GetScanTransceiverMode() == before;
+        printf("[scan] %s benchmark restores the saved scan mode\n", ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        ok = gScanRangeStart == saved_start;
+        printf("[scan] %s benchmark restores the scan range\n", ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
     }
 
     /* A found signal must resume the scan, not end it.  SCAN_RESUME_MODE == 0 is
