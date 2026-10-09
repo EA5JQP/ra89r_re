@@ -119,25 +119,43 @@ void SETTINGS_FixupVfoPointers(void)
     gCurrentVfo = gRxVfo;
 }
 
-/* The port's own state, saved in the blob next to gEeprom. */
+/* The port's own state, saved in the blob next to gEeprom.
+ *
+ * Version 2 reused the old `reserved` bytes for the per-VFO RF transceiver
+ * choice; version 3 appends the scan-transceiver mode.  The v2 layout is kept
+ * explicit below so a blob written by an older build still loads. */
 typedef struct {
     uint32_t magic;
     uint16_t version;
-    /* Was `uint16_t reserved` (always zero).  Reused for the per-VFO RF
-     * transceiver choice so the blob layout and its version are unchanged: an
-     * older blob reads back as {0,0} = AUTO for both VFOs. */
     uint8_t  rf_xcvr[2];                  /* rf_xcvr_t, VFO A and B */
     uint8_t  freq_channels[7 * 2 * 16];   /* codeplug_freq_snapshot() */
 #ifdef ENABLE_FMRADIO
     uint16_t fm_channels[FM_CHANNELS_MAX]; /* the K1's FM memories (app/fm.c) */
 #endif
+    uint8_t  scan_tr_mode;                /* scan_transceiver_mode_t */
 } settings_extra_t;
 
-#define EXTRA_MAGIC   0x58545241u    /* "ARTX" */
-#define EXTRA_VERSION 2u
+/* The version-2 payload, byte for byte: the same prefix without the appended
+ * scan mode.  Kept so a blob from an older build can still be read. */
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint8_t  rf_xcvr[2];
+    uint8_t  freq_channels[7 * 2 * 16];
+#ifdef ENABLE_FMRADIO
+    uint16_t fm_channels[FM_CHANNELS_MAX];
+#endif
+} settings_extra_v2_t;
+
+#define EXTRA_MAGIC      0x58545241u    /* "ARTX" */
+#define EXTRA_VERSION    3u
+#define EXTRA_VERSION_V2 2u
 
 /* The per-VFO RF transceiver choice, mirrored into the blob on save. */
 static uint8_t s_rf_xcvr[2] = { RF_XCVR_BK4829, RF_XCVR_BK4829 };
+
+/* The scan-transceiver mode, mirrored into the blob on save. */
+static uint8_t s_scan_tr_mode = (uint8_t)SCAN_TRANSCEIVER_DEFAULT;
 
 rf_xcvr_t SETTINGS_GetVfoTransceiver(uint8_t vfo)
 {
@@ -159,12 +177,30 @@ void SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr)
     s_rf_xcvr[vfo] = (uint8_t)xcvr;
 }
 
+scan_transceiver_mode_t SETTINGS_GetScanTransceiverMode(void)
+{
+    /* An old blob has 0 here, which is exactly DEFAULT, and any other
+     * out-of-range value is normalized the same way. */
+    if (s_scan_tr_mode != (uint8_t)SCAN_TRANSCEIVER_BOTH)
+        return SCAN_TRANSCEIVER_DEFAULT;
+    return SCAN_TRANSCEIVER_BOTH;
+}
+
+void SETTINGS_SetScanTransceiverMode(scan_transceiver_mode_t mode)
+{
+    if (mode != SCAN_TRANSCEIVER_BOTH)
+        mode = SCAN_TRANSCEIVER_DEFAULT;
+    s_scan_tr_mode = (uint8_t)mode;
+}
+
 void SettingsDefaults(void)
 {
     memset(&gEeprom, 0, sizeof gEeprom);
 
     s_rf_xcvr[0] = (uint8_t)RF_XCVR_BK4829;
     s_rf_xcvr[1] = (uint8_t)RF_XCVR_BK4829;
+
+    s_scan_tr_mode = (uint8_t)SCAN_TRANSCEIVER_DEFAULT;
 
     gEeprom.RX_VFO = 0;
     gEeprom.TX_VFO = 0;
@@ -305,9 +341,26 @@ void SETTINGS_InitEEPROM(void)
             extra.version == EXTRA_VERSION) {
             codeplug_freq_restore(extra.freq_channels, sizeof extra.freq_channels);
             memcpy(s_rf_xcvr, extra.rf_xcvr, sizeof s_rf_xcvr);
+            s_scan_tr_mode = extra.scan_tr_mode;
 #ifdef ENABLE_FMRADIO
             memcpy(gFM_Channels, extra.fm_channels, sizeof gFM_Channels);
 #endif
+        } else {
+            /* An older blob: read the version-2 payload it actually is, keep
+             * its fields, and let the new scan mode take its default. */
+            settings_extra_v2_t old;
+
+            memset(&old, 0, sizeof old);
+            if (storage_get_extra(&old, sizeof old) &&
+                old.magic == EXTRA_MAGIC &&
+                old.version == EXTRA_VERSION_V2) {
+                codeplug_freq_restore(old.freq_channels, sizeof old.freq_channels);
+                memcpy(s_rf_xcvr, old.rf_xcvr, sizeof s_rf_xcvr);
+                s_scan_tr_mode = (uint8_t)SCAN_TRANSCEIVER_DEFAULT;
+#ifdef ENABLE_FMRADIO
+                memcpy(gFM_Channels, old.fm_channels, sizeof gFM_Channels);
+#endif
+            }
         }
     } else {
         /* No blob yet: land the two VFOs on the first two channels the codeplug
@@ -518,6 +571,7 @@ static bool settings_save_all(void)
 #ifdef ENABLE_FMRADIO
     memcpy(extra.fm_channels, gFM_Channels, sizeof extra.fm_channels);
 #endif
+    extra.scan_tr_mode = s_scan_tr_mode;
 
     if (!storage_set_extra(&extra, sizeof extra))
         return false;

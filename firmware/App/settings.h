@@ -344,6 +344,9 @@ void     codeplug_name(char *out, size_t size, uint16_t channel);
 #define CODEPLUG_CHANNEL_COUNT 210u
 void codeplug_channel_pack(const ChannelScanDisplayInfo_t *info, uint8_t *out);
 void codeplug_channel_unpack(const uint8_t *in, ChannelScanDisplayInfo_t *info);
+/* The port's frequency-channel snapshot, saved inside the settings blob. */
+void codeplug_freq_snapshot(uint8_t *dest, size_t size);
+bool codeplug_freq_restore(const uint8_t *src, size_t size);
 void     SETTINGS_FactoryReset(bool bIsAll);
 #ifdef ENABLE_FMRADIO
     void SETTINGS_SaveFM(void);
@@ -377,4 +380,16 @@ typedef enum {
 
 rf_xcvr_t SETTINGS_GetVfoTransceiver(uint8_t vfo);
 void      SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr);
+
+/* How the scanner uses the two RF transceivers.  DEFAULT follows the selected
+ * RX VFO's own chip (TrVfoA/TrVfoB); BOTH runs both chips as interleaved scan
+ * lanes.  Stored in the port's own settings blob; an absent or invalid value
+ * resolves to DEFAULT. */
+typedef enum {
+    SCAN_TRANSCEIVER_DEFAULT = 0,
+    SCAN_TRANSCEIVER_BOTH = 1
+} scan_transceiver_mode_t;
+
+scan_transceiver_mode_t SETTINGS_GetScanTransceiverMode(void);
+void                    SETTINGS_SetScanTransceiverMode(scan_transceiver_mode_t mode);
 #endif

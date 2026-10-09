@@ -243,6 +243,59 @@ int main(void)
         if (!ok) failures++;
     }
 
+    /* ScTrMd: the scan-transceiver mode ("Default" or "Both").  The row must
+     * exist, offer exactly those two labels, map the menu index to the mode,
+     * and re-open showing the selected value. */
+    {
+        bool found = false;
+        unsigned mi;
+        uint8_t id = 0;
+
+        for (mi = 0; MenuList[mi].name[0] != '\0'; mi++) {
+            if (strcmp(MenuList[mi].name, "ScTrMd") == 0) {
+                found = true;
+                id = MenuList[mi].menu_id;
+            }
+        }
+        printf("[scan] %s the ScTrMd menu row exists\n", found ? "ok  " : "FAIL");
+        if (!found) failures++;
+
+        if (found) {
+            const bool labels_ok =
+                strcmp(gSubMenu_SCAN_TRANSCEIVER[0], "Default") == 0 &&
+                strcmp(gSubMenu_SCAN_TRANSCEIVER[1], "Both") == 0;
+            printf("[scan] %s ScTrMd offers only Default and Both\n",
+                   labels_ok ? "ok  " : "FAIL");
+            if (!labels_ok) failures++;
+
+            gIsInSubMenu = true;
+            gMenuCursor  = UI_MENU_GetViewPos(id);
+
+            gSubMenuSelection = 1;              /* Both */
+            MENU_AcceptSetting();
+            {
+                const bool ok = SETTINGS_GetScanTransceiverMode() == SCAN_TRANSCEIVER_BOTH;
+                printf("[scan] %s ScTrMd index 1 selects Both\n", ok ? "ok  " : "FAIL");
+                if (!ok) failures++;
+            }
+            MENU_ShowCurrentSetting();
+            {
+                const bool ok = gSubMenuSelection == 1u;
+                printf("[scan] %s reopening ScTrMd shows Both\n", ok ? "ok  " : "FAIL");
+                if (!ok) failures++;
+            }
+
+            gSubMenuSelection = 0;              /* Default */
+            MENU_AcceptSetting();
+            {
+                const bool ok = SETTINGS_GetScanTransceiverMode() == SCAN_TRANSCEIVER_DEFAULT;
+                printf("[scan] %s ScTrMd index 0 selects Default\n", ok ? "ok  " : "FAIL");
+                if (!ok) failures++;
+            }
+            gIsInSubMenu = false;
+        }
+    }
+
     /* The scan must actually step.  Regression: the port's SysTick handler only
      * counted milliseconds, so the K1's scan-pause countdown never ran and the
      * scan started but stayed put (the "S" showed and nothing moved). */
@@ -331,6 +384,81 @@ int main(void)
                    ok ? "ok  " : "FAIL", (unsigned)SETTINGS_GetVfoTransceiver(0u),
                    (unsigned)SETTINGS_GetVfoTransceiver(1u));
             if (!ok) failures++;
+        }
+
+        /* The scan-transceiver mode is in the same extra blob. */
+        {
+            bool ok;
+
+            SETTINGS_SetScanTransceiverMode(SCAN_TRANSCEIVER_BOTH);
+            SETTINGS_SaveSettings();
+            SETTINGS_SetScanTransceiverMode(SCAN_TRANSCEIVER_DEFAULT);
+            SETTINGS_InitEEPROM();
+            ok = SETTINGS_GetScanTransceiverMode() == SCAN_TRANSCEIVER_BOTH;
+            printf("[scan] %s ScTrMd Both survives save/load\n", ok ? "ok  " : "FAIL");
+            if (!ok) failures++;
+        }
+
+        /* An older (version 2) extra blob: its fields must survive and the new
+         * scan mode must fall back to Default.  Build one from a real save by
+         * truncating the current v3 payload to the v2 prefix and stamping the
+         * old version. */
+        {
+            uint8_t v2[STORAGE_EXTRA_MAX];
+            uint8_t snap_before[7 * 2 * 16];
+            uint8_t snap_after[7 * 2 * 16];
+            const uint32_t v2_size = 4u + 2u + 2u + (7u * 2u * 16u)
+#ifdef ENABLE_FMRADIO
+                                     + (FM_CHANNELS_MAX * 2u)
+#endif
+                                     ;
+            bool ok = true;
+
+            SETTINGS_SetVfoTransceiver(0u, RF_XCVR_BK4829);
+            SETTINGS_SetVfoTransceiver(1u, RF_XCVR_BK4815);
+            SETTINGS_SetScanTransceiverMode(SCAN_TRANSCEIVER_BOTH);
+#ifdef ENABLE_FMRADIO
+            gFM_Channels[0] = 0x1234u;
+            gFM_Channels[1] = 0x4321u;
+#endif
+            SETTINGS_SaveSettings();
+            codeplug_freq_snapshot(snap_before, sizeof snap_before);
+
+            memset(v2, 0, sizeof v2);
+            if (!storage_get_extra(v2, v2_size))
+                ok = false;
+            v2[4] = 2u;   /* version, little-endian */
+            v2[5] = 0u;
+            if (!storage_set_extra(v2, v2_size))
+                ok = false;
+            if (!storage_save_settings())
+                ok = false;
+
+            /* Clear the in-RAM frequency snapshot so a failed migration shows,
+             * then load the old blob. */
+            {
+                uint8_t zero[7 * 2 * 16];
+                memset(zero, 0, sizeof zero);
+                codeplug_freq_restore(zero, sizeof zero);
+            }
+            SETTINGS_InitEEPROM();
+            codeplug_freq_snapshot(snap_after, sizeof snap_after);
+
+            ok = ok &&
+                 SETTINGS_GetScanTransceiverMode() == SCAN_TRANSCEIVER_DEFAULT &&
+                 SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829 &&
+                 SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815 &&
+                 memcmp(snap_before, snap_after, sizeof snap_before) == 0;
+#ifdef ENABLE_FMRADIO
+            ok = ok && gFM_Channels[0] == 0x1234u && gFM_Channels[1] == 0x4321u;
+#endif
+            printf("[scan] %s a v2 extra blob migrates (fields kept, ScTrMd Default)\n",
+                   ok ? "ok  " : "FAIL");
+            if (!ok) failures++;
+
+            /* Leave a current-version blob behind for the checks that follow. */
+            SETTINGS_SetScanTransceiverMode(SCAN_TRANSCEIVER_DEFAULT);
+            SETTINGS_SaveSettings();
         }
 
         /* Put the state back so the screens below render as before (a plain
