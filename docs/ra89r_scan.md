@@ -121,6 +121,23 @@ over a quiet range, repeat a few times, and treat `Both` as useful only if its
 measured rate is repeatably higher.  If it cannot beat `Default`, the serialized
 probe design should be revisited or `Both` removed.
 
+### Measured on the radio
+
+`J`, 446.005..447.005 MHz, 10 kHz step, 3 s per mode, quiet band, two runs:
+
+| run | Default | Both | ratio |
+|---|---|---|---|
+| 1 | 300 probes / 3083 ms = 97/s | 516 / 3070 ms = 168/s | 1.73x |
+| 2 | 300 / 3083 = 97/s | 516 / 3070 = 168/s | 1.72x |
+
+So `Both` is about **1.7x**, not 2x: the BK4829's per-candidate tune/settle is
+the expensive half (~10 ms each), and the BK4815 lane adds cheaper probes.  The
+sweep was above the 134 MHz split, so both lanes were used.  Note that `Both`
+also probes one batch per lane per interval, so some of the gain is simply "more
+candidates per scheduler batch"; below 134 MHz all candidates stay on the BK4829
+and both lanes' batches still run, which should still be faster but is not yet
+measured.
+
 ## Open / radio-validation gates
 
 Everything below is **unvalidated**: it builds, the host tests pass, and the
