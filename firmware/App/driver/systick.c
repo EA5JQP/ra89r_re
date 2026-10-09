@@ -1,5 +1,6 @@
 #include "board.h"
 #include "board_pins.h"
+#include "driver/scheduler.h"
 #include "driver/systick.h"
 
 /* core_cm4.h (CMSIS) provides SysTick_Config(); its handler is defined here
@@ -11,6 +12,11 @@ static int s_systick_dead;
 void SysTick_Handler(void)
 {
     s_millis++;
+
+    /* The K1 runs its periodic countdowns in this handler; the port's copy
+     * lives in driver/scheduler.c and is what makes the scan step (see there). */
+    if ((s_millis % 10u) == 0u)
+        scheduler_tick_10ms();
 }
 
 void systick_init(void)

@@ -14,6 +14,8 @@
 #include <string.h>
 
 #include "app/app.h"
+#include "app/action.h"
+#include "app/chFrScanner.h"
 #include "app/fm.h"
 #include "app/menu.h"
 #include "audio.h"
@@ -36,6 +38,7 @@
 #include "ui/welcome.h"
 #include "ui/ui.h"
 #include "driver/py25q16.h"
+#include "driver/scheduler.h"
 #include "ui/menu.h"
 #include "ui/status.h"
 
@@ -52,6 +55,9 @@ static void step(void)
     APP_Update();
     tx_poll_ptt();
     APP_TimeSlice10ms();
+    /* The radio's SysTick handler runs the K1's countdowns every 10 ms; the
+     * scan step depends on them (see driver/scheduler.c). */
+    scheduler_tick_10ms();
 }
 
 /* A key event, as the radio sees it: hold the key for enough 10 ms slices that
@@ -235,6 +241,36 @@ int main(void)
         printf("[dual] %s legacy/invalid RF value 0 resolves to BK4829\n",
                ok ? "ok  " : "FAIL");
         if (!ok) failures++;
+    }
+
+    /* The scan must actually step.  Regression: the port's SysTick handler only
+     * counted milliseconds, so the K1's scan-pause countdown never ran and the
+     * scan started but stayed put (the "S" showed and nothing moved). */
+    {
+        const unsigned int vfo = gEeprom.RX_VFO;
+        unsigned i;
+        bool moved = false;
+        uint32_t f0;
+
+        gEeprom.ScreenChannel[vfo] = FREQ_CHANNEL_FIRST;
+        gEeprom.FreqChannel[vfo]   = FREQ_CHANNEL_FIRST;
+        gRxVfo->freq_config_RX.Frequency = 14550000u;
+        gRxVfo->StepFrequency            = 2500u;   /* 25 kHz */
+        gScanStateDir                    = SCAN_OFF;
+
+        ACTION_Scan(false);                          /* start */
+        f0 = gRxVfo->freq_config_RX.Frequency;
+        for (i = 0; i < 300u && !moved; i++) {
+            step();
+            moved = (gRxVfo->freq_config_RX.Frequency != f0);
+        }
+        printf("[scan] %s the scan steps the receive frequency (%u -> %u)\n",
+               moved ? "ok  " : "FAIL", (unsigned)f0,
+               (unsigned)gRxVfo->freq_config_RX.Frequency);
+        if (!moved) failures++;
+
+        if (gScanStateDir != SCAN_OFF)
+            ACTION_Scan(false);                      /* stop */
     }
 
     /* The status bar with a charged pack: the icon must show bars, and (with

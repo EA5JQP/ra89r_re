@@ -43,6 +43,7 @@ set(APP_SOURCES
     App/driver/gpio.c
     App/driver/uart.c
     App/driver/systick.c
+    App/driver/scheduler.c
     App/driver/lcd_st7565.c
     App/driver/keypad.c
     App/driver/battery.c
