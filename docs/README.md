@@ -19,6 +19,7 @@ notes and quoted addresses use a shifted coordinate system.
 | [`ra89r_eeprom.md`](ra89r_eeprom.md) | the external SPI NOR flash ("EEPROM"): part and pins, SPI command set, what is actually on the chip, the write-validation test |
 | [`ra89r_lcd.md`](ra89r_lcd.md) | the 128x64 panel: pin map, init sequence, addressing, fonts, port notes |
 | [`ra89r_keypad.md`](ra89r_keypad.md) | the 20-button key matrix / ADC decode and the F4HWN `KEY_Code_e` mapping |
+| [`ra89r_pins.md`](ra89r_pins.md) | the board-wide MCU pin inventory: every GPIO line the stock uses, the free lines (`PC0`–`PC12`, `PD2`, GPIOE), the helper/descriptor model, package caveats |
 | [`ra89r_led.md`](ra89r_led.md) | the status LED (`PA13` red / `PA14` green, active high) and the backlight (`PA5`), including the pin searches that came up empty |
 | [`ra89r_battery.md`](ra89r_battery.md) | the battery sense (ADC channel 9 / `PB1`), and the record of the earlier "companion gauge" dead end — that bus is the BK1080, see below |
 | [`ra89r_bk1080.md`](ra89r_bk1080.md) | the BK1080 FM receiver on `PC14`/`PB2`: the I2C framing, the register map, the init block, the tune, the RSSI/seek path, and the imported K1 FM feature (`app/fm.c`, `ui/fmradio.c`) on branch `driver/fm` |

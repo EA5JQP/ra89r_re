@@ -34,6 +34,9 @@ project, the CPS sources) lives outside the workspace (see "Reference inputs").
   word, and the RSSI/seek path, with the driver on branch `driver/bk1080`.
 - `docs/ra89r_keypad.md` — the 20-button ADC-ladder key matrix and its F4HWN
   `KEY_Code_e` mapping.
+- `docs/ra89r_pins.md` — the board-wide MCU pin inventory: every GPIO line the
+  stock touches and the lines it leaves free (`PC0`–`PC12`, `PD2`, GPIOE), with
+  the helper model and evidence, for picking a pin for a new feature.
 - `docs/ra89r_beeper.md` — the beeper: a DAC tone on `PA4`, played by TIM4 + DMA.
 - `docs/ra89r_led.md` — the status LED (a transmit/receive indicator on MCU `PA13`/`PA14`,
   confirmed on the radio) and the backlight (GPIOA pin 5), with the pin searches
