@@ -116,6 +116,24 @@ enum {
 uint8_t pa_band_pin_mode(void);
 void    pa_set_band_pin_mode(uint8_t mode);
 
+/* Which chip band/path pin a transmission drives ('x').  AUTO is the stock's
+ * rule -- the TX frequency's band (`0x40` VHF / `0x20` UHF, set by
+ * FUN_0801BDE8) -- and the other modes force a single pin so the radio can
+ * settle which one actually enables the PA.  The T/R pin (`0x02`) is always
+ * present. */
+enum {
+    PA_TX_PATH_AUTO = 0,   /* the frequency's band: 0x40 VHF / 0x20 UHF */
+    PA_TX_PATH_VHF,        /* force the 0x40 pin */
+    PA_TX_PATH_UHF,        /* force the 0x20 pin */
+    PA_TX_PATH_BOTH,       /* both band pins */
+    PA_TX_PATH_NONE,       /* neither band pin, T/R only */
+    PA_TX_PATH_MODES
+};
+uint8_t     pa_tx_path_mode(void);
+void        pa_set_tx_path_mode(uint8_t mode);
+const char *pa_tx_path_name(void);
+uint16_t    pa_tx_path_bits(void);   /* the band bits the current mode yields */
+
 /* Chip side, transmit: the band pin (`0x40` VHF / `0x20` UHF) plus the T/R pin
  * (`0x02`), and `0x36 = (power << 8) | PA-CTL | gain` (the K1's
  * `SetupPowerAmplifier`).  `power` is the K1's `TXP_CalculatedSetting` (0..255),

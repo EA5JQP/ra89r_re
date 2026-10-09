@@ -763,7 +763,21 @@ void RADIO_SetupRegisters(bool switchToForeground)
     #else
         Frequency = gRxVfo->pRX->Frequency;
     #endif
-    BK4819_SetFrequency(Frequency);
+
+    /* Port adaptation (see NOTICE): the port owns the transceiver routing
+     * (driver/rx.c, driver/rf_dual.c).  When the selected RX VFO is on the
+     * BK4815, the BK4829 must not be retuned to it or have its receive path
+     * pin cleared.  RADIO_SetupRegisters() runs on every VFO switch
+     * (COMMON_SwitchVFOs -> gFlagReconfigureVfos), so without this the BK4829
+     * is yanked off the other VFO's frequency and the BK4815's path pin is
+     * dropped, and two VFOs on different chips can never stay apart.  The port
+     * tunes both chips from rx_service() -> rf_dual_refresh(). */
+    if (SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) != RF_XCVR_BK4815)
+    {
+        BK4819_SetFrequency(Frequency);
+
+        BK4819_PickRXFilterPathBasedOnFrequency(Frequency);
+    }
 
     // Keep the demodulator in sync when retuning without entering RX audio.
     RADIO_SetModulation(gRxVfo->Modulation);
@@ -772,8 +786,6 @@ void RADIO_SetupRegisters(bool switchToForeground)
         gRxVfo->SquelchOpenRSSIThresh,    gRxVfo->SquelchCloseRSSIThresh,
         gRxVfo->SquelchOpenNoiseThresh,   gRxVfo->SquelchCloseNoiseThresh,
         gRxVfo->SquelchCloseGlitchThresh, gRxVfo->SquelchOpenGlitchThresh);
-
-    BK4819_PickRXFilterPathBasedOnFrequency(Frequency);
 
     // what does this in do ?
     BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, true);

@@ -44,10 +44,17 @@
  */
 #define BK4815_REG_VCO       0x04u
 #define BK4815_REG_TONE      0x22u
+#define BK4815_REG_AF        0x49u   /* AUDIO: volume + bit15 = hard mute */
 #define BK4815_REG_OPCTRL    0x70u
 #define BK4815_REG_FREQ_HI   0x71u
 #define BK4815_REG_FREQ_LO   0x72u
 #define BK4815_REG_CAL       0x7eu
+
+/* Register 0x49 (REG73 in the datasheet): bit 15 is "hard mute" (1 = muted).
+ * The stock's AF switch writes 0x9A02 to mute (`FUN_08015F48`) and 0x1A02 to
+ * unmute (`FUN_0801CCE8`), and its boot config leaves 0x1A02 (unmuted). */
+#define BK4815_AF_ON   0x1a02u   /* hard mute clear */
+#define BK4815_AF_OFF  0x9a02u   /* hard mute set */
 
 /* True when register 0 reads back the BK4815 id. */
 bool bk4815_detect(void);
@@ -120,5 +127,12 @@ void bk4815_set_frequency(uint32_t freq_10hz, bool tx);
 
 /* Write one SELCALL/tone frequency to register 0x22. */
 void bk4815_set_tone(uint32_t tone_hz);
+
+/* The chip's RSSI indicator: register 0x44, bits 6:0. */
+uint16_t bk4815_read_rssi(void);
+
+/* Enable or mute the chip's AF output (register 0x49).  The stock switches this
+ * as the receive audio source when the BK4815 is the selected transceiver. */
+void bk4815_set_af(bool on);
 
 #endif /* DRIVER_BK4815_H */

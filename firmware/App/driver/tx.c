@@ -1,9 +1,11 @@
 #include "driver/tx.h"
 
+#include "driver/audio_path.h"
 #include "driver/bk4815.h"
 #include "driver/bk4819.h"
 #include "driver/led.h"
 #include "driver/pa.h"
+#include "driver/rx.h"
 #include "driver/keyboard.h"
 #include "functions.h"
 #include "misc.h"
@@ -12,6 +14,47 @@
 
 static bool s_active;
 static tx_source_t s_source;
+
+/* The 'w' sweep: one extra stock TX register on top of the K1 chain, cycled
+ * while PTT is held so the radio can settle which one the PA needs. */
+static uint8_t s_variant;
+
+uint8_t tx_variant(void) { return s_variant; }
+
+void tx_variant_next(void) { s_variant = (uint8_t)((s_variant + 1u) % 6u); }
+
+const char *tx_variant_name(void)
+{
+    static const char *const names[] = {
+        "base: the K1 chain as measured",
+        "0x47 = 0x6142 (the stock's Normal AF)",
+        "0x13 = 0x03FF (the squelch ramp max)",
+        "0x36 = 0x8822 (the bench's value)",
+        "0x31 bit 2 cleared",
+        "PC13 high (the stock's T/R line)",
+    };
+
+    return names[s_variant];
+}
+
+/* Apply the current variant to the chip.  Called from tx_start() and from the
+ * console ('w'), so a running transmission can be changed without re-keying. */
+void tx_variant_apply(void)
+{
+    switch (s_variant) {
+        case 1: BK4819_WriteRegister(BK4819_REG_47, 0x6142u); break;
+        case 2: BK4819_WriteRegister(BK4819_REG_13, 0x03FFu); break;
+        case 3: BK4819_WriteRegister(BK4819_REG_36, 0x8822u); break;
+        case 4: {
+            const uint16_t v = BK4819_ReadRegister(BK4819_REG_31);
+
+            BK4819_WriteRegister(BK4819_REG_31, (uint16_t)(v & ~(1u << 2)));
+            break;
+        }
+        case 5: audio_path_drive(1); break;
+        default: break;
+    }
+}
 
 void tx_init(void)
 {
@@ -23,15 +66,27 @@ void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source)
     if (s_active && source == s_source)
         return;
 
-    /* The band state first (PA0/PA1, the BK4815 0x75 band and the RX path),
-     * then the TX band pin -- pa_tx_enable() overwrites 0x33 and sets 0x36 and
-     * the PB14 bias PWM from `power`. */
+    /* The band state first (PA0/PA1, the BK4815 0x75 band and the RX path). */
     pa_select_band(freq_10hz);
-    pa_tx_enable(power);
+    /* Above 134 MHz the BK4815 is part of the transmit path (the stock's
+     * `0x0C = 0x0203`, with the BK4829 as the modulator and PA control).  Put it
+     * on the TX frequency in TX mode (`0x70 = 0xE000`) rather than leaving it on
+     * whatever receive frequency the coordinator last set -- otherwise a
+     * repeater offset or the other VFO leaves it on the wrong channel. */
+    if (pa_band_is_main())
+        bk4815_set_frequency(freq_10hz, true);
     bk4815_write_reg(0x0C, pa_band_is_main() ? 0x0203u : 0xFFFBu);  /* the T/R path */
     BK4819_SetFrequency(freq_10hz);
     BK4819_WriteRegister(BK4819_REG_7D, TX_REG7D_POWER);
     BK4819_PrepareTransmit();               /* 0x37 = 0x9D1F, 0x30 = 0xC1FE */
+    /* The PA enable (`0x36`, PA-CTL + bias + gain), the TX band pin (`0x33`) and
+     * the PB14 bias PWM must be applied **after** `BK4819_PrepareTransmit()`:
+     * its `BK4819_TxOn_Beep()` writes `0x36 = 0`, so enabling the PA before it
+     * leaves the whole transmission unamplified -- the chip's own low-level
+     * carrier only, which a nearby receiver hears but a power meter reads as
+     * nothing.  The validated bench wrote `0x36` after this call for exactly
+     * this reason (docs/ra89r_rfpath.md, "The transmit configuration"). */
+    pa_tx_enable(power);
     BK4819_SetAF(BK4819_AF_MUTE);
 
     if (source == TX_SOURCE_TONE) {
@@ -47,6 +102,11 @@ void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source)
                              (uint16_t)(0x3000u | ((uint16_t)TX_MIC_GAIN << 4)));
     }
 
+    /* The 'w' sweep: one extra stock register on top of the K1 chain.  The
+     * stock's own TX (`FUN_08016228`) sends these and the K1 chain does not, so
+     * this is what settles which one the PA needs. */
+    tx_variant_apply();
+
     led_set(LED_RED);                       /* red = transmit, as the stock shows it */
 
     s_active = true;
@@ -60,6 +120,12 @@ void tx_stop(void)
 
     pa_rx_enable();                         /* 0x33 back, 0x36 = 0, compare 0 */
     bk4815_write_reg(0x0C, pa_band_is_main() ? 0x0A03u : 0xFFFBu);
+    /* A TX above 134 MHz switched the BK4815's operation-control register
+     * (0x70) to E000 in bk4815_set_frequency(..., true).  Restore its RX mode
+     * even when neither VFO is assigned to it: rf_dual_reapply() only retunes
+     * an assigned BK4815, so otherwise the unused part remains in TX mode and
+     * can load the shared RF path after PTT is released. */
+    bk4815_write_reg(0x70u, 0xA000u);
     BK4819_RX_TurnOn();
     BK4819_SetAF(BK4819_AF_MUTE);
     /* Back to receive, so the audio path goes to its ON value (`0x3B20`), not
@@ -71,6 +137,11 @@ void tx_stop(void)
     led_set(LED_OFF);
 
     s_active = false;
+
+    /* tx_start retuned the BK4829 (and, above 134 MHz, the BK4815) to the TX
+     * frequency; ask the coordinator to put both back on their receive
+     * frequencies, which matters on an offset channel. */
+    rf_dual_reapply();
 }
 
 bool tx_active(void) { return s_active; }
@@ -85,6 +156,14 @@ void tx_poll_ptt(void)
 {
     const KEY_Code_t key  = KEYBOARD_GetKey();
     const bool       down = (key == KEY_PTT) || (key == KEY_PTT2);
+
+    /* A console-bench transmission ('T', the chip's own DTMF tone) is not PTT:
+     * it must hold until the console stops it.  Otherwise this poller sees
+     * "PTT not pressed" while tx_active() is true and cancels the bench TX on
+     * the very next loop pass -- the radio emits only a brief burst, which is
+     * exactly what a power meter reads as nothing. */
+    if (!down && tx_active() && tx_source() == TX_SOURCE_TONE)
+        return;
 
     if (down == tx_active())
         return;

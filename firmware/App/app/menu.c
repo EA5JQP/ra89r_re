@@ -208,6 +208,12 @@ int MENU_GetLimits(uint8_t menu_id, int32_t *pMin, int32_t *pMax)
             *pMax = ARRAY_SIZE(gSubMenu_W_N) - 1;
             break;
 
+        case MENU_RF_A:
+        case MENU_RF_B:
+            //*pMin = 0;
+            *pMax = ARRAY_SIZE(gSubMenu_RF) - 1;
+            break;
+
         case MENU_RESET:
             //*pMin = 0;
             *pMax = ARRAY_SIZE(gSubMenu_RESET) - 1;
@@ -594,6 +600,20 @@ void MENU_AcceptSetting(void)
         case MENU_W_N:
             gTxVfo->CHANNEL_BANDWIDTH = gSubMenuSelection;
             gRequestSaveChannel       = 1;
+            return;
+
+        case MENU_RF_A:
+            /* Each item names its VFO explicitly, independent of which VFO is
+             * selected on the main screen. */
+            SETTINGS_SetVfoTransceiver(0u, gSubMenuSelection == 0u
+                                             ? RF_XCVR_BK4829 : RF_XCVR_BK4815);
+            gRequestSaveSettings = true;
+            return;
+
+        case MENU_RF_B:
+            SETTINGS_SetVfoTransceiver(1u, gSubMenuSelection == 0u
+                                             ? RF_XCVR_BK4829 : RF_XCVR_BK4815);
+            gRequestSaveSettings = true;
             return;
 
 #ifndef ENABLE_FEAT_F4HWN
@@ -1142,6 +1162,14 @@ void MENU_ShowCurrentSetting(void)
 
         case MENU_W_N:
             gSubMenuSelection = gTxVfo->CHANNEL_BANDWIDTH;
+            break;
+
+        case MENU_RF_A:
+            gSubMenuSelection = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4815 ? 1u : 0u;
+            break;
+
+        case MENU_RF_B:
+            gSubMenuSelection = SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815 ? 1u : 0u;
             break;
 
 #ifndef ENABLE_FEAT_F4HWN

@@ -33,6 +33,42 @@ static uint8_t s_chip_path = PA_CHIP_PATH_AUTO;
 /* The 'B' experiment: the MCU band pin PA0.  The stock's value is LOW. */
 static uint8_t s_band_pin_mode = PA_BAND_PIN_STOCK;
 
+/* The 'x' experiment: which chip band/path pin a transmission drives.  AUTO is
+ * the stock's rule (the TX frequency's band). */
+static uint8_t s_tx_path = PA_TX_PATH_AUTO;
+
+uint8_t pa_tx_path_mode(void) { return s_tx_path; }
+
+void pa_set_tx_path_mode(uint8_t mode)
+{
+    if (mode < PA_TX_PATH_MODES)
+        s_tx_path = mode;
+}
+
+uint16_t pa_tx_path_bits(void)
+{
+    switch (s_tx_path) {
+        case PA_TX_PATH_VHF:  return PA_REG33_BAND_VHF;
+        case PA_TX_PATH_UHF:  return PA_REG33_BAND_UHF;
+        case PA_TX_PATH_BOTH: return PA_REG33_BAND_VHF | PA_REG33_BAND_UHF;
+        case PA_TX_PATH_NONE: return 0u;
+        default:              return s_uhf ? PA_REG33_BAND_UHF : PA_REG33_BAND_VHF;
+    }
+}
+
+const char *pa_tx_path_name(void)
+{
+    static const char *const names[PA_TX_PATH_MODES] = {
+        "auto: the frequency's band (default)",
+        "force VHF pin 0x40",
+        "force UHF pin 0x20",
+        "both band pins",
+        "neither band pin (T/R only)",
+    };
+
+    return names[s_tx_path];
+}
+
 bool pa_is_uhf(uint32_t freq_10hz)  { return freq_10hz >= PA_BAND_SPLIT; }
 bool pa_is_main(uint32_t freq_10hz) { return freq_10hz > PA_MAIN_SPLIT; }
 
@@ -144,7 +180,13 @@ void pa_init(void)
     TIM1->PSC = 0;
     TIM1->ARR = PA_PWM_ARR;
     TIM1->CCMR1 = (TIM1->CCMR1 & ~0xFF00u) | 0x6000u;   /* OC2M = PWM mode 1 */
-    TIM1->CCER &= ~0x30u;                                /* CC2P/CC2NE = 0  */
+    /* PB14 is **TIM1_CH2N** (datasheet AF4), the *complementary* output, so the
+     * channel is enabled with **CC2NE** (CCER bit 6, 0x40) -- which is exactly
+     * what the stock does: `FUN_08012f26` -> `FUN_0801de58(TIM1, 4, 4)` sets
+     * CC2NE, then BDTR MOE and CR1 CEN.  CC2E (bit 4) does not drive PB14 at
+     * all.  The old `CCER &= ~0x30u` cleared the enable bit and the PWM never
+     * reached the PA (PB14 sits on a pull-down, so the bias stayed 0). */
+    TIM1->CCER = (TIM1->CCER & ~(0x20u | 0x80u)) | 0x40u;  /* CC2NE on, CC2P/CC2NP clear */
     TIM1->CCR2 = 0;
     TIM1->BDTR |= 0x8000u;                               /* MOE: TIM1 needs it */
     TIM1->EGR = 1u;                                      /* UG */
@@ -168,10 +210,11 @@ void pa_tx_enable(uint8_t power)
 {
     /* The stock's transmit word: the band pin (`0x40` VHF / `0x20` UHF, set by
      * FUN_0801BDE8 from the TX band index) plus the T/R pin (`0x02`, set by
-     * FUN_08013A70(2)) -- 0x42 / 0x22. */
+     * FUN_08013A70(2)) -- 0x42 / 0x22.  The band pin comes from the 'x'
+     * override (`pa_tx_path_bits()`), AUTO being the frequency's band. */
     const uint8_t gain = s_uhf ? PA_REG36_GAIN_UHF : PA_REG36_GAIN_VHF;
 
-    s_reg33 = (uint16_t)((s_uhf ? PA_REG33_BAND_UHF : PA_REG33_BAND_VHF) | PA_REG33_TR);
+    s_reg33 = (uint16_t)(pa_tx_path_bits() | PA_REG33_TR);
     BK4819_WriteRegister(BK4819_REG_33, s_reg33);
 
     /* The K1's BK4819_SetupPowerAmplifier: 0x36 = (bias << 8) | PA-CTL | gain.

@@ -535,6 +535,27 @@ path the pin selects.  (That the `0x40`/`0x20` pin physically routes the bias to
 the selected PA is the reading that fits one PWM + one path pin set together and
 the two-PA board; a scope on `PB14` plus the two chip pins would confirm it.)
 
+**Validated on the radio (2026-10).**  The PWM output was dead from the start:
+`pa_init()` wrote `TIM1->CCER &= ~0x30u` (meaning to clear `CC2P`/`CC2NE`), but
+`TIM_CCER_CC2E` is bit 4 (`0x10`), so the mask cleared the enable itself.  The
+enable that actually drives `PB14` is **`CC2NE`** (bit 6, `0x40`): `PB14` is
+`TIM1_CH2N` (datasheet AF4), the complementary output, and the stock enables it
+in `FUN_08012f26` -> `FUN_0801de58(TIM1, 4, 4)` before `BDTR |= MOE` and
+`CR1 |= CEN`.  With `CC2NE` set the PA biases and a power meter reads ~7.5 W
+(the `Y` duty sweep moves it).  The K1 chain's `0x30 = 0xC1FE` is also required:
+the stock's `0x30 = 0xBFF1` (sendable with the `w` sweep) clears the PA-gain bit
+and drops the output to nothing.
+
+**The duty arithmetic matches the stock.**  The stock's compare is
+`FUN_08018A88(value)` = `(value * ARR) / 0xFF`, clamped by `FUN_080167B4` to
+`ARR/2`; the multiplier `*DAT_08018AA0` is the same RAM cell (`0x20000012`) that
+`FUN_08016C58` stores the period in, so it is the ARR.  The port's `pa_power()`
+is the same: `value * PA_PWM_ARR / 255`, clamped to `PA_PWM_ARR / 2`.  With
+ARR = 1439 the maximum compare is **719** on both sides.  The one difference is
+the *frequency*: the stock's APB2 is 144 MHz, so ARR 1439 gives 100 kHz, while
+this port runs at 48 MHz and the same ARR gives ~33 kHz -- the duty ratio is
+identical, the PWM is just slower.
+
 ### The transmit configuration, validated on the radio
 
 Voice was heard on a second receiver with exactly these values, so this is the
@@ -555,9 +576,33 @@ list the port keeps:
 | BK4815 `0x0C` | `0x0203` | the T/R path's other-branch state |
 | `0x38`/`0x39` | the channel in 10 Hz | |
 
+**Order matters for `0x36`.**  `BK4819_PrepareTransmit()` ends in
+`BK4819_TxOn_Beep()`, which writes `0x36 = 0`; the PA enable must therefore be
+written **after** it, or the whole transmission is unamplified (the chip's own
+low-level carrier only, audible to a nearby receiver but not to a power meter).
+The bench did this correctly; the extraction into `driver/tx.c` reversed the two
+and shipped the PA disabled.  `tools/test_rf.c` now asserts the final `0x36`
+write (`test_tx_order`), and `driver/tx.c` calls `pa_tx_enable()` after
+`BK4819_PrepareTransmit()`.
+
+**The PA enable is `0x36`, and the band pin is not the gate (measured).**  With
+the order fixed, a power meter (Surecom SW-102) reads a real carrier on the
+antenna.  The chip band/path pin (`0x33` bit `0x40` VHF / `0x20` UHF) does *not*
+gate it: swept with the console `x` override, the meter reads power with either
+band pin, with both, and with neither (T/R only) -- so `0x33`'s band bits select
+the front-end path, they do not enable the PA.  `0x50` reads back `0x0000` on
+this part, so its value cannot be confirmed by read-back (it is still written).
+
 The chip's own DTMF tone (`BK4819_EnterDTMF_TX` -> `EnableTXLink` ->
 `BK4819_PlayDTMF`) is audible on a second receiver through the same path, and is
 what settled the tone-versus-carrier question when the microphone was silent.
+
+When TX above 134 MHz ends, `bk4815_set_frequency(..., true)` has left the
+BK4815 operation-control register `0x70 = 0xE000` (TX).  `tx_stop()` must restore
+`0x70 = 0xA000` (RX) even if no VFO is assigned to the BK4815: in that case the
+coordinator correctly skips retuning it, which otherwise left the unused
+transceiver parked in TX mode after PTT release.  The register-order host test
+checks this TX cleanup as well as the PA-enable ordering.
 
 With that in place the CPU-side TX picture is complete: chip registers
 (`0x30`/`0x37`/`0x47`/`0x50`/`0x7D`), the band/path pins (`PA1 = 1, PA0 = 0`, chip
@@ -594,9 +639,11 @@ sweep, and the provisional table is where its results go.
    rails — the decompiler is now available, but these paths have not been walked.
 3. The per-channel/per-band routines that feed the T/R registers.  The TX power
    setting is answered above: `0x7D`, computed by `FUN_0801BAF4` from the codeplug
-   level, plus the `PB14`/TIM1_CH2 bias PWM (`value * ARR / 255`); still open is
-   which of `0x7D`, `0x30` bit 3 and the PWM actually enables/limits the PA on the
-   radio.
+   level, plus the `PB14`/TIM1_CH2 bias PWM (`value * ARR / 255`).  Measured: the
+   **PA enable is `0x36`** (PA-CTL bit 7), and it must be written *after*
+   `BK4819_PrepareTransmit()` (which zeroes it); the `0x33` band pin is a path
+   select, not the gate.  Still open is the *level*: which duty the codeplug asks
+   for, and the microphone gain (`FUN_0801C3A8`, `0x40`) and AF level (`0x48`/`0x6C`).
 4. `FUN_0800A968`, `FUN_0801533C` and `FUN_0801537C` (the `FUN_08007F90` callees)
    are not identified.
 5. Which string `FUN_08015D14(0x0b)` actually renders, and what the byte at

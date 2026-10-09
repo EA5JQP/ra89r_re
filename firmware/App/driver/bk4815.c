@@ -213,3 +213,14 @@ void bk4815_set_tone(uint32_t tone_hz)
 {
     bk4815_write_reg(BK4815_REG_TONE, bk4815_tone_word(tone_hz));
 }
+
+uint16_t bk4815_read_rssi(void)
+{
+    /* Register 0x44: RSSI in bits 6:0 (bk4815.h's register table). */
+    return (uint16_t)(bk4815_read_reg(0x44u) & 0x7fu);
+}
+
+void bk4815_set_af(bool on)
+{
+    bk4815_write_reg(BK4815_REG_AF, on ? BK4815_AF_ON : BK4815_AF_OFF);
+}

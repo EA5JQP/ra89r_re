@@ -11,9 +11,11 @@
  * AGENTS.md, "Offline checks", has the current command.
  */
 #include <stdio.h>
+#include <string.h>
 
 #include "app/app.h"
 #include "app/fm.h"
+#include "app/menu.h"
 #include "audio.h"
 #include "driver/backlight.h"
 #include "driver/bk4819.h"
@@ -190,6 +192,51 @@ int main(void)
     render("SysInf page 2 (BATTERY)");
     gIsInSubMenu           = false;
 
+    /* One item per VFO, each setting its own VFO explicitly. */
+    {
+        bool found_a = false, found_b = false;
+        unsigned mi;
+        bool labels_ok = strcmp(gSubMenu_RF[0], "4829") == 0 &&
+                         strcmp(gSubMenu_RF[1], "4815") == 0;
+        for (mi = 0; MenuList[mi].name[0] != '\0'; mi++) {
+            if (MenuList[mi].menu_id == MENU_RF_A) found_a = true;
+            if (MenuList[mi].menu_id == MENU_RF_B) found_b = true;
+        }
+        printf("[dual] %s TrVfoA and TrVfoB menu items exist\n",
+               (found_a && found_b) ? "ok  " : "FAIL");
+        if (!(found_a && found_b)) failures++;
+        printf("[dual] %s transceiver menu offers only 4829 and 4815\n",
+               labels_ok ? "ok  " : "FAIL");
+        if (!labels_ok) failures++;
+    }
+    gIsInSubMenu = true;
+    gMenuCursor  = UI_MENU_GetViewPos(MENU_RF_A);
+    gSubMenuSelection = 0;              /* BK4829 */
+    MENU_AcceptSetting();
+    gMenuCursor  = UI_MENU_GetViewPos(MENU_RF_B);
+    gSubMenuSelection = 1;              /* BK4815 */
+    MENU_AcceptSetting();
+    {
+        bool ok = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829 &&
+                  SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815;
+        printf("[dual] %s RF A=4829 RF B=4815 (A=%u B=%u)\n",
+               ok ? "ok  " : "FAIL", (unsigned)SETTINGS_GetVfoTransceiver(0u),
+               (unsigned)SETTINGS_GetVfoTransceiver(1u));
+        if (!ok) failures++;
+    }
+    gIsInSubMenu = false;
+    {
+        bool ok;
+
+        /* An older settings blob stored AUTO as 0 in the reserved bytes;
+         * with Auto removed, that legacy value must default to BK4829. */
+        SETTINGS_SetVfoTransceiver(0u, (rf_xcvr_t)0);
+        ok = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829;
+        printf("[dual] %s legacy/invalid RF value 0 resolves to BK4829\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+    }
+
     /* The status bar with a charged pack: the icon must show bars, and (with
      * gSetting_battery_text = 2) the percentage beside it. */
     UI_DisplayStatus();
@@ -217,6 +264,26 @@ int main(void)
                saved, loaded, (unsigned)gEeprom.SQUELCH_LEVEL,
                (unsigned)gEeprom.CHANNEL_DISPLAY_MODE);
         printf("[storage] write test=%d\n", storage_write_test(&bad));
+
+        /* The per-VFO RF transceiver choice is part of the port's extra blob,
+         * so it needs the full save path (SETTINGS_SaveSettings), not the bare
+         * gEeprom save, and a reload to read it back. */
+        {
+            bool ok;
+
+            SETTINGS_SetVfoTransceiver(0u, RF_XCVR_BK4829);
+            SETTINGS_SetVfoTransceiver(1u, RF_XCVR_BK4815);
+            SETTINGS_SaveSettings();
+            SETTINGS_SetVfoTransceiver(0u, RF_XCVR_BK4829);
+            SETTINGS_SetVfoTransceiver(1u, RF_XCVR_BK4829);
+            SETTINGS_InitEEPROM();
+            ok = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829 &&
+                 SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815;
+            printf("[dual] %s per-VFO transceiver survives save/load (A=%u B=%u)\n",
+                   ok ? "ok  " : "FAIL", (unsigned)SETTINGS_GetVfoTransceiver(0u),
+                   (unsigned)SETTINGS_GetVfoTransceiver(1u));
+            if (!ok) failures++;
+        }
 
         /* Put the state back so the screens below render as before (a plain
          * SettingsDefaults() would clear the VFO pointers those screens

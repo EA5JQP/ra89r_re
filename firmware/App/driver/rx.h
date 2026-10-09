@@ -31,6 +31,13 @@
 #define RX_SQUELCH_OPEN_MARK   0xCFu
 #define RX_SQUELCH_CLOSE_MARK  0xB4u
 
+/* Squelch marks on the BK4815's register 0x44 (7-bit RSSI), used when the
+ * selected VFO is on the BK4815.  Measured on the radio with console 'J' at
+ * 145.500 with the receive RF-path pin 4 set (as the stock's BK4815 branch
+ * does): idle ~20, a keyed carrier ~47, so the marks sit between. */
+#define RX4815_SQUELCH_OPEN_MARK   0x1Eu   /* 30 */
+#define RX4815_SQUELCH_CLOSE_MARK  0x18u   /* 24 */
+
 /* Bring the RF up and start receiving on `freq_10hz` (10 Hz units, the same
  * convention as the codeplug).  Idempotent enough to be called again to retune. */
 void rx_init(uint32_t freq_10hz);
@@ -48,6 +55,15 @@ void rx_poll(void);
 bool rx_squelch_open(void);
 uint16_t rx_rssi(void);
 
+/* True when the receive audio is currently taken from the BK4815 (the selected
+ * RX VFO's transceiver), for the console diagnostic. */
+bool rx_audio_is_4815(void);
+
+/* Diagnostic (console 'A'): force the BK4815's AF open, bypassing the squelch,
+ * so the audio path can be judged separately from the squelch. */
+void rx_force_bk4815_af(bool on);
+bool rx_force_bk4815_af_on(void);
+
 /* The frequency the BK4829 was last tuned to, in 10 Hz units, for diagnostics. */
 uint32_t rx_rx_frequency(void);
 
@@ -60,5 +76,16 @@ void rx_service(void);
  * active, rx_service() is a no-op so the BK4829 cannot drive the shared
  * amplifier node out from under the BK1080. */
 void rx_set_fm_active(bool active);
+
+/* Keep both transceivers configured for their VFOs (rf_dual.c): resolve the
+ * per-VFO transceiver setting, pick the primary/secondary roles and tune the
+ * BK4815 secondary when one is active.  Cheap and safe to call from the receive
+ * service; it only retunes when the role or the secondary frequency changes. */
+void rf_dual_refresh(void);
+
+/* Force the next rf_dual_refresh() to re-apply both transceivers' receive
+ * frequencies.  Called after a transmit, which retunes the chips to the TX
+ * frequency. */
+void rf_dual_reapply(void);
 
 #endif /* DRIVER_RX_H */

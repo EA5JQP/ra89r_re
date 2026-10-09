@@ -24,6 +24,7 @@
 #include "driver/bk4829.h"
 #include "driver/audio_path.h"
 #include "driver/led.h"
+#include "driver/rf_dual.h"
 #include "driver/rx.h"
 #include "functions.h"
 #include "driver/clock.h"
@@ -241,7 +242,10 @@ static void print_help(void)
               "          j BK1080 FM: init, id probe, tune 100.0 MHz, read status\n"
               "          a FM audio route: toggle the BK4829 AF mute (0x47) under FM\n"
               "          n BK4815 (PB13): boot config, tune 145.7500, read meters\n"
-              "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
+              "          J dual-RF live state: roles, audio source, BK4815 regs/meters\n"
+              "          A force the BK4815 AF open (bypass squelch) to test audio\n"
+              "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
+              "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
               "          5 save settings   6 flash write test   e flash dump\n"
@@ -657,6 +661,66 @@ static void bk4815_bench(void)
     }
 }
 
+/* The console's 'J': the live dual-RF state, without re-tuning anything.  Shows
+ * the per-VFO transceiver choice, the resolved roles, which chip supplies the
+ * receive audio, the squelch state, and the BK4815's own registers/meters, then
+ * samples its 0x44 RSSI.  This is the one that reflects what the running radio
+ * is actually doing. */
+static void dual_rf_diag(void)
+{
+    const rf_xcvr_t a = SETTINGS_GetVfoTransceiver(0u);
+    const rf_xcvr_t b = SETTINGS_GetVfoTransceiver(1u);
+    const bool      a_4829 = (a != RF_XCVR_BK4815);
+    const bool      b_4829 = (b != RF_XCVR_BK4815);
+    const rf_dual_roles_t roles = rf_dual_choose(a_4829, b_4829, gEeprom.RX_VFO);
+    const uint16_t  af  = bk4815_read_reg(BK4815_REG_AF);
+    unsigned        k;
+
+    uart_puts("\ndual RF\n");
+    uart_printf("  TrVfoA=%u TrVfoB=%u   TX_VFO=%u RX_VFO=%u\n",
+                (unsigned)a, (unsigned)b,
+                (unsigned)gEeprom.TX_VFO, (unsigned)gEeprom.RX_VFO);
+    uart_printf("  tuned: BK4829<-VFO %d   BK4815<-VFO %d   bk4815_active=%d\n",
+                (int)roles.bk4829_vfo, (int)roles.bk4815_vfo,
+                (int)rf_dual_bk4815_active());
+    uart_printf("  audio source: %s   squelch %s   rssi 0x%03X\n",
+                rx_audio_is_4815() ? "BK4815" : "BK4829",
+                rx_squelch_open() ? "OPEN" : "closed", (unsigned)rx_rssi());
+    uart_printf("  VFO A %u.%05u MHz   VFO B %u.%05u MHz\n",
+                (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency / 100000u),
+                (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency % 100000u),
+                (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency / 100000u),
+                (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency % 100000u));
+    uart_printf("  TX power: TX_VFO OUTPUT_POWER=%u  TXP_CalculatedSetting=%u  (menu 'Power'; USER global=%u)\n",
+                (unsigned)gTxVfo->OUTPUT_POWER, (unsigned)gTxVfo->TXP_CalculatedSetting,
+                (unsigned)gSetting_set_pwr);
+    uart_printf("  BK4829: 0x38=0x%04X 0x39=0x%04X -> %u.%05u MHz  0x47(AF)=0x%04X 0x67(RSSI)=0x%04X 0x33=0x%04X\n",
+                (unsigned)BK4819_ReadRegister(0x38), (unsigned)BK4819_ReadRegister(0x39),
+                (unsigned)((((uint32_t)BK4819_ReadRegister(0x39) << 16) | BK4819_ReadRegister(0x38)) / 100000u),
+                (unsigned)((((uint32_t)BK4819_ReadRegister(0x39) << 16) | BK4819_ReadRegister(0x38)) % 100000u),
+                (unsigned)BK4819_ReadRegister(0x47), (unsigned)BK4819_ReadRegister(0x67),
+                (unsigned)BK4819_ReadRegister(0x33));
+    uart_printf("  BK4815: 0x04=0x%04X 0x0C=0x%04X 0x49=0x%04X (AF %s)\n",
+                (unsigned)bk4815_read_reg(0x04), (unsigned)bk4815_read_reg(0x0C),
+                (unsigned)af, (af & 0x8000u) ? "MUTED" : "unmuted");
+    uart_printf("          0x70=0x%04X 0x71=0x%04X 0x72=0x%04X 0x75=0x%04X\n",
+                (unsigned)bk4815_read_reg(0x70), (unsigned)bk4815_read_reg(0x71),
+                (unsigned)bk4815_read_reg(0x72), (unsigned)bk4815_read_reg(0x75));
+    uart_printf("          0x43(SNR)=0x%04X 0x44(RSSI)=0x%04X -> %u  (marks open 0x%02X close 0x%02X)\n",
+                (unsigned)bk4815_read_reg(0x43), (unsigned)bk4815_read_reg(0x44),
+                (unsigned)(bk4815_read_reg(0x44) & 0x7fu),
+                (unsigned)RX4815_SQUELCH_OPEN_MARK, (unsigned)RX4815_SQUELCH_CLOSE_MARK);
+    uart_puts("  sampling 0x44 for ~5 s -- key a signal on the selected VFO now:\n");
+
+    for (k = 0; k < 25u; k++) {
+        const uint16_t r = bk4815_read_reg(0x44);
+
+        uart_printf("    0x44 = 0x%04X   RSSI %u\n", (unsigned)r, (unsigned)(r & 0x7fu));
+        for (volatile unsigned d = 0; d < 400000u; d++)
+            ;
+    }
+}
+
 /* ------------------------------------------- cable-free audio-path bench
  *
  * The Kenwood jack cuts the internal speaker while the programming cable is
@@ -817,6 +881,54 @@ static void bench_screen(unsigned duty, uint16_t r50, uint16_t r36, uint16_t r7d
 
     ui_bench(title, detail);
     lcd_refresh();
+}
+
+/* Console 'T': what the transmit path is actually doing, without keying it.
+ * Transmit is PTT's (or the bench's) -- this is the read-out: the PA bias PWM
+ * compare in force, the power the app would ask for, the chip band/path pin
+ * ('x' changes it), and the TX registers (`0x43` is the TX filter, `0x75` the
+ * BK4815's band, `0x0C` its T/R state). */
+static void tx_diag(void)
+{
+    const bool active = tx_active();
+
+    uart_puts("\nTX path\n");
+    if (active) {
+        const uint32_t f = gTxVfo->freq_config_TX.Frequency;
+
+        uart_printf("  transmitting (%s)  %u.%05u MHz  band %s  TX_VFO %u\n",
+                    tx_source() == TX_SOURCE_TONE ? "tone" : "mic",
+                    (unsigned)(f / 100000u), (unsigned)(f % 100000u),
+                    pa_band_is_uhf() ? "UHF" : "VHF", (unsigned)gEeprom.TX_VFO);
+    } else {
+        uart_puts("  idle -- hold PTT to transmit\n");
+    }
+
+    uart_printf("  PA duty (PB14/TIM1_CH2 compare): %u of %u   (pa_last_compare %u)\n",
+                (unsigned)TIM1->CCR2, (unsigned)PA_PWM_ARR,
+                (unsigned)pa_last_compare());
+    {
+        uint32_t want = ((uint32_t)gTxVfo->TXP_CalculatedSetting * PA_PWM_ARR) / 255u;
+
+        if (want > PA_PWM_MAX_DUTY)
+            want = PA_PWM_MAX_DUTY;                 /* the stock's ARR/2 clamp */
+        uart_printf("  power: OUTPUT_POWER=%u  TXP_CalculatedSetting=%u -> compare %u\n",
+                    (unsigned)gTxVfo->OUTPUT_POWER,
+                    (unsigned)gTxVfo->TXP_CalculatedSetting, (unsigned)want);
+    }
+    uart_printf("  TX path pin: mode %u -- %s -> band bits 0x%04X\n",
+                (unsigned)pa_tx_path_mode(), pa_tx_path_name(),
+                (unsigned)pa_tx_path_bits());
+    uart_printf("  BK4829: 0x33=0x%04X 0x36=0x%04X 0x7D=0x%04X 0x30=0x%04X 0x50=0x%04X\n",
+                (unsigned)BK4819_ReadRegister(0x33), (unsigned)BK4819_ReadRegister(0x36),
+                (unsigned)BK4819_ReadRegister(0x7D), (unsigned)BK4819_ReadRegister(0x30),
+                (unsigned)BK4819_ReadRegister(0x50));
+    uart_printf("  TX filter 0x43=0x%04X   BK4815 band 0x75=0x%04X  T/R 0x0C=0x%04X\n",
+                (unsigned)BK4819_ReadRegister(0x43),
+                (unsigned)bk4815_read_reg(0x75), (unsigned)bk4815_read_reg(0x0C));
+    uart_printf("  TX variant ('w'): %u -- %s\n",
+                (unsigned)tx_variant(), tx_variant_name());
+    uart_puts("  'x' cycles the TX path pin, 'Y' steps the PA duty, 'w' the TX variant\n");
 }
 
 static void radio_tx(int on, tx_source_t source)
@@ -1268,6 +1380,9 @@ int main(void)
      * welcome).  Before the settings load BACKLIGHT_TIME is 0 and the K1 driver
      * reads that as "off"; before radio_boot the beep is silent. */
     radio_boot();
+    /* Apply the per-VFO transceiver choice: if a VFO selects the BK4815, tune
+     * it for that VFO alongside the BK4829 primary. */
+    rf_dual_refresh();
     BACKLIGHT_TurnOn();
     uart_printf("backlight: %s, brightness index %u of %u, %u/32 duty\n",
                 BACKLIGHT_IsOn() ? "on" : "off",
@@ -1605,6 +1720,14 @@ int main(void)
                             (unsigned)BK4819_ReadRegister(BK4819_REG_47));
                 break;
             }
+            case 'J':
+                dual_rf_diag();
+                break;
+            case 'A':
+                rx_force_bk4815_af(!rx_force_bk4815_af_on());
+                uart_printf("\nBK4815 AF forced %s\n",
+                            rx_force_bk4815_af_on() ? "ON (squelch bypassed)" : "off");
+                break;
             case 'n':
                 bk4815_bench();
                 break;
@@ -1698,12 +1821,37 @@ int main(void)
                 audio_path_toggle();
                 break;
             case 'T':
-                radio_tx(!tx_on, TX_SOURCE_TONE);
+                tx_diag();
+                break;
+            case 'x': {
+                /* The TX band/path pin (`0x33` bit 0x40 VHF / 0x20 UHF).  AUTO
+                 * is the stock's rule; the other modes force one so the radio
+                 * can settle which pin the PA actually needs. */
+                uint8_t mode = (uint8_t)((pa_tx_path_mode() + 1u) % PA_TX_PATH_MODES);
+
+                pa_set_tx_path_mode(mode);
+                uart_printf("\nTX path pin: mode %u -- %s (band bits 0x%04X)\n",
+                            (unsigned)mode, pa_tx_path_name(),
+                            (unsigned)pa_tx_path_bits());
+                uart_puts("  hold PTT and press 'T' to read 0x33 and the PA duty back\n");
+                break;
+            }
+            case 'w':
+                /* The stock TX register sweep: the K1 chain omits these, so step
+                 * them while PTT is held and watch the power meter. */
+                tx_variant_next();
+                uart_printf("\nTX variant: %u -- %s\n",
+                            (unsigned)tx_variant(), tx_variant_name());
+                if (tx_active())
+                    tx_variant_apply();
+                uart_puts("  hold PTT, press 'w' to step, and watch the meter\n");
                 break;
             case 'Y': {
                 /* The PA bias PWM compare: the one transmit level worth tuning
-                 * by ear or S-meter now that the amplifier works. */
-                static const uint16_t steps[] = { 64, 96, 128, 160, 192, 224 };
+                 * by ear or S-meter now that the amplifier works.  The steps
+                 * run past the stock's clamp (ARR/2 = 719, the 50 % the app's
+                 * own power setting reaches) so the full range can be swept. */
+                static const uint16_t steps[] = { 64, 128, 192, 256, 384, 512, 719 };
                 static unsigned i;
 
                 pa_duty = steps[i];
