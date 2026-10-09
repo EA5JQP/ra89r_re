@@ -273,6 +273,18 @@ int main(void)
             ACTION_Scan(false);                      /* stop */
     }
 
+    /* A found signal must resume the scan, not end it.  SCAN_RESUME_MODE == 0 is
+     * the K1's "stop scanning" mode (app/app.c's end-of-RX path calls
+     * CHFRSCANNER_Stop()); the port's default must not be it, or the first
+     * carrier ends the scan.  The K1's own fallback is 14. */
+    {
+        const bool ok = gEeprom.SCAN_RESUME_MODE != 0;
+
+        printf("[scan] %s the default ScnRev resumes, not stops (SCAN_RESUME_MODE=%u)\n",
+               ok ? "ok  " : "FAIL", (unsigned)gEeprom.SCAN_RESUME_MODE);
+        if (!ok) failures++;
+    }
+
     /* The status bar with a charged pack: the icon must show bars, and (with
      * gSetting_battery_text = 2) the percentage beside it. */
     UI_DisplayStatus();

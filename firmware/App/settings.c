@@ -197,7 +197,12 @@ void SettingsDefaults(void)
     gEeprom.CROSS_BAND_RX_TX = CROSS_BAND_OFF;
     gEeprom.BATTERY_SAVE = 0;
     gEeprom.BACKLIGHT_TIME = 4;
-    gEeprom.SCAN_RESUME_MODE = 0;
+    /* The scan-resume delay (`ScnRev`).  0 is the K1's "stop scanning" mode:
+     * app/app.c's end-of-RX path calls CHFRSCANNER_Stop() when it is 0, so the
+     * first carrier ends the scan entirely.  The K1's own fallback when its
+     * EEPROM byte is absent is 14 (a 3.5 s pause), which is what a fresh radio
+     * should resume with. */
+    gEeprom.SCAN_RESUME_MODE = 14;
     /* The K1's scan-list selector is 1..24 plus "all" (`MR_CHANNELS_LIST + 1`,
      * and 0 means "no list at all").  Every channel this port reports is in
      * "all" (the stock has one channel set, not 24 lists), so 0 would make
