@@ -163,7 +163,6 @@ enum
     MENU_BATTYP,
     MENU_RF_A,
     MENU_RF_B,
-    MENU_SC_TR_MODE,
 #if defined(ENABLE_FEAT_F4HWN) && defined(ENABLE_FEAT_F4HWN_LOGO_SAV)
     MENU_SET_SAV
 #endif
@@ -207,7 +206,6 @@ extern const char* const            gSubMenu_TXP[8];
 extern const char* const            gSubMenu_SFT_D[3];
 extern const char* const            gSubMenu_W_N[2];
 extern const char* const            gSubMenu_RF[2];
-extern const char* const            gSubMenu_SCAN_TRANSCEIVER[2];
 extern const char* const            gSubMenu_OFF_ON[2];
 extern const char*                  gSubMenu_NA;
 extern const char* const            gSubMenu_TOT[11];
@@ -228,7 +226,7 @@ extern const char* const            gSubMenu_D_RSP[4];
     extern const char* const        gSubMenu_SET_LCK[];
     extern const char* const        gSubMenu_SET_MET[2];
     #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
-        extern const char* const    gSubMenu_SET_SCN[2];
+        extern const char* const    gSubMenu_SET_SCN[3];
     #endif
     #ifdef ENABLE_FEAT_F4HWN_NARROWER
         extern const char* const    gSubMenu_SET_NFM[2];

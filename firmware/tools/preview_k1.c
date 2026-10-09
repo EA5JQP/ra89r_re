@@ -244,66 +244,14 @@ int main(void)
         if (!ok) failures++;
     }
 
-    /* ScTrMd: the scan-transceiver mode ("Default" or "Both").  The row must
-     * exist, offer exactly those two labels, map the menu index to the mode,
-     * and re-open showing the selected value. */
+    /* SetScn is the single scan mode: NORMAL / FAST / FAST BOTH.  The row must
+     * offer exactly those labels, map the menu index to the mode, re-open
+     * showing the value, and persist. */
     {
         bool found = false;
         unsigned mi;
         uint8_t id = 0;
-
-        for (mi = 0; MenuList[mi].name[0] != '\0'; mi++) {
-            if (strcmp(MenuList[mi].name, "ScTrMd") == 0) {
-                found = true;
-                id = MenuList[mi].menu_id;
-            }
-        }
-        printf("[scan] %s the ScTrMd menu row exists\n", found ? "ok  " : "FAIL");
-        if (!found) failures++;
-
-        if (found) {
-            const bool labels_ok =
-                strcmp(gSubMenu_SCAN_TRANSCEIVER[0], "Default") == 0 &&
-                strcmp(gSubMenu_SCAN_TRANSCEIVER[1], "Both") == 0;
-            printf("[scan] %s ScTrMd offers only Default and Both\n",
-                   labels_ok ? "ok  " : "FAIL");
-            if (!labels_ok) failures++;
-
-            gIsInSubMenu = true;
-            gMenuCursor  = UI_MENU_GetViewPos(id);
-
-            gSubMenuSelection = 1;              /* Both */
-            MENU_AcceptSetting();
-            {
-                const bool ok = SETTINGS_GetScanTransceiverMode() == SCAN_TRANSCEIVER_BOTH;
-                printf("[scan] %s ScTrMd index 1 selects Both\n", ok ? "ok  " : "FAIL");
-                if (!ok) failures++;
-            }
-            MENU_ShowCurrentSetting();
-            {
-                const bool ok = gSubMenuSelection == 1u;
-                printf("[scan] %s reopening ScTrMd shows Both\n", ok ? "ok  " : "FAIL");
-                if (!ok) failures++;
-            }
-
-            gSubMenuSelection = 0;              /* Default */
-            MENU_AcceptSetting();
-            {
-                const bool ok = SETTINGS_GetScanTransceiverMode() == SCAN_TRANSCEIVER_DEFAULT;
-                printf("[scan] %s ScTrMd index 0 selects Default\n", ok ? "ok  " : "FAIL");
-                if (!ok) failures++;
-            }
-            gIsInSubMenu = false;
-        }
-    }
-
-    /* SetScn is the K1's fast-scan switch ("NORMAL"/"FAST"); the benchmark
-     * relies on being able to set it. */
-    {
-        bool found = false;
-        unsigned mi;
-        uint8_t id = 0;
-        const bool before = gSetting_set_scn;
+        const uint8_t before = gSetting_set_scn;
 
         for (mi = 0; MenuList[mi].name[0] != '\0'; mi++) {
             if (strcmp(MenuList[mi].name, "SetScn") == 0) {
@@ -315,22 +263,41 @@ int main(void)
         if (!found) failures++;
 
         if (found) {
-            bool ok;
+            const bool labels_ok =
+                strcmp(gSubMenu_SET_SCN[0], "NORMAL") == 0 &&
+                strcmp(gSubMenu_SET_SCN[1], "FAST") == 0 &&
+                strcmp(gSubMenu_SET_SCN[2], "FAST BOTH") == 0;
+            printf("[scan] %s SetScn offers NORMAL, FAST and FAST BOTH\n",
+                   labels_ok ? "ok  " : "FAIL");
+            if (!labels_ok) failures++;
 
             gIsInSubMenu = true;
             gMenuCursor  = UI_MENU_GetViewPos(id);
 
-            gSubMenuSelection = 1;              /* FAST */
-            MENU_AcceptSetting();
-            ok = gSetting_set_scn == 1;
-            printf("[scan] %s SetScn index 1 selects FAST\n", ok ? "ok  " : "FAIL");
-            if (!ok) failures++;
+            {
+                const uint8_t want[3] = { SCAN_MODE_NORMAL, SCAN_MODE_FAST,
+                                          SCAN_MODE_FAST_BOTH };
+                unsigned k;
+                bool ok = true;
 
-            gSubMenuSelection = 0;              /* NORMAL */
-            MENU_AcceptSetting();
-            ok = gSetting_set_scn == 0;
-            printf("[scan] %s SetScn index 0 selects NORMAL\n", ok ? "ok  " : "FAIL");
-            if (!ok) failures++;
+                for (k = 0; k < 3u; k++) {
+                    gSubMenuSelection = (uint8_t)k;
+                    MENU_AcceptSetting();
+                    if (gSetting_set_scn != want[k])
+                        ok = false;
+                }
+                printf("[scan] %s SetScn index 0/1/2 selects NORMAL/FAST/FAST BOTH\n",
+                       ok ? "ok  " : "FAIL");
+                if (!ok) failures++;
+            }
+
+            gSubMenuSelection = SCAN_MODE_FAST_BOTH;
+            MENU_ShowCurrentSetting();
+            {
+                const bool ok = gSubMenuSelection == SCAN_MODE_FAST_BOTH;
+                printf("[scan] %s reopening SetScn shows its mode\n", ok ? "ok  " : "FAIL");
+                if (!ok) failures++;
+            }
 
             gSetting_set_scn = before;
             gIsInSubMenu = false;
@@ -382,15 +349,15 @@ int main(void)
     /* The dual-scan benchmark must arm one shared range, run a mode, report a
      * probe count over elapsed time, and restore the saved scan mode. */
     {
-        const scan_transceiver_mode_t before = SETTINGS_GetScanTransceiverMode();
+        const uint8_t before = gSetting_set_scn;
         const uint32_t saved_start = gScanRangeStart;
         scan_bench_result_t res;
         unsigned i;
         bool ok;
 
-        SETTINGS_SetScanTransceiverMode(SCAN_TRANSCEIVER_DEFAULT);
+        gSetting_set_scn = SCAN_MODE_FAST;
         CHFRSCANNER_BenchmarkArm(14500000u, 14600000u);
-        CHFRSCANNER_BenchmarkRun((uint8_t)SCAN_TRANSCEIVER_BOTH);
+        CHFRSCANNER_BenchmarkRun(1u);          /* FAST BOTH */
         for (i = 0; i < 30u; i++)
             step();
         CHFRSCANNER_BenchmarkFinish(&res);
@@ -402,7 +369,7 @@ int main(void)
                (unsigned)res.elapsed_ms, (unsigned)res.probes_per_second);
         if (!ok) failures++;
 
-        ok = SETTINGS_GetScanTransceiverMode() == before;
+        ok = gSetting_set_scn == before;
         printf("[scan] %s benchmark restores the saved scan mode\n", ok ? "ok  " : "FAIL");
         if (!ok) failures++;
 
@@ -602,23 +569,23 @@ int main(void)
             if (!ok) failures++;
         }
 
-        /* The scan-transceiver mode is in the same extra blob. */
+        /* The scan mode (the SetScn menu) lives in the same extra blob. */
         {
             bool ok;
 
-            SETTINGS_SetScanTransceiverMode(SCAN_TRANSCEIVER_BOTH);
+            gSetting_set_scn = SCAN_MODE_FAST_BOTH;
             SETTINGS_SaveSettings();
-            SETTINGS_SetScanTransceiverMode(SCAN_TRANSCEIVER_DEFAULT);
+            gSetting_set_scn = SCAN_MODE_NORMAL;
             SETTINGS_InitEEPROM();
-            ok = SETTINGS_GetScanTransceiverMode() == SCAN_TRANSCEIVER_BOTH;
-            printf("[scan] %s ScTrMd Both survives save/load\n", ok ? "ok  " : "FAIL");
+            ok = gSetting_set_scn == SCAN_MODE_FAST_BOTH;
+            printf("[scan] %s SetScn FAST BOTH survives save/load\n", ok ? "ok  " : "FAIL");
             if (!ok) failures++;
         }
 
-        /* An older (version 2) extra blob: its fields must survive and the new
-         * scan mode must fall back to Default.  Build one from a real save by
-         * truncating the current v3 payload to the v2 prefix and stamping the
-         * old version. */
+        /* An older (version 2) extra blob has no scan byte: its fields must
+         * survive and the scan mode must fall back to FAST.  Build one from a
+         * real save by truncating the current payload to the v2 prefix and
+         * stamping the old version. */
         {
             uint8_t v2[STORAGE_EXTRA_MAX];
             uint8_t snap_before[7 * 2 * 16];
@@ -632,7 +599,7 @@ int main(void)
 
             SETTINGS_SetVfoTransceiver(0u, RF_XCVR_BK4829);
             SETTINGS_SetVfoTransceiver(1u, RF_XCVR_BK4815);
-            SETTINGS_SetScanTransceiverMode(SCAN_TRANSCEIVER_BOTH);
+            gSetting_set_scn = SCAN_MODE_FAST_BOTH;
 #ifdef ENABLE_FMRADIO
             gFM_Channels[0] = 0x1234u;
             gFM_Channels[1] = 0x4321u;
@@ -661,20 +628,50 @@ int main(void)
             codeplug_freq_snapshot(snap_after, sizeof snap_after);
 
             ok = ok &&
-                 SETTINGS_GetScanTransceiverMode() == SCAN_TRANSCEIVER_DEFAULT &&
+                 gSetting_set_scn == SCAN_MODE_FAST &&
                  SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829 &&
                  SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815 &&
                  memcmp(snap_before, snap_after, sizeof snap_before) == 0;
 #ifdef ENABLE_FMRADIO
             ok = ok && gFM_Channels[0] == 0x1234u && gFM_Channels[1] == 0x4321u;
 #endif
-            printf("[scan] %s a v2 extra blob migrates (fields kept, ScTrMd Default)\n",
+            printf("[scan] %s a v2 extra blob migrates (fields kept, scan mode FAST)\n",
                    ok ? "ok  " : "FAIL");
             if (!ok) failures++;
+        }
 
-            /* Leave a current-version blob behind for the checks that follow. */
-            SETTINGS_SetScanTransceiverMode(SCAN_TRANSCEIVER_DEFAULT);
+        /* A version-3 blob carried the old ScTrMd byte (0 Default, 1 Both) in
+         * the same slot; version 3 must map it to FAST / FAST BOTH. */
+        {
+            uint8_t v3[STORAGE_EXTRA_MAX];
+            const uint32_t v2_size = 4u + 2u + 2u + (7u * 2u * 16u)
+#ifdef ENABLE_FMRADIO
+                                     + (FM_CHANNELS_MAX * 2u)
+#endif
+                                     ;
+            const uint32_t v4_size = v2_size + 4u;   /* the mode byte + padding */
+            bool ok = true;
+
+            gSetting_set_scn = SCAN_MODE_NORMAL;
             SETTINGS_SaveSettings();
+
+            memset(v3, 0, sizeof v3);
+            if (!storage_get_extra(v3, v4_size))
+                ok = false;
+            v3[4] = 3u;          /* version 3 */
+            v3[5] = 0u;
+            v3[v2_size] = 1u;    /* old ScTrMd = Both */
+            if (!storage_set_extra(v3, v4_size))
+                ok = false;
+            if (!storage_save_settings())
+                ok = false;
+
+            gSetting_set_scn = SCAN_MODE_NORMAL;
+            SETTINGS_InitEEPROM();
+            ok = ok && gSetting_set_scn == SCAN_MODE_FAST_BOTH;
+            printf("[scan] %s a v3 extra blob maps old ScTrMd Both to FAST BOTH\n",
+                   ok ? "ok  " : "FAIL");
+            if (!ok) failures++;
         }
 
         /* Put the state back so the screens below render as before (a plain

@@ -52,7 +52,7 @@ typedef struct {
 } scan_bench_result_t;
 
 void CHFRSCANNER_BenchmarkArm(uint32_t start_10hz, uint32_t stop_10hz);
-void CHFRSCANNER_BenchmarkRun(uint8_t mode);          /* scan_transceiver_mode_t */
+void CHFRSCANNER_BenchmarkRun(uint8_t mode);          /* 0 = FAST, 1 = FAST BOTH */
 void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out);
 void CHFRSCANNER_BenchmarkDisarm(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER

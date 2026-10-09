@@ -662,6 +662,16 @@ static void bk4815_bench(void)
     }
 }
 
+/* The scan mode the SetScn menu shows (scan_mode_t). */
+static const char *scan_mode_name(void)
+{
+    switch (gSetting_set_scn) {
+        case SCAN_MODE_FAST_BOTH: return "FAST BOTH";
+        case SCAN_MODE_FAST:      return "FAST";
+        default:                  return "NORMAL";
+    }
+}
+
 /* A controlled Default-vs-Both range-scan comparison, run by the console's 'J'.
  * It forces the selected RX VFO onto a frequency channel over one shared range,
  * then runs each mode for SCAN_BENCH_MS, pumping the same app loop the main loop
@@ -675,7 +685,7 @@ static void scan_rate_benchmark(void)
     const uint32_t step  = gRxVfo->StepFrequency ? gRxVfo->StepFrequency : 2500u;
     const uint32_t start = FREQUENCY_RoundToStep(gRxVfo->freq_config_RX.Frequency, (uint16_t)step);
     const uint32_t stop  = start + 100000u;   /* 1 MHz, in 10 Hz units */
-    static const char *const names[2] = { "Default", "Both   " };
+    static const char *const names[2] = { "FAST     ", "FAST BOTH" };
     scan_bench_result_t res[2];
     unsigned m;
 
@@ -684,10 +694,8 @@ static void scan_rate_benchmark(void)
                 (unsigned)(stop / 100000u), (unsigned)(stop % 100000u),
                 (unsigned)(step / 100u), (unsigned)((step % 100u) / 10u),
                 (unsigned)SCAN_BENCH_MS);
-    uart_printf("  ScnRev=%u  SetScn=%s  ScTrMd(menu)=%s\n",
-                (unsigned)gEeprom.SCAN_RESUME_MODE,
-                gSetting_set_scn ? "FAST" : "NORMAL",
-                SETTINGS_GetScanTransceiverMode() == SCAN_TRANSCEIVER_BOTH ? "Both" : "Default");
+    uart_printf("  ScnRev=%u  SetScn=%s\n",
+                (unsigned)gEeprom.SCAN_RESUME_MODE, scan_mode_name());
 
     CHFRSCANNER_BenchmarkArm(start, stop);
     for (m = 0; m < 2u; m++) {
@@ -709,12 +717,12 @@ static void scan_rate_benchmark(void)
     if (res[0].probes_per_second > 0u) {
         const uint32_t pct = (res[1].probes_per_second * 100u) / res[0].probes_per_second;
 
-        uart_printf("  Both/Default = %u.%02ux  (%s)\n",
+        uart_printf("  FAST BOTH / FAST = %u.%02ux  (%s)\n",
                     (unsigned)(pct / 100u), (unsigned)(pct % 100u),
                     (res[1].probes_per_second > res[0].probes_per_second)
                         ? "faster" : "not faster");
     } else {
-        uart_puts("  Default measured 0 probes/s: check squelch and the range\n");
+        uart_puts("  FAST measured 0 probes/s: check squelch and the range\n");
     }
 }
 
@@ -738,13 +746,11 @@ static void dual_rf_diag(void)
                 (unsigned)a, (unsigned)b,
                 (unsigned)gEeprom.TX_VFO, (unsigned)gEeprom.RX_VFO);
     {
-        const scan_transceiver_mode_t sm = SETTINGS_GetScanTransceiverMode();
         scan_dual_stats_t st;
 
         CHFRSCANNER_GetScanDualStats(&st);
-        uart_printf("  ScTrMd=%u (%s)   scan-source override=%u   scan dual active=%d hit=%u\n",
-                    (unsigned)sm,
-                    (sm == SCAN_TRANSCEIVER_BOTH) ? "Both" : "Default",
+        uart_printf("  SetScn=%s (%u)   scan-source override=%u   scan dual active=%d hit=%u\n",
+                    scan_mode_name(), (unsigned)gSetting_set_scn,
                     (unsigned)rx_scan_source_override(),
                     (int)st.active, (unsigned)st.selected_hit);
         uart_printf("  scan probes=%u elapsed=%u ms rate=%u candidates/s\n",

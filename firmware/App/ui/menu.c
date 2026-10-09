@@ -70,7 +70,6 @@ const t_menu_item MenuList[] =
     {"Mode",        MENU_AM            }, // was "AM"
     {"TrVfoA",      MENU_RF_A          }, // VFO A's RF transceiver
     {"TrVfoB",      MENU_RF_B          }, // VFO B's RF transceiver
-    {"ScTrMd",      MENU_SC_TR_MODE    }, // scan transceiver mode (Default/Both)
 #ifdef ENABLE_FEAT_F4HWN
     {"TXLock",      MENU_TX_LOCK       }, 
 #endif
@@ -234,13 +233,6 @@ const char* const gSubMenu_RF[] =
 {
     "4829",
     "4815"
-};
-
-/* How the scanner uses the transceivers (scan_transceiver_mode_t). */
-const char* const gSubMenu_SCAN_TRANSCEIVER[] =
-{
-    "Default",
-    "Both"
 };
 
 const char* const gSubMenu_OFF_ON[] =
@@ -447,7 +439,8 @@ const char* const gSubMenu_SCRAMBLER[] =
         const char* const gSubMenu_SET_SCN[] =
         {
             "NORMAL",
-            "FAST"
+            "FAST",
+            "FAST BOTH"
         };
     #endif
 
@@ -1069,10 +1062,6 @@ void UI_DisplayMenu(void)
         case MENU_RF_A:
         case MENU_RF_B:
             strcpy(String, gSubMenu_RF[gSubMenuSelection]);
-            break;
-
-        case MENU_SC_TR_MODE:
-            strcpy(String, gSubMenu_SCAN_TRANSCEIVER[gSubMenuSelection]);
             break;
 
 #ifndef ENABLE_FEAT_F4HWN

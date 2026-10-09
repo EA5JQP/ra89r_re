@@ -2,28 +2,34 @@
 
 The K1/F4HWN frequency-range and scan-list scanners are imported almost
 unchanged (`app/scanner.c`, `app/chFrScanner.c`, `ui/scanner.c`).  What the port
-adds on top is a **dual-transceiver** mode: a global menu item `ScTrMd` that lets
-the scanner use both RF parts (BK4829 and BK4815) as interleaved lanes instead of
+adds on top is a **dual-transceiver** mode: the `SetScn` menu item can run the
+scanner over both RF parts (BK4829 and BK4815) as interleaved lanes instead of
 only the selected VFO's chip.
 
 This file records what is implemented, what is a software fact, and what is still
 only radio-validated work.  Nothing here is called *verified* until it has run on
 the radio.
 
-## The two modes
+## The scan modes
 
-`ScTrMd` is persisted in the port's own settings blob (not the read-only stock
-codeplug) as `scan_transceiver_mode_t` (`settings.h`):
+The single `SetScn` menu item (`MENU_SET_SCN`) is the scan mode, persisted in the
+port's own settings blob (not the read-only stock codeplug) as `scan_mode_t`
+(`settings.h`).  It is the K1's `gSetting_set_scn` at run time:
 
 | value | label | meaning |
 |---|---|---|
-| 0 | `Default` | one lane, on the chip the selected RX VFO is assigned to (`TrVfoA`/`TrVfoB`) |
-| 1 | `Both` | the candidate stream is split across the BK4829 and the BK4815 |
+| 0 | `NORMAL` | step scan, no fast precheck |
+| 1 | `FAST` | single-lane fast-RSSI precheck on the selected VFO's chip |
+| 2 | `FAST BOTH` | the candidate stream is split across the BK4829 and the BK4815 |
 
-The extra blob moved from version 2 to version 3 to carry the new byte.  A v2
-blob still loads: its fields (the per-VFO RF choices, the frequency-channel
-snapshot, the FM memories) are migrated and the new mode defaults to `Default`
-(`settings.c` keeps the v2 layout explicit).  `preview_k1.c` checks the migration.
+`ScanFastEnabled()` is `!= NORMAL`; `ScanBothEnabled()` is `== FAST BOTH`.
+
+The value is persisted, which the K1's `gSetting_set_scn` was not.  The extra blob
+is now version 4 and reuses the byte the old `ScTrMd` used.  Migration: a v3 blob
+held the old `ScTrMd` byte (0 `Default` → `FAST`, 1 `Both` → `FAST BOTH`); a v2
+blob has no byte and loads as `FAST`; an invalid v4 value clamps to `FAST`
+(`settings.c` keeps the older layouts explicit).  `preview_k1.c` checks both
+migrations.
 
 ## The candidate stream and the lane rule
 
@@ -48,10 +54,10 @@ monotonically increasing `ordinal`.  The list cursor was factored out into
 * **Hit arbitration** (`scan_dual_choose_hit`): if both lanes hit in one batch the
   lower original ordinal wins, so scan order is preserved.
 
-## What the "Both" path actually does (software, not yet radio-validated)
+## What the "FAST BOTH" path actually does (software, not yet radio-validated)
 
-`ScanBothFastPrecheck()` in `app/chFrScanner.c` runs when `ScTrMd == Both` and
-the fast scan is enabled:
+`ScanBothFastPrecheck()` in `app/chFrScanner.c` runs when `SetScn = FAST BOTH`
+and the fast scan is enabled:
 
 1. pull a full fast batch per lane (`2 * SCAN_FAST_PRECHECK_STEPS` candidates)
    from the shared cursor;
@@ -74,11 +80,11 @@ exactly as validated; the spec allows this as the conservative fallback.  This i
 a deliberate limit, not an accident, and is the first thing to revisit if the
 list is to be split too.
 
-**`Default` and a BK4815-assigned VFO:** the K1 fast precheck is hardcoded to the
-BK4829, so with `TrVfoA/B = 4815` the `Default` precheck probes the BK4829 while
-the full verify path follows the BK4815 assignment.  Making the single-lane
-precheck lane-aware is future work; `Both` is the mode that uses both chips
-explicitly.
+**Single-lane `FAST` and a BK4815-assigned VFO:** the K1 fast precheck is
+hardcoded to the BK4829, so with `TrVfoA/B = 4815` the single-lane precheck
+probes the BK4829 while the full verify path follows the BK4815 assignment.
+Making the precheck lane-aware is future work; `FAST BOTH` is the mode that uses
+both chips explicitly.
 
 ## The RX scan-source override
 
@@ -94,8 +100,8 @@ resume and stop (checked in `preview_k1.c`).
 
 ## Diagnostics
 
-Console `J` (`App/main.c`) now also prints `ScTrMd`, the override state, the
-`scan_dual_stats_t` snapshot (per-lane candidate counts, last frequency, last
+Console `J` (`App/main.c`) now also prints the `SetScn` mode, the override state,
+the `scan_dual_stats_t` snapshot (per-lane candidate counts, last frequency, last
 RSSI, selected hit), and **total RSSI probes / elapsed wall time / probes per
 second** via `CHFRSCANNER_GetScanDualStats()`.  Rate timing starts when a new
 scan starts and includes scheduler cadence and serialized bus work; the count
@@ -110,29 +116,29 @@ it.
 
 Console `J` runs the comparison for you.  It arms one shared range on the selected
 RX VFO (forcing it to a frequency channel, so the range path is taken), then runs
-`Default` and `Both` for 3 s each, pumping the app loop, and prints
+`FAST` and `FAST BOTH` for 3 s each, pumping the app loop, and prints
 `probes / elapsed ms / probes/s` for both plus the `Both/Default` ratio.  It
 restores the saved VFO, range and scan mode before returning, so the manual
 `F+5` range arming and menu switching are not needed.
 
-`J` also prints `ScTrMd`, `SetScn` and `ScnRev` so the menu wiring is visible; it
+`J` also prints the `SetScn` mode and `ScnRev` so the menu wiring is visible; it
 uses a 1 MHz span at the VFO's step, starting at the current frequency.  Run it
-over a quiet range, repeat a few times, and treat `Both` as useful only if its
-measured rate is repeatably higher.  If it cannot beat `Default`, the serialized
-probe design should be revisited or `Both` removed.
+over a quiet range, repeat a few times, and treat `FAST BOTH` as useful only if
+its measured rate is repeatably higher.  If it cannot beat `FAST`, the serialized
+probe design should be revisited or `FAST BOTH` removed.
 
 ### Measured on the radio
 
 `J`, 446.005..447.005 MHz, 10 kHz step, 3 s per mode, quiet band, two runs:
 
-| run | Default | Both | ratio |
+| run | FAST | FAST BOTH | ratio |
 |---|---|---|---|
 | 1 | 300 probes / 3083 ms = 97/s | 516 / 3070 ms = 168/s | 1.73x |
 | 2 | 300 / 3083 = 97/s | 516 / 3070 = 168/s | 1.72x |
 
-So `Both` is about **1.7x**, not 2x: the BK4829's per-candidate tune/settle is
-the expensive half (~10 ms each), and the BK4815 lane adds cheaper probes.  The
-sweep was above the 134 MHz split, so both lanes were used.  Note that `Both`
+So `FAST BOTH` is about **1.7x**, not 2x: the BK4829's per-candidate tune/settle
+is the expensive half (~10 ms each), and the BK4815 lane adds cheaper probes.  The
+sweep was above the 134 MHz split, so both lanes were used.  Note that `FAST BOTH`
 also probes one batch per lane per interval, so some of the gain is simply "more
 candidates per scheduler batch"; below 134 MHz all candidates stay on the BK4829
 and both lanes' batches still run, which should still be faster but is not yet
@@ -144,7 +150,7 @@ Everything below is **unvalidated**: it builds, the host tests pass, and the
 Default scan behaviour is unchanged in the host preview, but none of the dual-RF
 behaviour has run on the radio.
 
-* Candidate throughput in `Both` vs `Default` (probes per second) for a range
+* Candidate throughput in `FAST BOTH` vs `FAST` (probes per second) for a range
   sweep; the scan-list path is currently the documented single-lane fallback
   and is not expected to speed up.
 * Whether the shared band/path switch lets a lane's RSSI reading be meaningful

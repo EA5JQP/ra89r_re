@@ -65,7 +65,7 @@ bool scan_dual_rssi_candidate(scan_lane_state_t *lane, uint16_t rssi,
 typedef struct {
     scan_lane_state_t lanes[2];
     uint32_t          next_ordinal;
-    uint8_t           mode;          /* scan_transceiver_mode_t */
+    uint8_t           mode;          /* scan_mode_t */
     bool              active;
     scan_lane_chip_t  selected_hit;
 } scan_dual_state_t;

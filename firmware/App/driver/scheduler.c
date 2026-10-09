@@ -86,7 +86,8 @@ void scheduler_tick_10ms(void)
     {
         static uint16_t stall;
 
-        if (gSetting_set_scn && gScanStateDir != SCAN_OFF &&
+        if (gSetting_set_scn != (uint8_t)SCAN_MODE_NORMAL &&
+            gScanStateDir != SCAN_OFF &&
             gScanPauseDelayIn_10ms == 0 && !gScheduleScanListen &&
             !g_SquelchLost &&
             gCurrentFunction != FUNCTION_RECEIVE &&

@@ -214,11 +214,6 @@ int MENU_GetLimits(uint8_t menu_id, int32_t *pMin, int32_t *pMax)
             *pMax = ARRAY_SIZE(gSubMenu_RF) - 1;
             break;
 
-        case MENU_SC_TR_MODE:
-            //*pMin = 0;
-            *pMax = ARRAY_SIZE(gSubMenu_SCAN_TRANSCEIVER) - 1;
-            break;
-
         case MENU_RESET:
             //*pMin = 0;
             *pMax = ARRAY_SIZE(gSubMenu_RESET) - 1;
@@ -621,13 +616,6 @@ void MENU_AcceptSetting(void)
             gRequestSaveSettings = true;
             return;
 
-        case MENU_SC_TR_MODE:
-            SETTINGS_SetScanTransceiverMode(gSubMenuSelection == 1u
-                                                ? SCAN_TRANSCEIVER_BOTH
-                                                : SCAN_TRANSCEIVER_DEFAULT);
-            gRequestSaveSettings = true;
-            return;
-
 #ifndef ENABLE_FEAT_F4HWN
         case MENU_SCR:
             gTxVfo->SCRAMBLING_TYPE = gSubMenuSelection;
@@ -1019,7 +1007,8 @@ void MENU_AcceptSetting(void)
             break;
         #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
         case MENU_SET_SCN:
-            gSetting_set_scn = gSubMenuSelection;
+            gSetting_set_scn = (uint8_t)gSubMenuSelection;
+            gRequestSaveSettings = true;
             break;
         #endif
         #ifdef ENABLE_FEAT_F4HWN_AUDIO
@@ -1182,10 +1171,6 @@ void MENU_ShowCurrentSetting(void)
 
         case MENU_RF_B:
             gSubMenuSelection = SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815 ? 1u : 0u;
-            break;
-
-        case MENU_SC_TR_MODE:
-            gSubMenuSelection = SETTINGS_GetScanTransceiverMode() == SCAN_TRANSCEIVER_BOTH ? 1u : 0u;
             break;
 
 #ifndef ENABLE_FEAT_F4HWN

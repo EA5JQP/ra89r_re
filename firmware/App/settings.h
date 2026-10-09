@@ -381,15 +381,11 @@ typedef enum {
 rf_xcvr_t SETTINGS_GetVfoTransceiver(uint8_t vfo);
 void      SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr);
 
-/* How the scanner uses the two RF transceivers.  DEFAULT follows the selected
- * RX VFO's own chip (TrVfoA/TrVfoB); BOTH runs both chips as interleaved scan
- * lanes.  Stored in the port's own settings blob; an absent or invalid value
- * resolves to DEFAULT. */
+/* The scanner's mode, shown as the SetScn menu item and persisted in the port's
+ * settings blob.  gSetting_set_scn (misc.c) holds this value at run time. */
 typedef enum {
-    SCAN_TRANSCEIVER_DEFAULT = 0,
-    SCAN_TRANSCEIVER_BOTH = 1
-} scan_transceiver_mode_t;
-
-scan_transceiver_mode_t SETTINGS_GetScanTransceiverMode(void);
-void                    SETTINGS_SetScanTransceiverMode(scan_transceiver_mode_t mode);
+    SCAN_MODE_NORMAL    = 0,   /* step scan, no fast precheck */
+    SCAN_MODE_FAST      = 1,   /* single-lane fast RSSI precheck */
+    SCAN_MODE_FAST_BOTH = 2    /* both transceivers as interleaved scan lanes */
+} scan_mode_t;
 #endif

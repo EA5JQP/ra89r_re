@@ -83,7 +83,7 @@ static void ScanBothReset(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 static bool ScanFastEnabled(void)
 {
-    return gSetting_set_scn;
+    return gSetting_set_scn != (uint8_t)SCAN_MODE_NORMAL;
 }
 #endif
 
@@ -764,13 +764,13 @@ static uint32_t          scanBothPrevFrequency;
 static bool ScanBothEnabled(void)
 {
     return ScanFastEnabled() &&
-           SETTINGS_GetScanTransceiverMode() == SCAN_TRANSCEIVER_BOTH;
+           gSetting_set_scn == (uint8_t)SCAN_MODE_FAST_BOTH;
 }
 
 static void ScanBothReset(void)
 {
     scan_dual_reset(&scanBothState);
-    scanBothState.mode   = (uint8_t)SCAN_TRANSCEIVER_BOTH;
+    scanBothState.mode   = (uint8_t)SCAN_MODE_FAST_BOTH;
     scanBothState.active = true;
     scanBothLastBand     = 0xFFu;
     scanBothPrevFrequency = 0;
@@ -900,7 +900,7 @@ bool CHFRSCANNER_GetScanDualStats(scan_dual_stats_t *out)
         return false;
 
     scan_dual_get_stats(&scanBothState, out);
-    out->mode   = (uint8_t)SETTINGS_GetScanTransceiverMode();
+    out->mode   = gSetting_set_scn;
     out->active = scanBothState.active && ScanBothEnabled() && gScanStateDir != SCAN_OFF;
     scan_candidate_rate_snapshot(&scanCandidateRate, systick_millis(), &out->rate);
     return out->active;
@@ -948,7 +948,7 @@ void CHFRSCANNER_BenchmarkArm(uint32_t start_10hz, uint32_t stop_10hz)
     scanBench.tx_freq      = gRxVfo->freq_config_TX.Frequency;
     scanBench.range_start  = gScanRangeStart;
     scanBench.range_stop   = gScanRangeStop;
-    scanBench.mode         = (uint8_t)SETTINGS_GetScanTransceiverMode();
+    scanBench.mode         = gSetting_set_scn;
 
     /* Frequency mode, so Start() arms the range instead of the memory cursor. */
     gRxVfo->Band              = (uint16_t)FREQUENCY_GetBand(start_10hz);
@@ -966,9 +966,7 @@ void CHFRSCANNER_BenchmarkRun(uint8_t mode)
     if (!scanBench.armed)
         return;
 
-    SETTINGS_SetScanTransceiverMode(mode == (uint8_t)SCAN_TRANSCEIVER_BOTH
-                                        ? SCAN_TRANSCEIVER_BOTH
-                                        : SCAN_TRANSCEIVER_DEFAULT);
+    gSetting_set_scn = mode ? (uint8_t)SCAN_MODE_FAST_BOTH : (uint8_t)SCAN_MODE_FAST;
     CHFRSCANNER_Start(true, SCAN_FWD);
 }
 
@@ -1002,7 +1000,7 @@ void CHFRSCANNER_BenchmarkDisarm(void)
     gRxVfo->freq_config_TX.Frequency = scanBench.tx_freq;
     gScanRangeStart = scanBench.range_start;
     gScanRangeStop  = scanBench.range_stop;
-    SETTINGS_SetScanTransceiverMode((scan_transceiver_mode_t)scanBench.mode);
+    gSetting_set_scn = scanBench.mode;
     RADIO_ConfigureChannel(rx, VFO_CONFIGURE_RELOAD);
     scanBench.armed = false;
 }
