@@ -280,6 +280,9 @@ static void CHFRSCANNER_AbortActiveReception(void)
 #define SCAN_FAST4815_RSSI_MARGIN    4
 #define SCAN_FAST4815_SQUELCH_MARGIN 2
 #define SCAN_FAST4815_WEAK_MARGIN    2
+/* The BK4815's 7-bit RSSI is scaled into the BK4829's 9-bit range (127*4 ~ 508)
+ * when both lanes feed the one sparkline series. */
+#define SCAN_FAST4815_RSSI_SCALE     4
 #define SCAN_FAST_RECHECK_DELAY_US 350
 #define SCAN_FAST_FINE_STEP_LIMIT   250
 #define SCAN_FAST_FINE_REFINE_SPAN 1000
@@ -843,6 +846,15 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
                                                      : SCAN_FAST_WEAK_MARGIN;
 
         scan_candidate_rate_add(&scanCandidateRate, 1u);
+
+#ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
+        /* Feed the graph from both lanes.  The BK4829 reports 9-bit RSSI (0x67)
+         * and the BK4815 7-bit (0x44), so the BK4815 value is scaled into the
+         * same range; otherwise the series would sawtooth as lanes alternate. */
+        ScanRssiSparklinePush(is_4815
+                                  ? (uint16_t)(rssi * SCAN_FAST4815_RSSI_SCALE)
+                                  : rssi);
+#endif
 
         /* A range wrap (forward and lower, or backward and higher) is a new
          * pass: re-warm both lanes' floors, as the Default precheck does. */

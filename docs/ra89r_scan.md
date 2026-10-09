@@ -74,6 +74,14 @@ The RF path is **shared**: the band/path is switched before a lane's sample
 time-multiplexed, not simultaneous.  No wall-clock speed-up is claimed until it
 is measured on the radio.
 
+Both lanes feed the RSSI sparkline: the BK4829's 9-bit `0x67` value as-is and the
+BK4815's 7-bit `0x44` value scaled ×4 into the same range, so the graph works in
+`FAST BOTH` and a spike means the same thing on either lane.  The BK4815 has its
+own meters (`0x44` RSSI, `0x43` SNR) — the stock uses them for its >134 MHz
+signal detect (`FUN_08005218`, `docs/ra89r_bk4815.md`) — but no documented glitch
+indicator, so its lane uses a fixed settle delay instead of the BK4829's glitch
+wait.
+
 **Scan-list scope:** only the frequency range is interleaved for now.  The list
 keeps the K1's single-lane fast precheck so its priority/rotation behaviour stays
 exactly as validated; the spec allows this as the conservative fallback.  This is

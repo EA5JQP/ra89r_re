@@ -360,6 +360,15 @@ int main(void)
         CHFRSCANNER_BenchmarkRun(1u);          /* FAST BOTH */
         for (i = 0; i < 30u; i++)
             step();
+
+        /* While the dual-lane scan is running it must feed the RSSI sparkline
+         * too, so the graph works in FAST BOTH (not only single-lane FAST). */
+        {
+            const bool ok = CHFRSCANNER_HasScanRssiSparkline();
+            printf("[scan] %s FAST BOTH feeds the RSSI sparkline\n", ok ? "ok  " : "FAIL");
+            if (!ok) failures++;
+        }
+
         CHFRSCANNER_BenchmarkFinish(&res);
         CHFRSCANNER_BenchmarkDisarm();
 
