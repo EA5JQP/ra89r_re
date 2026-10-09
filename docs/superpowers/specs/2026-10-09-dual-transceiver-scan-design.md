@@ -1,7 +1,6 @@
 # RA89R dual-transceiver scan design
 
-**Status:** Proposed design; awaiting user review. No dual-scan implementation is
-authorized by this document yet.
+**Status:** Design approved by the user; implementation plan is awaiting review.
 
 ## Goal
 
