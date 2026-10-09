@@ -853,6 +853,19 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
     return SCAN_FAST_QUIET_BATCH;
 }
 #endif /* ENABLE_SCAN_RANGES */
+
+/* Diagnostics (console 'J'): the dual-lane snapshot.  `active` is only true
+ * while a Both scan is actually running. */
+bool CHFRSCANNER_GetScanDualStats(scan_dual_stats_t *out)
+{
+    if (out == 0)
+        return false;
+
+    scan_dual_get_stats(&scanBothState, out);
+    out->mode   = (uint8_t)SETTINGS_GetScanTransceiverMode();
+    out->active = scanBothState.active && ScanBothEnabled() && gScanStateDir != SCAN_OFF;
+    return out->active;
+}
 #endif /* ENABLE_FEAT_F4HWN_SCAN_FASTER */
 
 #if defined(ENABLE_FEAT_F4HWN_RESUME_STATE) || defined(ENABLE_SCAN_RANGES)

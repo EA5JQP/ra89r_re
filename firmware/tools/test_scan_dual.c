@@ -136,6 +136,38 @@ int main(void)
               "NULL selected is safe");
     }
 
+    /* The diagnostics snapshot mirrors the lane state. */
+    {
+        scan_dual_state_t st;
+        scan_dual_stats_t stats;
+
+        scan_dual_reset(&st);
+        st.active = true;
+        st.mode   = 1u;
+        st.lanes[0].candidates          = 6u;
+        st.lanes[0].last_frequency_10hz = 14500000u;
+        st.lanes[0].last_rssi           = 40u;
+        st.lanes[1].candidates          = 5u;
+        st.lanes[1].last_frequency_10hz = 14600000u;
+        st.lanes[1].last_rssi           = 12u;
+        st.selected_hit                 = SCAN_LANE_BK4815;
+
+        scan_dual_get_stats(&st, &stats);
+        check(stats.active && stats.mode == 1u, "stats: active and mode");
+        check(stats.candidates[0] == 6u && stats.candidates[1] == 5u,
+              "stats: per-lane candidate counts");
+        check(stats.last_frequency_10hz[0] == 14500000u &&
+              stats.last_frequency_10hz[1] == 14600000u,
+              "stats: per-lane last frequency");
+        check(stats.last_rssi[0] == 40u && stats.last_rssi[1] == 12u,
+              "stats: per-lane last RSSI");
+        check(stats.selected_hit == SCAN_LANE_BK4815, "stats: selected hit");
+
+        scan_dual_get_stats(NULL, &stats);
+        check(!stats.active && stats.selected_hit == SCAN_LANE_NONE,
+              "stats: NULL state is safe");
+    }
+
     if (failures) {
         printf("\n%d failure(s)\n", failures);
         return 1;

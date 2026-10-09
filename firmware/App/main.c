@@ -40,6 +40,7 @@
 #include "driver/uart.h"
 #include "driver/py25q16.h"
 #include "app/app.h"
+#include "app/chFrScanner.h"
 #include "app/common.h"
 #include "app/scanner.h"
 #include "helper/boot.h"
@@ -680,6 +681,27 @@ static void dual_rf_diag(void)
     uart_printf("  TrVfoA=%u TrVfoB=%u   TX_VFO=%u RX_VFO=%u\n",
                 (unsigned)a, (unsigned)b,
                 (unsigned)gEeprom.TX_VFO, (unsigned)gEeprom.RX_VFO);
+    {
+        const scan_transceiver_mode_t sm = SETTINGS_GetScanTransceiverMode();
+        scan_dual_stats_t st;
+
+        CHFRSCANNER_GetScanDualStats(&st);
+        uart_printf("  ScTrMd=%u (%s)   scan-source override=%u   scan dual active=%d hit=%u\n",
+                    (unsigned)sm,
+                    (sm == SCAN_TRANSCEIVER_BOTH) ? "Both" : "Default",
+                    (unsigned)rx_scan_source_override(),
+                    (int)st.active, (unsigned)st.selected_hit);
+        uart_printf("    lane BK4829: cand=%u last=%u.%05u MHz rssi=%u\n",
+                    (unsigned)st.candidates[0],
+                    (unsigned)(st.last_frequency_10hz[0] / 100000u),
+                    (unsigned)(st.last_frequency_10hz[0] % 100000u),
+                    (unsigned)st.last_rssi[0]);
+        uart_printf("    lane BK4815: cand=%u last=%u.%05u MHz rssi=%u\n",
+                    (unsigned)st.candidates[1],
+                    (unsigned)(st.last_frequency_10hz[1] / 100000u),
+                    (unsigned)(st.last_frequency_10hz[1] % 100000u),
+                    (unsigned)st.last_rssi[1]);
+    }
     uart_printf("  tuned: BK4829<-VFO %d   BK4815<-VFO %d   bk4815_active=%d\n",
                 (int)roles.bk4829_vfo, (int)roles.bk4815_vfo,
                 (int)rf_dual_bk4815_active());

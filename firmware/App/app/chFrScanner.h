@@ -37,6 +37,10 @@ void CHFRSCANNER_ContinueScanning(void);
 /* The ordered candidate stream the dual-lane scanner draws from.  See the
  * definition in chFrScanner.c; it preserves the K1 range/list order. */
 bool CHFRSCANNER_NextCandidate(scan_candidate_t *out);
+
+/* Diagnostics: the dual-lane snapshot (console 'J').  Returns true while a
+ * "Both" scan is active. */
+bool CHFRSCANNER_GetScanDualStats(scan_dual_stats_t *out);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 const VFO_Info_t *CHFRSCANNER_GetScanDisplayVfo(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI

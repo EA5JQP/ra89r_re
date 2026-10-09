@@ -80,4 +80,16 @@ bool scan_dual_choose_hit(bool hit_4829, uint32_t ordinal_4829,
                           bool hit_4815, uint32_t ordinal_4815,
                           scan_lane_chip_t *selected);
 
+/* A read-only snapshot for diagnostics (console 'J'). */
+typedef struct {
+    bool             active;
+    uint8_t          mode;
+    uint32_t         candidates[2];
+    uint32_t         last_frequency_10hz[2];
+    uint16_t         last_rssi[2];
+    scan_lane_chip_t selected_hit;
+} scan_dual_stats_t;
+
+void scan_dual_get_stats(const scan_dual_state_t *state, scan_dual_stats_t *out);
+
 #endif

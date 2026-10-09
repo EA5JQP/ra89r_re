@@ -29,6 +29,7 @@ notes and quoted addresses use a shifted coordinate system.
 | [`ra89r_rffeatures.md`](ra89r_rffeatures.md) | the stock's feature routines above the part: AF, AGC, the CTCSS/CDCSS/DTMF/scramble/VOX group, sleep/idle/mode-restore, by register |
 | [`ra89r_noisereduction.md`](ra89r_noisereduction.md) | the noise reduction ("denoise"): the CPS's Noise Cancellation side-key, the compander (`0x28`) and the noise/SNR detectors (`0x63`/`0x65`) |
 | [`ra89r_port.md`](ra89r_port.md) | the K1/F4HWN port itself: what the RA89R side provides, the fixes and missing modules, the board facts to re-point, and the order to do it in |
+| [`ra89r_scan.md`](ra89r_scan.md) | the scanner and the dual-transceiver (`ScTrMd` `Both`) mode: the shared candidate stream, the lane rule, per-lane RSSI, the RX scan-source override, and what is still radio-gated |
 | [`firmware.md`](firmware.md) | the custom firmware project: layout, build, the console, and what is verified on the radio vs. still open |
 
 ## Conventions

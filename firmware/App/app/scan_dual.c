@@ -93,3 +93,26 @@ bool scan_dual_choose_hit(bool hit_4829, uint32_t ordinal_4829,
 
     return true;
 }
+
+void scan_dual_get_stats(const scan_dual_state_t *state, scan_dual_stats_t *out)
+{
+    unsigned i;
+
+    if (out == 0)
+        return;
+
+    memset(out, 0, sizeof *out);
+    out->selected_hit = SCAN_LANE_NONE;
+
+    if (state == 0)
+        return;
+
+    out->active = state->active;
+    out->mode   = state->mode;
+    for (i = 0; i < 2u; i++) {
+        out->candidates[i]          = state->lanes[i].candidates;
+        out->last_frequency_10hz[i] = state->lanes[i].last_frequency_10hz;
+        out->last_rssi[i]           = state->lanes[i].last_rssi;
+    }
+    out->selected_hit = state->selected_hit;
+}
