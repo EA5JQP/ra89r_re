@@ -20,6 +20,34 @@ static void putc_raw(char c)
     BOARD_UART->DR = (uint32_t)(uint8_t)c;
 }
 
+/* --- Receive: interrupt-driven into a ring buffer ---------------------------
+ *
+ * The USART has a single-byte receive register and no FIFO.  Polling it once
+ * per main-loop pass drops bytes whenever a sender sends a burst faster than
+ * the loop iterates -- and a K1 app pass is far longer than one byte at 115200.
+ * CAT frames are exactly such a burst (5 bytes back to back), so receive is
+ * interrupt-driven here and the callers drain the buffer. */
+#define RX_BUF_LEN 256u
+#define RX_BUF_MASK (RX_BUF_LEN - 1u)
+
+static volatile uint8_t  rx_buf[RX_BUF_LEN];
+static volatile uint16_t rx_head;
+static volatile uint16_t rx_tail;
+
+void USART1_IRQHandler(void)
+{
+    if ((BOARD_UART->SR & USART_SR_RXNE) != 0u) {
+        uint8_t  b    = (uint8_t)(BOARD_UART->DR & 0xFFu);
+        uint16_t next = (uint16_t)((rx_head + 1u) & RX_BUF_MASK);
+
+        if (next == rx_tail)                       /* full: drop the oldest */
+            rx_tail = (uint16_t)((rx_tail + 1u) & RX_BUF_MASK);
+
+        rx_buf[rx_head] = b;
+        rx_head         = next;
+    }
+}
+
 void uart_init(uint32_t baud)
 {
     /* PB6 = USART1_TX, PB7 = USART1_RX, alternate function 2.  The stock
@@ -46,11 +74,18 @@ void uart_init(uint32_t baud)
     /* BRR keeps USARTDIV in 4.4 fixed point; with 16x oversampling
      * BRR = PCLK / baud (rounded). */
     BOARD_UART->BRR = (BOARD_APB2_HZ + (baud / 2u)) / baud;
-    BOARD_UART->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
+    BOARD_UART->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE | USART_CR1_RXNEIE;
 
     /* Drop anything already queued in the receive path. */
     while (BOARD_UART->SR & USART_SR_RXNE)
         (void)BOARD_UART->DR;
+
+    /* Receive is interrupt-driven (the part has no RX FIFO): every byte lands
+     * in the ring buffer, so a burst is not lost while the main loop is busy. */
+    rx_head = 0;
+    rx_tail = 0;
+    NVIC_ClearPendingIRQ(USART1_IRQn);
+    NVIC_EnableIRQ(USART1_IRQn);
 }
 
 void uart_putc(char c)
@@ -166,25 +201,32 @@ void uart_printf(const char *fmt, ...)
 
 int uart_rx_ready(void)
 {
-    return (BOARD_UART->SR & USART_SR_RXNE) != 0u;
+    return rx_head != rx_tail;
 }
 
 int uart_getc(void)
 {
-    if (!uart_rx_ready())
+    uint8_t b;
+
+    if (rx_head == rx_tail)
         return -1;
-    return (int)(BOARD_UART->DR & 0xFFu);
+
+    b       = rx_buf[rx_tail];
+    rx_tail = (uint16_t)((rx_tail + 1u) & RX_BUF_MASK);
+    return (int)b;
 }
 
 int uart_getc_timeout(uint32_t ms)
 {
     uint32_t start = systick_millis();
 
-    /* Busy-poll: the USART has no receive FIFO, so sleeping between samples
-     * loses bytes to overrun when a caller reads a burst (the EEPROM restore). */
-    while ((uint32_t)(systick_millis() - start) <= ms) {
-        if (uart_rx_ready())
-            return uart_getc();
+    /* The bytes are already buffered by the receive interrupt, so this only
+     * waits for the buffer to have something. */
+    for (;;) {
+        int c = uart_getc();
+        if (c >= 0)
+            return c;
+        if ((uint32_t)(systick_millis() - start) > ms)
+            return -1;
     }
-    return -1;
 }
