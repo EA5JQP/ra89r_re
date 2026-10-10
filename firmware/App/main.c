@@ -1539,18 +1539,15 @@ int main(void)
         int c = uart_getc();
 
         if (c >= 0) {
-            bool cat_handled = false;
 #ifdef ENABLE_CAT
             {
                 uint8_t cat_frame[CAT_FRAME_LEN];
 
-                if (cat_parser_feed(&cat_parser, (uint8_t)c, cat_frame)) {
+                if (cat_parser_feed(&cat_parser, (uint8_t)c, cat_frame))
                     cat_apply(cat_frame);
-                    cat_handled = true;
-                }
             }
-#endif
-            if (!cat_handled) {
+#else
+            if (1) {
             char ch = (char)c;
 
             /* echo and remember the last characters on the display */
@@ -1989,7 +1986,8 @@ int main(void)
                     lcd_refresh();
                 }
             }
-            }   /* if (!cat_handled) */
+            }
+#endif
         } else {
             systick_delay_ms(1);
         }
