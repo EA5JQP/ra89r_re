@@ -660,6 +660,10 @@ uint16_t GetRssi()
 
     if (activeChip == SPECTRUM_CHIP_4815)
     {
+        /* The BK4815 has no glitch indicator.  Let its PLL/AGC settle for the
+         * same fixed 350 us used by the validated FAST BOTH scan lane before
+         * discarding the first read and using the next. */
+        SYSTICK_DelayUs(spectrum_rf_rssi_settle_us(SPECTRUM_CHIP_4815));
         // Discard first read (AGC may still be transitioning), keep second.
         bk4815_read_rssi();
         return spectrum_rf_normalize_rssi(SPECTRUM_CHIP_4815, bk4815_read_rssi());

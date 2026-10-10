@@ -91,6 +91,11 @@ mid-sweep.
 - **BK4815 bandwidth:** upstream changes `0x43` per step; the BK4815's equivalent
   is not established, so its lane keeps one bandwidth.  A per-chip BW step is the
   fallback if the radio shows it matters.
+- **BK4815 sweep settle:** before sampling `0x44`, the spectrum now waits 350 µs
+  (the same fixed delay used by the validated FAST BOTH scanner lane), discards
+  the first RSSI read, then uses the next.  The BK4815 has no documented glitch
+  indicator like the BK4829's, so whether 350 µs is sufficient for a spectrum
+  sweep remains radio-gated.
 
 Radio gate before merge: F+5 opens the screen; a sweep draws with chip=4829;
 `4815` sweeps on the BK4815; `Both` sweeps with alternating chips and looks about

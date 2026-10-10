@@ -22,6 +22,11 @@ uint16_t spectrum_rf_normalize_rssi(spectrum_chip_t chip, uint16_t raw)
     return (raw > (uint16_t)(0xFFFFu / 4u)) ? 0xFFFFu : (uint16_t)(raw * 4u);
 }
 
+uint32_t spectrum_rf_rssi_settle_us(spectrum_chip_t chip)
+{
+    return (chip == SPECTRUM_CHIP_4815) ? 350u : 0u;
+}
+
 uint8_t spectrum_rf_encode_chip(spectrum_chip_t chip)
 {
     if (chip == SPECTRUM_CHIP_4815 || chip == SPECTRUM_CHIP_BOTH)

@@ -30,6 +30,11 @@ spectrum_chip_t spectrum_rf_step_chip(spectrum_chip_t setting, uint16_t index);
  * Call with the already-resolved chip (never SPECTRUM_CHIP_BOTH). */
 uint16_t spectrum_rf_normalize_rssi(spectrum_chip_t chip, uint16_t raw);
 
+/* The BK4829 waits on its glitch indicator before reading.  The BK4815 has no
+ * equivalent indicator, so use the 350 us fixed settle delay already used by
+ * the validated FAST BOTH scanner lane. */
+uint32_t spectrum_rf_rssi_settle_us(spectrum_chip_t chip);
+
 /* The persisted byte for the setting (the spectrum's Data[4]); an out-of-range
  * chip encodes to 0 and an out-of-range byte decodes to BK4829. */
 uint8_t         spectrum_rf_encode_chip(spectrum_chip_t chip);
