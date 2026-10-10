@@ -64,7 +64,7 @@ python3 tools/look4sat_cat.py --port /dev/ttyUSB1 ctcss 88.5
 python3 tools/look4sat_cat.py --port /dev/ttyUSB1 sweep 435.600 435.700 5
 ```
 
-The default baud is 9600 (the bootloader's rate, and a common FT-817 CAT rate).
+The default baud is 115200 (the radio's USART1 rate, set by `driver/uart.c`).
 
 ## Open / radio-gated
 

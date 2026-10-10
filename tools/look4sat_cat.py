@@ -140,7 +140,7 @@ def report(label, ack):
 def main():
     ap = argparse.ArgumentParser(description="Look4Sat FT-817 CAT stand-in")
     ap.add_argument("--port", required=True, help="serial port, e.g. /dev/ttyUSB1")
-    ap.add_argument("--baud", type=int, default=9600, help="CAT baud (default 9600)")
+    ap.add_argument("--baud", type=int, default=115200, help="CAT baud (default 115200, the port's USART1 rate)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("freq"); p.add_argument("hz")
