@@ -119,22 +119,39 @@ void SETTINGS_FixupVfoPointers(void)
     gCurrentVfo = gRxVfo;
 }
 
-/* The port's own state, saved in the blob next to gEeprom. */
+/* The port's own state, saved in the blob next to gEeprom.
+ *
+ * Version 2 reused the old `reserved` bytes for the per-VFO RF transceiver
+ * choice; version 3 appended the old scan-transceiver byte; version 4 reuses
+ * that same byte for the scan mode (SetScn).  The older layouts are kept
+ * explicit below so a blob written by an older build still loads. */
 typedef struct {
     uint32_t magic;
     uint16_t version;
-    /* Was `uint16_t reserved` (always zero).  Reused for the per-VFO RF
-     * transceiver choice so the blob layout and its version are unchanged: an
-     * older blob reads back as {0,0} = AUTO for both VFOs. */
     uint8_t  rf_xcvr[2];                  /* rf_xcvr_t, VFO A and B */
     uint8_t  freq_channels[7 * 2 * 16];   /* codeplug_freq_snapshot() */
 #ifdef ENABLE_FMRADIO
     uint16_t fm_channels[FM_CHANNELS_MAX]; /* the K1's FM memories (app/fm.c) */
 #endif
+    uint8_t  scan_mode;                   /* scan_mode_t (v4), scan_transceiver_mode_t (v3) */
 } settings_extra_t;
 
-#define EXTRA_MAGIC   0x58545241u    /* "ARTX" */
-#define EXTRA_VERSION 2u
+/* The version-2 payload, byte for byte: the same prefix without the appended
+ * scan byte.  Kept so a blob from an older build can still be read. */
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint8_t  rf_xcvr[2];
+    uint8_t  freq_channels[7 * 2 * 16];
+#ifdef ENABLE_FMRADIO
+    uint16_t fm_channels[FM_CHANNELS_MAX];
+#endif
+} settings_extra_v2_t;
+
+#define EXTRA_MAGIC      0x58545241u    /* "ARTX" */
+#define EXTRA_VERSION    4u
+#define EXTRA_VERSION_V3 3u
+#define EXTRA_VERSION_V2 2u
 
 /* The per-VFO RF transceiver choice, mirrored into the blob on save. */
 static uint8_t s_rf_xcvr[2] = { RF_XCVR_BK4829, RF_XCVR_BK4829 };
@@ -165,6 +182,10 @@ void SettingsDefaults(void)
 
     s_rf_xcvr[0] = (uint8_t)RF_XCVR_BK4829;
     s_rf_xcvr[1] = (uint8_t)RF_XCVR_BK4829;
+
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+    gSetting_set_scn = SCAN_MODE_FAST;
+#endif
 
     gEeprom.RX_VFO = 0;
     gEeprom.TX_VFO = 0;
@@ -197,7 +218,12 @@ void SettingsDefaults(void)
     gEeprom.CROSS_BAND_RX_TX = CROSS_BAND_OFF;
     gEeprom.BATTERY_SAVE = 0;
     gEeprom.BACKLIGHT_TIME = 4;
-    gEeprom.SCAN_RESUME_MODE = 0;
+    /* The scan-resume delay (`ScnRev`).  0 is the K1's "stop scanning" mode:
+     * app/app.c's end-of-RX path calls CHFRSCANNER_Stop() when it is 0, so the
+     * first carrier ends the scan entirely.  The K1's own fallback when its
+     * EEPROM byte is absent is 14 (a 3.5 s pause), which is what a fresh radio
+     * should resume with. */
+    gEeprom.SCAN_RESUME_MODE = 14;
     /* The K1's scan-list selector is 1..24 plus "all" (`MR_CHANNELS_LIST + 1`,
      * and 0 means "no list at all").  Every channel this port reports is in
      * "all" (the stock has one channel set, not 24 lists), so 0 would make
@@ -297,12 +323,41 @@ void SETTINGS_InitEEPROM(void)
         memset(&extra, 0, sizeof extra);
         if (storage_get_extra(&extra, sizeof extra) &&
             extra.magic == EXTRA_MAGIC &&
-            extra.version == EXTRA_VERSION) {
+            (extra.version == EXTRA_VERSION || extra.version == EXTRA_VERSION_V3)) {
             codeplug_freq_restore(extra.freq_channels, sizeof extra.freq_channels);
             memcpy(s_rf_xcvr, extra.rf_xcvr, sizeof s_rf_xcvr);
 #ifdef ENABLE_FMRADIO
             memcpy(gFM_Channels, extra.fm_channels, sizeof gFM_Channels);
 #endif
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+            if (extra.version == EXTRA_VERSION) {
+                gSetting_set_scn = (extra.scan_mode <= (uint8_t)SCAN_MODE_FAST_BOTH)
+                                       ? extra.scan_mode : (uint8_t)SCAN_MODE_FAST;
+            } else {
+                /* v3 stored the old ScTrMd byte: 0 Default -> FAST,
+                 * 1 Both -> FAST BOTH. */
+                gSetting_set_scn = extra.scan_mode ? (uint8_t)SCAN_MODE_FAST_BOTH
+                                                   : (uint8_t)SCAN_MODE_FAST;
+            }
+#endif
+        } else {
+            /* A version-2 blob has no scan byte: keep its fields and default
+             * the scan mode to FAST. */
+            settings_extra_v2_t old;
+
+            memset(&old, 0, sizeof old);
+            if (storage_get_extra(&old, sizeof old) &&
+                old.magic == EXTRA_MAGIC &&
+                old.version == EXTRA_VERSION_V2) {
+                codeplug_freq_restore(old.freq_channels, sizeof old.freq_channels);
+                memcpy(s_rf_xcvr, old.rf_xcvr, sizeof s_rf_xcvr);
+#ifdef ENABLE_FMRADIO
+                memcpy(gFM_Channels, old.fm_channels, sizeof gFM_Channels);
+#endif
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+                gSetting_set_scn = (uint8_t)SCAN_MODE_FAST;
+#endif
+            }
         }
     } else {
         /* No blob yet: land the two VFOs on the first two channels the codeplug
@@ -512,6 +567,11 @@ static bool settings_save_all(void)
     codeplug_freq_snapshot(extra.freq_channels, sizeof extra.freq_channels);
 #ifdef ENABLE_FMRADIO
     memcpy(extra.fm_channels, gFM_Channels, sizeof extra.fm_channels);
+#endif
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+    extra.scan_mode = gSetting_set_scn;
+#else
+    extra.scan_mode = (uint8_t)SCAN_MODE_FAST;
 #endif
 
     if (!storage_set_extra(&extra, sizeof extra))

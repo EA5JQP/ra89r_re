@@ -1007,7 +1007,8 @@ void MENU_AcceptSetting(void)
             break;
         #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
         case MENU_SET_SCN:
-            gSetting_set_scn = gSubMenuSelection;
+            gSetting_set_scn = (uint8_t)gSubMenuSelection;
+            gRequestSaveSettings = true;
             break;
         #endif
         #ifdef ENABLE_FEAT_F4HWN_AUDIO

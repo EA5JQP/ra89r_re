@@ -4,7 +4,11 @@
 
 #include "app/app.h"
 #include "app/chFrScanner.h"
+#include "app/scan_dual.h"
 #include "audio.h"
+#include "driver/bk4815.h"
+#include "driver/pa.h"
+#include "driver/rx.h"
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 #include "driver/systick.h"
 #endif
@@ -58,6 +62,10 @@ scan_next_chan_t    currentScanList;
 uint32_t            initialFrqOrChan;
 uint8_t             initialCROSS_BAND_RX_TX;
 
+/* The ordinal the shared candidate cursor hands out (CHFRSCANNER_NextCandidate
+ * below).  Reset when a scan starts. */
+static uint32_t scanCandidateOrdinal;
+
 #ifndef ENABLE_FEAT_F4HWN
     uint32_t lastFoundFrqOrChan;
 #else
@@ -69,12 +77,13 @@ static void NextFreqChannel(void);
 static void NextMemChannel(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 static void ScanFastResetState(void);
+static void ScanBothReset(void);
 #endif
 
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 static bool ScanFastEnabled(void)
 {
-    return gSetting_set_scn;
+    return gSetting_set_scn != (uint8_t)SCAN_MODE_NORMAL;
 }
 #endif
 
@@ -264,6 +273,16 @@ static void CHFRSCANNER_AbortActiveReception(void)
 #define SCAN_FAST_RSSI_MARGIN       16
 #define SCAN_FAST_SQUELCH_MARGIN     8
 #define SCAN_FAST_WEAK_MARGIN        8
+/* The BK4815 reports a 7-bit RSSI (0x44), about a quarter of the BK4829's
+ * 9-bit scale (0x67), so the dual lane uses its own, smaller margins rather
+ * than comparing scales.  These are unvalidated until measured on the radio
+ * (docs/ra89r_scan.md). */
+#define SCAN_FAST4815_RSSI_MARGIN    4
+#define SCAN_FAST4815_SQUELCH_MARGIN 2
+#define SCAN_FAST4815_WEAK_MARGIN    2
+/* The BK4815's 7-bit RSSI is scaled into the BK4829's 9-bit range (127*4 ~ 508)
+ * when both lanes feed the one sparkline series. */
+#define SCAN_FAST4815_RSSI_SCALE     4
 #define SCAN_FAST_RECHECK_DELAY_US 350
 #define SCAN_FAST_FINE_STEP_LIMIT   250
 #define SCAN_FAST_FINE_REFINE_SPAN 1000
@@ -292,6 +311,7 @@ static uint32_t scanFastPrevFrequency;
 static bool     scanFastLastFullTuneCandidate;
 static VFO_Info_t scanFastDisplayVfo;
 static bool       scanFastDisplayVfoValid;
+static scan_candidate_rate_t scanCandidateRate;
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
 static uint16_t scanRssiSparkline[CHFRSCANNER_RSSI_SPARKLINE_WIDTH];
 static uint8_t  scanRssiSparklineWrite;
@@ -362,6 +382,7 @@ static void ScanFastResetState(void)
     scanFastPrevFrequency         = 0;
     scanFastLastFullTuneCandidate = false;
     scanFastDisplayVfoValid       = false;
+    ScanBothReset();
 }
 
 static void ScanFastResetNoiseFloor(void)
@@ -601,6 +622,7 @@ static void ScanRangeFastRefineCandidate(uint16_t firstRssi)
         ScanFastTune(freq);
 
         const uint16_t rssi = ScanFastReadRssi();
+        scan_candidate_rate_add(&scanCandidateRate, 1u);
         if (rssi > bestRssi)
         {
             bestRssi = rssi;
@@ -653,6 +675,7 @@ static scan_fast_result_t ScanRangeFastPrecheck(void)
         ScanFastTune(freq);
 
         const uint16_t rssi = ScanFastReadCandidateRssi();
+        scan_candidate_rate_add(&scanCandidateRate, 1u);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
         ScanRssiSparklinePush(rssi);
 #endif
@@ -692,6 +715,7 @@ static bool MemChannelFastPrecheck(uint16_t channel)
     ScanFastTune(frequency);
 
     const uint16_t rssi = ScanFastReadCandidateRssi();
+    scan_candidate_rate_add(&scanCandidateRate, 1u);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
     ScanRssiSparklinePush(rssi);
 #endif
@@ -724,6 +748,293 @@ static void SetMemScanProgressChannel(uint16_t channel)
     gEeprom.ScreenChannel[gEeprom.RX_VFO] = channel;
     gRxVfo->CHANNEL_SAVE = channel;
 }
+#endif
+
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+/* The "Both" scan: two lanes, one per transceiver.  The candidate stream is
+ * split by ordinal (scan_dual_assign_candidate) and each lane keeps its own
+ * RSSI floor, because the BK4829 (0x67) and BK4815 (0x44) report RSSI on
+ * different scales.  The RF path is shared, so the lanes are time-multiplexed,
+ * not simultaneous; this whole path is radio-validated work (docs/ra89r_scan.md).
+ *
+ * Only the frequency range is interleaved for now: the scan list keeps the K1's
+ * single-lane fast precheck, which the spec allows as the conservative
+ * fallback, so list priority/rotation stays exactly as validated. */
+static scan_dual_state_t scanBothState;
+static uint8_t           scanBothLastBand = 0xFFu;
+static uint32_t          scanBothPrevFrequency;
+
+static bool ScanBothEnabled(void)
+{
+    return ScanFastEnabled() &&
+           gSetting_set_scn == (uint8_t)SCAN_MODE_FAST_BOTH;
+}
+
+static void ScanBothReset(void)
+{
+    scan_dual_reset(&scanBothState);
+    scanBothState.mode   = (uint8_t)SCAN_MODE_FAST_BOTH;
+    scanBothState.active = true;
+    scanBothLastBand     = 0xFFu;
+    scanBothPrevFrequency = 0;
+}
+
+#ifdef ENABLE_SCAN_RANGES
+/* Point the shared front-end at a candidate's band and read that candidate's
+ * chip.  The band switch only happens when the band actually changes. */
+static uint16_t ScanBothProbe(const scan_candidate_t *c)
+{
+    const scan_lane_chip_t lane = scan_dual_assign_candidate(c);
+
+    if (c->band != scanBothLastBand) {
+        pa_select_band(c->frequency_10hz);
+        scanBothLastBand = c->band;
+    }
+
+    if (lane == SCAN_LANE_BK4815) {
+        bk4815_set_frequency(c->frequency_10hz, false);
+        bk4815_write_reg(0x75u, (c->frequency_10hz >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+        SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
+        bk4815_read_rssi();          /* discard the first, possibly stale read */
+        return bk4815_read_rssi();
+    }
+
+    ScanFastTune(c->frequency_10hz);
+    return ScanFastReadCandidateRssi();
+}
+
+/* One interval of the dual-lane range sweep: a full fast batch per lane, in
+ * ordinal order, and the earliest ordinal wins if both lanes hit. */
+static scan_fast_result_t ScanBothFastPrecheck(void)
+{
+    scan_candidate_t cands[2u * SCAN_FAST_PRECHECK_STEPS];
+    unsigned         n = 0;
+    unsigned         i;
+    bool             hit_4829 = false, hit_4815 = false;
+    uint32_t         ord_4829 = 0, ord_4815 = 0;
+    scan_lane_chip_t sel = SCAN_LANE_NONE;
+
+    if (gRxVfo->SquelchOpenRSSIThresh == 0)
+        return SCAN_FAST_DISABLED;
+
+    /* Seed the BK4829 control register the way ScanRangeFastPrecheck does, with
+     * the AF DAC bit cleared: ScanFastTune() writes 0 and then this value, so
+     * without it the chip would be left with 0x30 = 0 (disabled). */
+    scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
+    scanBothState.selected_hit = SCAN_LANE_NONE;
+
+    for (i = 0; i < 2u * SCAN_FAST_PRECHECK_STEPS; i++) {
+        if (!CHFRSCANNER_NextCandidate(&cands[n]))
+            break;
+        n++;
+    }
+    if (n == 0u)
+        return SCAN_FAST_DISABLED;
+
+    for (i = 0; i < n; i++) {
+        const scan_lane_chip_t lane = scan_dual_assign_candidate(&cands[i]);
+        const uint16_t         rssi = ScanBothProbe(&cands[i]);
+        scan_lane_state_t     *lane_state = &scanBothState.lanes[lane];
+        const bool             is_4815 = (lane == SCAN_LANE_BK4815);
+        const uint16_t         squelch = is_4815 ? RX4815_SQUELCH_OPEN_MARK
+                                                 : gRxVfo->SquelchOpenRSSIThresh;
+        const uint16_t         noise_margin = is_4815 ? SCAN_FAST4815_RSSI_MARGIN
+                                                      : SCAN_FAST_RSSI_MARGIN;
+        const uint16_t         squelch_margin = is_4815 ? SCAN_FAST4815_SQUELCH_MARGIN
+                                                        : SCAN_FAST_SQUELCH_MARGIN;
+        const uint16_t         weak_margin = is_4815 ? SCAN_FAST4815_WEAK_MARGIN
+                                                     : SCAN_FAST_WEAK_MARGIN;
+
+        scan_candidate_rate_add(&scanCandidateRate, 1u);
+
+#ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
+        /* Feed the graph from both lanes.  The BK4829 reports 9-bit RSSI (0x67)
+         * and the BK4815 7-bit (0x44), so the BK4815 value is scaled into the
+         * same range; otherwise the series would sawtooth as lanes alternate. */
+        ScanRssiSparklinePush(is_4815
+                                  ? (uint16_t)(rssi * SCAN_FAST4815_RSSI_SCALE)
+                                  : rssi);
+#endif
+
+        /* A range wrap (forward and lower, or backward and higher) is a new
+         * pass: re-warm both lanes' floors, as the Default precheck does. */
+        if (scanBothPrevFrequency != 0 &&
+            ((gScanStateDir > 0 && cands[i].frequency_10hz < scanBothPrevFrequency) ||
+             (gScanStateDir < 0 && cands[i].frequency_10hz > scanBothPrevFrequency)))
+        {
+            ScanBothReset();
+            scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
+        }
+        scanBothPrevFrequency = cands[i].frequency_10hz;
+
+        lane_state->last_frequency_10hz = cands[i].frequency_10hz;
+        lane_state->candidates++;
+
+        if (scan_dual_rssi_candidate(lane_state, rssi, squelch,
+                                     noise_margin, squelch_margin, weak_margin)) {
+            if (is_4815) {
+                if (!hit_4815 || cands[i].ordinal < ord_4815) {
+                    hit_4815 = true;
+                    ord_4815 = cands[i].ordinal;
+                }
+            } else if (!hit_4829 || cands[i].ordinal < ord_4829) {
+                hit_4829 = true;
+                ord_4829 = cands[i].ordinal;
+            }
+        }
+    }
+
+    if (scan_dual_choose_hit(hit_4829, ord_4829, hit_4815, ord_4815, &sel)) {
+        const uint32_t win = (sel == SCAN_LANE_BK4815) ? ord_4815 : ord_4829;
+
+        for (i = 0; i < n; i++) {
+            if (cands[i].ordinal == win) {
+                gRxVfo->freq_config_RX.Frequency = cands[i].frequency_10hz;
+                break;
+            }
+        }
+        scanBothState.selected_hit = sel;
+        rx_set_scan_source_override(sel == SCAN_LANE_BK4815
+                                        ? RX_SCAN_SOURCE_BK4815
+                                        : RX_SCAN_SOURCE_BK4829);
+        return SCAN_FAST_CANDIDATE;
+    }
+
+    return SCAN_FAST_QUIET_BATCH;
+}
+#endif /* ENABLE_SCAN_RANGES */
+
+/* Diagnostics (console 'J'): the dual-lane snapshot.  `active` is only true
+ * while a Both scan is actually running. */
+bool CHFRSCANNER_GetScanDualStats(scan_dual_stats_t *out)
+{
+    if (out == 0)
+        return false;
+
+    scan_dual_get_stats(&scanBothState, out);
+    out->mode   = gSetting_set_scn;
+    out->active = scanBothState.active && ScanBothEnabled() && gScanStateDir != SCAN_OFF;
+    scan_candidate_rate_snapshot(&scanCandidateRate, systick_millis(), &out->rate);
+    return out->active;
+}
+#else
+bool CHFRSCANNER_GetScanDualStats(scan_dual_stats_t *out)
+{
+    if (out != 0) {
+        memset(out, 0, sizeof *out);
+        out->selected_hit = SCAN_LANE_NONE;
+    }
+    return false;
+}
+#endif /* ENABLE_FEAT_F4HWN_SCAN_FASTER */
+
+#if defined(ENABLE_SCAN_RANGES) && defined(ENABLE_FEAT_F4HWN_SCAN_FASTER)
+/* The console benchmark (see chFrScanner.h).  It forces the selected RX VFO
+ * onto a frequency channel and a shared range so CHFRSCANNER_Start() takes the
+ * range path, then runs each mode for the caller. */
+static struct {
+    bool     armed;
+    uint8_t  rx_vfo;
+    uint16_t screen;
+    uint16_t freq_chan;
+    uint16_t channel_save;
+    uint16_t band;
+    uint32_t rx_freq;
+    uint32_t tx_freq;
+    uint32_t range_start;
+    uint32_t range_stop;
+    uint8_t  mode;
+} scanBench;
+
+void CHFRSCANNER_BenchmarkArm(uint32_t start_10hz, uint32_t stop_10hz)
+{
+    const uint8_t rx = gEeprom.RX_VFO;
+
+    scanBench.armed        = true;
+    scanBench.rx_vfo       = rx;
+    scanBench.screen       = gEeprom.ScreenChannel[rx];
+    scanBench.freq_chan    = gEeprom.FreqChannel[rx];
+    scanBench.channel_save = gRxVfo->CHANNEL_SAVE;
+    scanBench.band         = gRxVfo->Band;
+    scanBench.rx_freq      = gRxVfo->freq_config_RX.Frequency;
+    scanBench.tx_freq      = gRxVfo->freq_config_TX.Frequency;
+    scanBench.range_start  = gScanRangeStart;
+    scanBench.range_stop   = gScanRangeStop;
+    scanBench.mode         = gSetting_set_scn;
+
+    /* Frequency mode, so Start() arms the range instead of the memory cursor. */
+    gRxVfo->Band              = (uint16_t)FREQUENCY_GetBand(start_10hz);
+    gEeprom.ScreenChannel[rx] = (uint16_t)(FREQ_CHANNEL_FIRST + gRxVfo->Band);
+    gEeprom.FreqChannel[rx]   = gEeprom.ScreenChannel[rx];
+    gRxVfo->CHANNEL_SAVE      = gEeprom.ScreenChannel[rx];
+    gRxVfo->freq_config_RX.Frequency = start_10hz;
+    gRxVfo->freq_config_TX.Frequency = start_10hz;
+    gScanRangeStart = start_10hz;
+    gScanRangeStop  = stop_10hz;
+}
+
+void CHFRSCANNER_BenchmarkRun(uint8_t mode)
+{
+    if (!scanBench.armed)
+        return;
+
+    gSetting_set_scn = mode ? (uint8_t)SCAN_MODE_FAST_BOTH : (uint8_t)SCAN_MODE_FAST;
+    CHFRSCANNER_Start(true, SCAN_FWD);
+}
+
+void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out)
+{
+    scan_dual_stats_t st;
+
+    if (gScanStateDir != SCAN_OFF)
+        CHFRSCANNER_Stop();
+
+    CHFRSCANNER_GetScanDualStats(&st);
+    if (out != 0) {
+        out->probes            = st.rate.candidates;
+        out->elapsed_ms        = st.rate.elapsed_ms;
+        out->probes_per_second = st.rate.candidates_per_second;
+    }
+}
+
+void CHFRSCANNER_BenchmarkDisarm(void)
+{
+    const uint8_t rx = scanBench.rx_vfo;
+
+    if (!scanBench.armed)
+        return;
+
+    gEeprom.ScreenChannel[rx] = scanBench.screen;
+    gEeprom.FreqChannel[rx]   = scanBench.freq_chan;
+    gRxVfo->CHANNEL_SAVE      = scanBench.channel_save;
+    gRxVfo->Band              = scanBench.band;
+    gRxVfo->freq_config_RX.Frequency = scanBench.rx_freq;
+    gRxVfo->freq_config_TX.Frequency = scanBench.tx_freq;
+    gScanRangeStart = scanBench.range_start;
+    gScanRangeStop  = scanBench.range_stop;
+    gSetting_set_scn = scanBench.mode;
+    RADIO_ConfigureChannel(rx, VFO_CONFIGURE_RELOAD);
+    scanBench.armed = false;
+}
+#else
+void CHFRSCANNER_BenchmarkArm(uint32_t start_10hz, uint32_t stop_10hz)
+{
+    (void)start_10hz;
+    (void)stop_10hz;
+}
+
+void CHFRSCANNER_BenchmarkRun(uint8_t mode) { (void)mode; }
+
+void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out)
+{
+    if (out != 0) {
+        out->probes            = 0u;
+        out->elapsed_ms        = 0u;
+        out->probes_per_second = 0u;
+    }
+}
+
+void CHFRSCANNER_BenchmarkDisarm(void) { }
 #endif
 
 #if defined(ENABLE_FEAT_F4HWN_RESUME_STATE) || defined(ENABLE_SCAN_RANGES)
@@ -759,6 +1070,12 @@ void CHFRSCANNER_Start(const bool storeBackupSettings, const int8_t scan_directi
     gNextMrChannel   = gRxVfo->CHANNEL_SAVE;
     currentScanList = SCAN_NEXT_CHAN_SCANLIST1;
     gScanStateDir    = scan_direction;
+    scanCandidateOrdinal = 0;
+    rx_clear_scan_source_override();
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+    if (storeBackupSettings)
+        scan_candidate_rate_reset(&scanCandidateRate, systick_millis());
+#endif
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
     ScanRssiSparklineReset();
@@ -840,6 +1157,9 @@ void CHFRSCANNER_ContinueScanning(void)
 
 void CHFRSCANNER_ContinueScanning(void)
 {
+    /* A resumed scan is a fresh pass: drop any paused-hit receive override so
+     * the receiver follows the saved VFO route again until the next hit. */
+    rx_clear_scan_source_override();
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
     if (scanFastLastFullTuneCandidate &&
         gCurrentFunction != FUNCTION_INCOMING &&
@@ -950,6 +1270,7 @@ void CHFRSCANNER_Stop(void)
     }
     
     gScanStateDir = SCAN_OFF;
+    rx_clear_scan_source_override();
 #if defined(ENABLE_FEAT_F4HWN_SCAN_FASTER) && defined(ENABLE_FEAT_F4HWN_SCAN_RSSI)
     ScanRssiSparklineReset();
 #endif
@@ -989,7 +1310,29 @@ static void NextFreqChannel(void)
 #ifdef ENABLE_SCAN_RANGES
     if(gScanRangeStart) {
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
-        if (ScanFastEnabled())
+        if (ScanBothEnabled())
+        {
+            const scan_fast_result_t bothResult = ScanBothFastPrecheck();
+
+            if (bothResult == SCAN_FAST_QUIET_BATCH)
+            {
+                scanFastLastFullTuneCandidate = false;
+                gScanPauseDelayIn_10ms = 1;
+                gUpdateDisplay = true;
+                return;
+            }
+
+            if (bothResult == SCAN_FAST_DISABLED)
+            {
+                scanFastLastFullTuneCandidate = false;
+                gRxVfo->freq_config_RX.Frequency = ScanRangeNextFrequency();
+            }
+            else
+            {
+                scanFastLastFullTuneCandidate = true;
+            }
+        }
+        else if (ScanFastEnabled())
         {
             const scan_fast_result_t fastResult = ScanRangeFastPrecheck();
 
@@ -1042,16 +1385,17 @@ static void NextFreqChannel(void)
     gUpdateDisplay     = true;
 }
 
-static void NextMemChannel(void)
+/* The memory-scan cursor: pick the next valid list channel, honouring the
+ * configured scan list, the two priority channels, the direction and the wrap.
+ * It updates currentScanList/gNextMrChannel exactly as the K1 does; the RF work
+ * and the fast precheck stay in NextMemChannel(), and CHFRSCANNER_NextCandidate
+ * reuses it for the dual-lane path. */
+static uint16_t CHFRSCANNER_NextMemCursor(const bool enabled)
 {
     static uint16_t prev_mr_chan = 0;
-    const bool      enabled      = (gEeprom.SCAN_LIST_DEFAULT > 0 && gEeprom.SCAN_LIST_DEFAULT <= MR_CHANNELS_LIST + 1) ? gEeprom.SCAN_LIST_ENABLED : true;
     const int16_t   chan1        = (gEeprom.SCAN_LIST_DEFAULT > 0 && gEeprom.SCAN_LIST_DEFAULT <= MR_CHANNELS_LIST + 1 && gEeprom.SCANLIST_PRIORITY_CH[0] != MR_CHANNELS_MAX) ? gEeprom.SCANLIST_PRIORITY_CH[0] : -1;
     const int16_t   chan2        = (gEeprom.SCAN_LIST_DEFAULT > 0 && gEeprom.SCAN_LIST_DEFAULT <= MR_CHANNELS_LIST + 1 && gEeprom.SCANLIST_PRIORITY_CH[1] != MR_CHANNELS_MAX) ? gEeprom.SCANLIST_PRIORITY_CH[1] : -1;
-    const uint16_t  prev_chan    = gNextMrChannel;
     uint16_t        chan         = 0;
-
-    //char str[64] = "";
 
     if (enabled)
     {
@@ -1160,6 +1504,16 @@ static void NextMemChannel(void)
         //LogUart(str);
     }
 
+    return gNextMrChannel;
+}
+
+static void NextMemChannel(void)
+{
+    const bool     enabled   = (gEeprom.SCAN_LIST_DEFAULT > 0 && gEeprom.SCAN_LIST_DEFAULT <= MR_CHANNELS_LIST + 1) ? gEeprom.SCAN_LIST_ENABLED : true;
+    const uint16_t prev_chan = gNextMrChannel;
+
+    (void)CHFRSCANNER_NextMemCursor(enabled);
+
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
     SetMemScanProgressChannel(gNextMrChannel);
 
@@ -1202,4 +1556,47 @@ static void NextMemChannel(void)
         if (++currentScanList >= SCAN_NEXT_NUM)
             currentScanList = SCAN_NEXT_CHAN_SCANLIST1;  // back round we go
 #endif
+}
+
+/* The shared candidate cursor the dual-lane scanner draws from.  It advances
+ * the same K1 order as NextFreqChannel()/NextMemChannel() -- range
+ * step/limits/skip for a frequency sweep, list membership/priority/direction/
+ * wrap for channels -- and tags each item with a monotonically increasing
+ * ordinal.  It does not tune or precheck; the caller does.  Returns false when
+ * there is nothing to visit. */
+bool CHFRSCANNER_NextCandidate(scan_candidate_t *out)
+{
+    if (out == 0)
+        return false;
+
+#ifdef ENABLE_SCAN_RANGES
+    if (gScanRangeStart)
+    {
+        out->frequency_10hz    = ScanRangeNextFrequency();
+        out->channel           = 0;
+        out->band              = (uint8_t)FREQUENCY_GetBand(out->frequency_10hz);
+        out->is_memory_channel = false;
+        out->ordinal           = scanCandidateOrdinal++;
+        return true;
+    }
+#endif
+
+    {
+        const bool     enabled = (gEeprom.SCAN_LIST_DEFAULT > 0 && gEeprom.SCAN_LIST_DEFAULT <= MR_CHANNELS_LIST + 1) ? gEeprom.SCAN_LIST_ENABLED : true;
+        const uint16_t chan    = CHFRSCANNER_NextMemCursor(enabled);
+        ChannelScanDisplayInfo_t info;
+
+        if (!IS_MR_CHANNEL(chan))
+            return false;
+
+        if (!SETTINGS_FetchChannelScanDisplayInfo(chan, &info))
+            return false;
+
+        out->channel           = chan;
+        out->is_memory_channel = true;
+        out->frequency_10hz    = info.rx.Frequency;
+        out->band              = (uint8_t)FREQUENCY_GetBand(out->frequency_10hz);
+        out->ordinal           = scanCandidateOrdinal++;
+        return true;
+    }
 }

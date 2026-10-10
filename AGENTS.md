@@ -193,6 +193,7 @@ cd firmware && gcc -std=c11 -I tools/host -I App -I App/driver \
     App/board.c App/settings.c App/version.c App/dcs.c App/frequencies.c \
     App/helper/battery.c App/helper/boot.c App/driver/system.c App/font.c App/bitmaps.c \
     App/driver/st7565.c App/driver/keyboard.c App/driver/backlight.c \
+    App/driver/scheduler.c \
     -o /tmp/preview_k1 && /tmp/preview_k1
 # (tools/host is a test double for the device header: CMSIS's __DSB() is ARM
 #  assembly, so a PC build cannot use the real one -- see NOTICE)

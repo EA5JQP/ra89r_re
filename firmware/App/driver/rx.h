@@ -88,4 +88,18 @@ void rf_dual_refresh(void);
  * frequency. */
 void rf_dual_reapply(void);
 
+/* A temporary scan-hit receive route.  While set, the receiver follows the scan
+ * hit's chip and frequency instead of the selected VFO's transceiver; clearing
+ * it restores the saved per-VFO route.  Used by the dual-transceiver scan while
+ * a hit is paused.  Never persisted. */
+typedef enum {
+    RX_SCAN_SOURCE_DEFAULT = 0,   /* the selected VFO's own transceiver */
+    RX_SCAN_SOURCE_BK4829  = 1,
+    RX_SCAN_SOURCE_BK4815  = 2
+} rx_scan_source_t;
+
+void             rx_set_scan_source_override(rx_scan_source_t source);
+void             rx_clear_scan_source_override(void);
+rx_scan_source_t rx_scan_source_override(void);
+
 #endif /* DRIVER_RX_H */

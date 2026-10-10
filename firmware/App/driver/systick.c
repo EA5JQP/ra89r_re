@@ -1,5 +1,6 @@
 #include "board.h"
 #include "board_pins.h"
+#include "driver/scheduler.h"
 #include "driver/systick.h"
 
 /* core_cm4.h (CMSIS) provides SysTick_Config(); its handler is defined here
@@ -11,6 +12,11 @@ static int s_systick_dead;
 void SysTick_Handler(void)
 {
     s_millis++;
+
+    /* The K1 runs its periodic countdowns in this handler; the port's copy
+     * lives in driver/scheduler.c and is what makes the scan step (see there). */
+    if ((s_millis % 10u) == 0u)
+        scheduler_tick_10ms();
 }
 
 void systick_init(void)
@@ -49,4 +55,31 @@ void systick_delay_ms(uint32_t ms)
     }
     while ((uint32_t)(s_millis - start) < ms)
         __WFI();
+}
+
+/* The K1's SYSTICK_DelayUs, over this port's SysTick.  SysTick counts down from
+ * LOAD to 0 every millisecond, so elapsed ticks are accumulated across wraps.
+ * Only used for short (microsecond) waits, so the accumulation cannot overflow
+ * a uint32_t before the target is reached. */
+void SYSTICK_DelayUs(uint32_t us)
+{
+    const uint32_t ticks_per_us = SystemCoreClock / 1000000u;
+    const uint32_t ticks = us * ticks_per_us;
+    const uint32_t load  = SysTick->LOAD;
+    uint32_t prev;
+    uint32_t elapsed = 0;
+
+    if (ticks == 0u)
+        return;
+
+    prev = SysTick->VAL;
+    while (elapsed < ticks) {
+        const uint32_t now = SysTick->VAL;
+
+        if (now < prev)
+            elapsed += prev - now;                 /* counting down */
+        else if (now > prev)
+            elapsed += prev + (load - now);        /* wrapped 0 -> LOAD */
+        prev = now;
+    }
 }

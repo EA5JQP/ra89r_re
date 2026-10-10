@@ -2,6 +2,8 @@
 #ifndef HOST_HW_H
 #define HOST_HW_H
 
+#include <stdint.h>
+
 #include "driver/keypad.h"
 
 /* The key the host's keypad reader reports; KEY_INVALID = nothing pressed. */
@@ -9,6 +11,7 @@ void host_set_key(KEY_Code_t key);
 
 /* The PTT2 line (PB9) the boot-mode check reads: true = held. */
 void host_set_ptt2(bool pressed);
+void host_systick_advance(uint32_t milliseconds);
 
 /* How many sector erases the stand-in flash has seen.  A regression check for
  * the one thing that must not happen on a timer: a save that rewrites the blob
@@ -28,5 +31,9 @@ void host_beeper_reset_counts(void);
  * value, or -1 before any call).  The FM feature must mute the RF chip's AF
  * (`BK4819_AF_MUTE` = 0) while it owns the audio; see docs/ra89r_bk1080.md. */
 int host_bk4819_last_af(void);
+
+/* The host's scan-source override state (driver/rx.h's rx_scan_source_t as an
+ * int): the dual-scan lifecycle check confirms it returns to DEFAULT on stop. */
+int host_rx_scan_source(void);
 
 #endif /* HOST_HW_H */

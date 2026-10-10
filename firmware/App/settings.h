@@ -344,6 +344,9 @@ void     codeplug_name(char *out, size_t size, uint16_t channel);
 #define CODEPLUG_CHANNEL_COUNT 210u
 void codeplug_channel_pack(const ChannelScanDisplayInfo_t *info, uint8_t *out);
 void codeplug_channel_unpack(const uint8_t *in, ChannelScanDisplayInfo_t *info);
+/* The port's frequency-channel snapshot, saved inside the settings blob. */
+void codeplug_freq_snapshot(uint8_t *dest, size_t size);
+bool codeplug_freq_restore(const uint8_t *src, size_t size);
 void     SETTINGS_FactoryReset(bool bIsAll);
 #ifdef ENABLE_FMRADIO
     void SETTINGS_SaveFM(void);
@@ -377,4 +380,12 @@ typedef enum {
 
 rf_xcvr_t SETTINGS_GetVfoTransceiver(uint8_t vfo);
 void      SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr);
+
+/* The scanner's mode, shown as the SetScn menu item and persisted in the port's
+ * settings blob.  gSetting_set_scn (misc.c) holds this value at run time. */
+typedef enum {
+    SCAN_MODE_NORMAL    = 0,   /* step scan, no fast precheck */
+    SCAN_MODE_FAST      = 1,   /* single-lane fast RSSI precheck */
+    SCAN_MODE_FAST_BOTH = 2    /* both transceivers as interleaved scan lanes */
+} scan_mode_t;
 #endif

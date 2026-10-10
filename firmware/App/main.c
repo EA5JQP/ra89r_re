@@ -40,6 +40,7 @@
 #include "driver/uart.h"
 #include "driver/py25q16.h"
 #include "app/app.h"
+#include "app/chFrScanner.h"
 #include "app/common.h"
 #include "app/scanner.h"
 #include "helper/boot.h"
@@ -661,6 +662,70 @@ static void bk4815_bench(void)
     }
 }
 
+/* The scan mode the SetScn menu shows (scan_mode_t). */
+static const char *scan_mode_name(void)
+{
+    switch (gSetting_set_scn) {
+        case SCAN_MODE_FAST_BOTH: return "FAST BOTH";
+        case SCAN_MODE_FAST:      return "FAST";
+        default:                  return "NORMAL";
+    }
+}
+
+/* A controlled Default-vs-Both range-scan comparison, run by the console's 'J'.
+ * It forces the selected RX VFO onto a frequency channel over one shared range,
+ * then runs each mode for SCAN_BENCH_MS, pumping the same app loop the main loop
+ * runs, and reports probes over elapsed wall time.  The timing is wall-clock, so
+ * the display and bit-banged bus cost are included, as they are when scanning by
+ * hand.  It restores the saved VFO, range and scan mode before returning. */
+#define SCAN_BENCH_MS 3000u
+
+static void scan_rate_benchmark(void)
+{
+    const uint32_t step  = gRxVfo->StepFrequency ? gRxVfo->StepFrequency : 2500u;
+    const uint32_t start = FREQUENCY_RoundToStep(gRxVfo->freq_config_RX.Frequency, (uint16_t)step);
+    const uint32_t stop  = start + 100000u;   /* 1 MHz, in 10 Hz units */
+    static const char *const names[2] = { "FAST     ", "FAST BOTH" };
+    scan_bench_result_t res[2];
+    unsigned m;
+
+    uart_printf("\nscan benchmark: %u.%05u .. %u.%05u MHz, step %u.%01u kHz, %u ms per mode\n",
+                (unsigned)(start / 100000u), (unsigned)(start % 100000u),
+                (unsigned)(stop / 100000u), (unsigned)(stop % 100000u),
+                (unsigned)(step / 100u), (unsigned)((step % 100u) / 10u),
+                (unsigned)SCAN_BENCH_MS);
+    uart_printf("  ScnRev=%u  SetScn=%s\n",
+                (unsigned)gEeprom.SCAN_RESUME_MODE, scan_mode_name());
+
+    CHFRSCANNER_BenchmarkArm(start, stop);
+    for (m = 0; m < 2u; m++) {
+        uint32_t t0;
+
+        CHFRSCANNER_BenchmarkRun((uint8_t)m);
+        t0 = systick_millis();
+        while ((uint32_t)(systick_millis() - t0) < SCAN_BENCH_MS) {
+            APP_Update();
+            APP_TimeSlice10ms();
+        }
+        CHFRSCANNER_BenchmarkFinish(&res[m]);
+        uart_printf("  %s probes=%u elapsed=%u ms  %u probes/s\n",
+                    names[m], (unsigned)res[m].probes, (unsigned)res[m].elapsed_ms,
+                    (unsigned)res[m].probes_per_second);
+    }
+    CHFRSCANNER_BenchmarkDisarm();
+
+    if (res[0].probes_per_second > 0u) {
+        const uint32_t pct = (res[1].probes_per_second * 100u) / res[0].probes_per_second;
+
+        uart_printf("  FAST BOTH / FAST = %u.%02ux  (%s)\n",
+                    (unsigned)(pct / 100u), (unsigned)(pct % 100u),
+                    (res[1].probes_per_second > res[0].probes_per_second)
+                        ? "faster" : "not faster");
+    } else {
+        uart_puts("  FAST measured 0 probes/s: check squelch and the range\n");
+    }
+}
+
 /* The console's 'J': the live dual-RF state, without re-tuning anything.  Shows
  * the per-VFO transceiver choice, the resolved roles, which chip supplies the
  * receive audio, the squelch state, and the BK4815's own registers/meters, then
@@ -680,6 +745,28 @@ static void dual_rf_diag(void)
     uart_printf("  TrVfoA=%u TrVfoB=%u   TX_VFO=%u RX_VFO=%u\n",
                 (unsigned)a, (unsigned)b,
                 (unsigned)gEeprom.TX_VFO, (unsigned)gEeprom.RX_VFO);
+    {
+        scan_dual_stats_t st;
+
+        CHFRSCANNER_GetScanDualStats(&st);
+        uart_printf("  SetScn=%s (%u)   scan-source override=%u   scan dual active=%d hit=%u\n",
+                    scan_mode_name(), (unsigned)gSetting_set_scn,
+                    (unsigned)rx_scan_source_override(),
+                    (int)st.active, (unsigned)st.selected_hit);
+        uart_printf("  scan probes=%u elapsed=%u ms rate=%u candidates/s\n",
+                    (unsigned)st.rate.candidates, (unsigned)st.rate.elapsed_ms,
+                    (unsigned)st.rate.candidates_per_second);
+        uart_printf("    lane BK4829: cand=%u last=%u.%05u MHz rssi=%u\n",
+                    (unsigned)st.candidates[0],
+                    (unsigned)(st.last_frequency_10hz[0] / 100000u),
+                    (unsigned)(st.last_frequency_10hz[0] % 100000u),
+                    (unsigned)st.last_rssi[0]);
+        uart_printf("    lane BK4815: cand=%u last=%u.%05u MHz rssi=%u\n",
+                    (unsigned)st.candidates[1],
+                    (unsigned)(st.last_frequency_10hz[1] / 100000u),
+                    (unsigned)(st.last_frequency_10hz[1] % 100000u),
+                    (unsigned)st.last_rssi[1]);
+    }
     uart_printf("  tuned: BK4829<-VFO %d   BK4815<-VFO %d   bk4815_active=%d\n",
                 (int)roles.bk4829_vfo, (int)roles.bk4815_vfo,
                 (int)rf_dual_bk4815_active());
@@ -710,6 +797,9 @@ static void dual_rf_diag(void)
                 (unsigned)bk4815_read_reg(0x43), (unsigned)bk4815_read_reg(0x44),
                 (unsigned)(bk4815_read_reg(0x44) & 0x7fu),
                 (unsigned)RX4815_SQUELCH_OPEN_MARK, (unsigned)RX4815_SQUELCH_CLOSE_MARK);
+
+    scan_rate_benchmark();
+
     uart_puts("  sampling 0x44 for ~5 s -- key a signal on the selected VFO now:\n");
 
     for (k = 0; k < 25u; k++) {
