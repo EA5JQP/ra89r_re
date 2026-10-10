@@ -690,6 +690,13 @@ static void ToggleRX(bool on)
     #endif
     isListening = on;
 
+    /* Port addition: the listen target is the peak, so resolve its chip before
+     * branching the AF/bandwidth below.  Doing it here (not in the caller) keeps
+     * every ToggleRX(true) site correct: a BOTH sweep would otherwise use the
+     * last swept step's chip. */
+    if (on)
+        activeChip = StepChip(peak.i);
+
     //RADIO_SetupAGC(settings.modulationType == MODULATION_AM, lockAGC);
     RADIO_SetupAGC(false, lockAGC);
 
