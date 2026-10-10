@@ -72,6 +72,7 @@ ScanInfo scanInfo;
 static KeyboardState kbd = {KEY_INVALID, KEY_INVALID, 0};
 static bool menuKeyPendingShort = false;
 static bool menuKeyLongHandled = false;
+static bool chipKeyLongHandled = false;   /* port addition: KEY_6 one-shot */
 
 #ifdef ENABLE_SCAN_RANGES
 static uint16_t blacklistFreqs[15];
@@ -400,6 +401,15 @@ static spectrum_chip_t StepChip(uint16_t index)
     return spectrum_rf_step_chip(settings.chip, index);
 }
 
+/* Port addition: the receive RF-path pin (the BK4829's 0x33 pin 4) follows the
+ * chip: the stock sets it for the BK4815 branch and clears it for the BK4829
+ * (docs/ra89r_rfpath.md, driver/rx.c's rf_dual_refresh).  Without it the BK4815
+ * reads through the BK4829 path and finds nothing. */
+static void SetChipPath(spectrum_chip_t chip)
+{
+    BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, chip == SPECTRUM_CHIP_4815);
+}
+
 static void ToggleAFBit(bool on)
 {
     if (activeChip == SPECTRUM_CHIP_4815)
@@ -471,6 +481,8 @@ static void SetF(uint32_t f)
     f = NormalizeScanFrequency(f);
     fMeasure = f;
 
+    SetChipPath(activeChip);
+
     if (activeChip == SPECTRUM_CHIP_4815)
     {
         bk4815_set_frequency(fMeasure, false);
@@ -493,6 +505,7 @@ static void SetF(uint32_t f)
 static void SetFScan(uint32_t f)
 {
     activeChip = StepChip(scanInfo.i);
+    SetChipPath(activeChip);
     f = NormalizeScanFrequency(f);
 
     if (activeChip == SPECTRUM_CHIP_4815)
@@ -2223,6 +2236,10 @@ static bool HandleUserInput()
             menuKeyPendingShort = false;
             menuKeyLongHandled = false;
         }
+
+        /* Port addition: re-arm the chip toggle only after KEY_6 is released. */
+        if (kbd.current != KEY_6)
+            chipKeyLongHandled = false;
     }
 
     if (kbd.counter == 3 || kbd.counter == 16)
@@ -2244,10 +2261,12 @@ static bool HandleUserInput()
         }
 
         /* Port addition: long-press KEY_6 cycles the spectrum's chip
-         * (4829 / 4815 / Both).  Short-press KEY_6 keeps toggling the listen
-         * bandwidth in OnKeyDownCommon(). */
-        if (currentState == SPECTRUM && kbd.current == KEY_6 && kbd.counter == 16)
+         * (4829 / 4815 / Both) once per press.  Short-press KEY_6 keeps
+         * toggling the listen bandwidth in OnKeyDownCommon(). */
+        if (currentState == SPECTRUM && kbd.current == KEY_6 && kbd.counter == 16 &&
+            !chipKeyLongHandled)
         {
+            chipKeyLongHandled = true;
             switch (settings.chip)
             {
             case SPECTRUM_CHIP_4829: settings.chip = SPECTRUM_CHIP_4815; break;
