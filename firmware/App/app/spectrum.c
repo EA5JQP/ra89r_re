@@ -26,6 +26,7 @@
 #endif
 
 #include "driver/backlight.h"
+#include "driver/bk4815.h"
 #include "frequencies.h"
 #include "ui/helper.h"
 #include "ui/main.h"
@@ -241,7 +242,8 @@ static void LoadSettings()
     // Data[3]: rssiTriggerLevel as uint8_t (0xFF = auto)
     settings.rssiTriggerLevel = (Data[3] == 0xFF) ? RSSI_MAX_VALUE : Data[3];
 
-    // Data[4] ~ Data[7] are free (for the moment...)
+    // Data[4]: the port's transceiver choice (spectrum_chip_t)
+    settings.chip = spectrum_rf_decode_chip(Data[4]);
 }
 
 static void SaveSettings()
@@ -260,6 +262,9 @@ static void SaveSettings()
 
     // Data[3]: rssiTriggerLevel as uint8_t (0xFF = auto)
     Data[3] = (settings.rssiTriggerLevel == RSSI_MAX_VALUE) ? 0xFF : (uint8_t)settings.rssiTriggerLevel;
+
+    // Data[4]: the port's transceiver choice (spectrum_chip_t)
+    Data[4] = spectrum_rf_encode_chip(settings.chip);
 
     PY25Q16_WriteBuffer(0x00A148, Data, sizeof(Data), false);
 }
@@ -385,8 +390,23 @@ void SetState(State state)
 
 // Radio functions
 
+/* Port addition: the chip the current operation targets.  For the BOTH setting
+ * the spectrum alternates the chip per swept step (spectrum_rf_step_chip). */
+static spectrum_chip_t activeChip = SPECTRUM_CHIP_4829;
+
+static spectrum_chip_t StepChip(uint16_t index)
+{
+    return spectrum_rf_step_chip(settings.chip, index);
+}
+
 static void ToggleAFBit(bool on)
 {
+    if (activeChip == SPECTRUM_CHIP_4815)
+    {
+        /* The BK4815's own AF (0x49); the BK4829's 0x47 does not apply. */
+        bk4815_set_af(on);
+        return;
+    }
     uint16_t reg = BK4819_ReadRegister(BK4819_REG_47);
     reg &= ~(1 << 8);
     if (on)
@@ -429,6 +449,9 @@ static void RestoreRegisters()
 
 static void ToggleAFDAC(bool on)
 {
+    if (activeChip == SPECTRUM_CHIP_4815)
+        return;   /* the BK4815 has no DAC bit; its AF is set in ToggleAFBit() */
+
     uint32_t Reg = BK4819_ReadRegister(BK4819_REG_30);
     Reg &= ~(1 << 9);
     if (on)
@@ -447,6 +470,13 @@ static void SetF(uint32_t f)
     f = NormalizeScanFrequency(f);
     fMeasure = f;
 
+    if (activeChip == SPECTRUM_CHIP_4815)
+    {
+        bk4815_set_frequency(fMeasure, false);
+        bk4815_write_reg(0x75, (fMeasure >= 28000000u) ? 0x0Au : 0x11u);
+        return;
+    }
+
     BK4819_SetFrequency(fMeasure);
     BK4819_PickRXFilterPathBasedOnFrequency(fMeasure);
     uint16_t reg = BK4819_ReadRegister(BK4819_REG_30);
@@ -461,7 +491,16 @@ static void SetF(uint32_t f)
 // cutting the SPI bus activity that causes SPI-induced audio interference.
 static void SetFScan(uint32_t f)
 {
+    activeChip = StepChip(scanInfo.i);
     f = NormalizeScanFrequency(f);
+
+    if (activeChip == SPECTRUM_CHIP_4815)
+    {
+        fMeasure = f;
+        bk4815_set_frequency(f, false);
+        bk4815_write_reg(0x75, (f >= 28000000u) ? 0x0Au : 0x11u);
+        return;
+    }
 
     // Refresh RF path only when crossing the VHF/UHF boundary (280 MHz)
     if ((f < 28000000) != (fMeasure < 28000000))
@@ -581,11 +620,13 @@ static void TuneToPeak()
     scanInfo.f = peak.f;
     scanInfo.rssi = peak.rssi;
     scanInfo.i = peak.i;
+    activeChip = StepChip(peak.i);
     SetF(scanInfo.f);
 }
 
 static void DeInitSpectrum()
 {
+    activeChip = SPECTRUM_CHIP_4829;
     SetF(initialFreq);
     RestoreRegisters();
     isInitialized = false;
@@ -598,6 +639,15 @@ uint8_t GetBWRegValueForScan()
 
 uint16_t GetRssi()
 {
+    activeChip = StepChip(scanInfo.i);
+
+    if (activeChip == SPECTRUM_CHIP_4815)
+    {
+        // Discard first read (AGC may still be transitioning), keep second.
+        bk4815_read_rssi();
+        return spectrum_rf_normalize_rssi(SPECTRUM_CHIP_4815, bk4815_read_rssi());
+    }
+
     // Wait for glitch to settle below threshold (not just < 255)
     uint8_t guard = 50;
     while (guard-- && (BK4819_ReadRegister(0x63) & 0xFF) >= 200)
@@ -655,18 +705,21 @@ static void ToggleRX(bool on)
         listenPrevRssi = peak.rssi;
     #ifdef ENABLE_FEAT_F4HWN_SPECTRUM
         listenT = 25;
-        BK4819_WriteRegister(0x43, listenBWRegValues[settings.listenBw]);
+        if (activeChip != SPECTRUM_CHIP_4815)
+            BK4819_WriteRegister(0x43, listenBWRegValues[settings.listenBw]);
         setTailFoundInterrupt();
     #else
         listenT = 1000;
-        BK4819_WriteRegister(0x43, listenBWRegValues[settings.listenBw]);
+        if (activeChip != SPECTRUM_CHIP_4815)
+            BK4819_WriteRegister(0x43, listenBWRegValues[settings.listenBw]);
     #endif
     }
     else
     {
         listenLowCount = 0;
         listenPrevRssi = RSSI_MAX_VALUE;
-        BK4819_WriteRegister(0x43, GetBWRegValueForScan());
+        if (activeChip != SPECTRUM_CHIP_4815)
+            BK4819_WriteRegister(0x43, GetBWRegValueForScan());
     }
 }
 
@@ -935,6 +988,7 @@ static void ResetSpectrumToDefaults()
     settings.listenBw = BK4819_FILTER_BW_WIDE;
     settings.modulationType = gTxVfo->Modulation;
     settings.rssiTriggerLevel = RSSI_MAX_VALUE;
+    settings.chip = SPECTRUM_CHIP_4829;
     autoNoiseFloor = RSSI_MAX_VALUE;
 
     // Keep frequency/range unchanged; recompute move step from fresh scan params.
@@ -1668,6 +1722,13 @@ static void DrawNums()
         sprintf(String, "%ux", GetStepsCount());
 #endif
         GUI_DisplaySmallest(String, 0, 1, false, true);
+
+        // Port addition: the transceiver choice (BK4829 / BK4815 / Both),
+        // beside the step/count the spectrum already draws here.
+        sprintf(String, "%s", settings.chip == SPECTRUM_CHIP_4829 ? "4829"
+                            : settings.chip == SPECTRUM_CHIP_4815 ? "4815" : "BOTH");
+        GUI_DisplaySmallest(String, 20, 1, false, true);
+
         sprintf(String, "%u.%02uk", GetScanStep() / 100, GetScanStep() % 100);
         GUI_DisplaySmallest(String, 0, 7, false, true);
 
@@ -2171,6 +2232,21 @@ static bool HandleUserInput()
             return true;
         }
 
+        /* Port addition: long-press KEY_6 cycles the spectrum's chip
+         * (4829 / 4815 / Both).  Short-press KEY_6 keeps toggling the listen
+         * bandwidth in OnKeyDownCommon(). */
+        if (currentState == SPECTRUM && kbd.current == KEY_6 && kbd.counter == 16)
+        {
+            switch (settings.chip)
+            {
+            case SPECTRUM_CHIP_4829: settings.chip = SPECTRUM_CHIP_4815; break;
+            case SPECTRUM_CHIP_4815: settings.chip = SPECTRUM_CHIP_BOTH; break;
+            default:                 settings.chip = SPECTRUM_CHIP_4829; break;
+            }
+            redrawStatus = true;
+            return true;
+        }
+
         if (currentState == FREQ_INPUT)
             OnKeyDownFreqInput(kbd.current);
 
@@ -2389,9 +2465,11 @@ static void UpdateListening()
 
     if (currentState == SPECTRUM)
     {
-        BK4819_WriteRegister(0x43, GetBWRegValueForScan());
+        if (activeChip != SPECTRUM_CHIP_4815)
+            BK4819_WriteRegister(0x43, GetBWRegValueForScan());
         Measure();
-        BK4819_WriteRegister(0x43, listenBWRegValues[settings.listenBw]);
+        if (activeChip != SPECTRUM_CHIP_4815)
+            BK4819_WriteRegister(0x43, listenBWRegValues[settings.listenBw]);
     }
     else
     {

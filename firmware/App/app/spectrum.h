@@ -20,6 +20,7 @@
 #pragma once
 
 #include "keyboard_state.h"
+#include "spectrum_rf.h"
 
 #include "../bitmaps.h"
 #include "../board.h"
@@ -165,6 +166,7 @@ typedef struct SpectrumSettings
     int dbMax;
     ModulationMode_t modulationType;
     bool backlightState;
+    spectrum_chip_t chip;   /* port addition: BK4829 / BK4815 / Both */
 } SpectrumSettings;
 
 typedef struct ScanInfo
