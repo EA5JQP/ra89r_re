@@ -118,6 +118,12 @@ void             rx_clear_scan_source_override(void) { s_host_scan_source = 0; }
 rx_scan_source_t rx_scan_source_override(void) { return (rx_scan_source_t)s_host_scan_source; }
 int              host_rx_scan_source(void) { return s_host_scan_source; }
 
+/* The spectrum screen (App/app/spectrum.c) is a blocking loop the preview does
+ * not drive, but App/app/main.c references APP_RunSpectrum() under
+ * ENABLE_SPECTRUM.  This stands in so the preview links; the target links the
+ * real module. */
+void APP_RunSpectrum(void) { }
+
 /* Keypad: the RA89R reads an ADC ladder, so the host stands in with a key the
  * preview sets by hand -- that is how the port's key loop (port_gui.c) is
  * exercised without a radio. */

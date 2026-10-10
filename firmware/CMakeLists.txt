@@ -90,6 +90,7 @@ set(APP_SOURCES
     App/app/common.c
     App/app/chFrScanner.c
     App/app/scan_dual.c
+    App/app/spectrum.c
     App/app/dtmf.c
     App/app/scanner.c
     App/board.c
