@@ -16,6 +16,7 @@
 #include "app/app.h"
 #include "app/action.h"
 #include "app/chFrScanner.h"
+#include "app/spectrum_rf.h"
 #include "app/fm.h"
 #include "app/menu.h"
 #include "audio.h"
@@ -384,6 +385,17 @@ int main(void)
 
         ok = gScanRangeStart == saved_start;
         printf("[scan] %s benchmark restores the scan range\n", ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+    }
+
+    /* The spectrum's chip policy (App/app/spectrum_rf.c) is linked here so the
+     * imported screen's dependency compiles on the host too; the spectrum's own
+     * blocking screen is not host-driven. */
+    {
+        const bool ok =
+            spectrum_rf_decode_chip(spectrum_rf_encode_chip(SPECTRUM_CHIP_BOTH)) == SPECTRUM_CHIP_BOTH &&
+            spectrum_rf_step_chip(SPECTRUM_CHIP_BOTH, 1) == SPECTRUM_CHIP_4815;
+        printf("[spectrum] %s the chip policy is linked and round-trips\n", ok ? "ok  " : "FAIL");
         if (!ok) failures++;
     }
 

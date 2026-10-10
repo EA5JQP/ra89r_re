@@ -27,6 +27,7 @@
 
 #include "driver/backlight.h"
 #include "driver/bk4815.h"
+#include "driver/rx.h"
 #include "frequencies.h"
 #include "ui/helper.h"
 #include "ui/main.h"
@@ -629,6 +630,9 @@ static void DeInitSpectrum()
     activeChip = SPECTRUM_CHIP_4829;
     SetF(initialFreq);
     RestoreRegisters();
+    /* Port addition: a 4815/Both session leaves the BK4815 tuned mid-sweep;
+     * re-apply the receive routing so normal receive resumes on exit. */
+    rf_dual_reapply();
     isInitialized = false;
 }
 
