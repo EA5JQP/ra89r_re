@@ -45,6 +45,11 @@ $CC -std=c11 -I App -I App/driver tools/test_scan_dual.c \
     App/app/scan_dual.c -o /tmp/ra89r_test_scan_dual
 run /tmp/ra89r_test_scan_dual
 
+echo "== test_cat (FT-817 CAT frame parser) =="
+$CC -std=c11 -I App -I App/driver tools/test_cat.c \
+    App/cat.c -o /tmp/ra89r_test_cat
+run /tmp/ra89r_test_cat
+
 echo "== preview_k1 (screens + keys + settings, on a PC) =="
 $CC $HOST_FLAGS -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
     -ffunction-sections -fdata-sections -Wl,--gc-sections \

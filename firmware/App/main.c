@@ -38,6 +38,13 @@
 #include "driver/st7565.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
+
+/* FT-817 CAT auto-detect (App/cat.c): the serial port carries console text and
+ * CAT frames on the same wire, so bytes are fed here first. */
+#ifdef ENABLE_CAT
+#include "cat.h"
+static cat_parser_t cat_parser;
+#endif
 #include "driver/py25q16.h"
 #include "app/app.h"
 #include "app/chFrScanner.h"
@@ -1532,6 +1539,18 @@ int main(void)
         int c = uart_getc();
 
         if (c >= 0) {
+            bool cat_handled = false;
+#ifdef ENABLE_CAT
+            {
+                uint8_t cat_frame[CAT_FRAME_LEN];
+
+                if (cat_parser_feed(&cat_parser, (uint8_t)c, cat_frame)) {
+                    cat_apply(cat_frame);
+                    cat_handled = true;
+                }
+            }
+#endif
+            if (!cat_handled) {
             char ch = (char)c;
 
             /* echo and remember the last characters on the display */
@@ -1970,6 +1989,7 @@ int main(void)
                     lcd_refresh();
                 }
             }
+            }   /* if (!cat_handled) */
         } else {
             systick_delay_ms(1);
         }
