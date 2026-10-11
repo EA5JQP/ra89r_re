@@ -1,4 +1,4 @@
-/* FT-817 CAT frame parser.  See App/cat.h and docs/ra89r_cat.md.
+/* FT-817 CAT frame parser.  See App/cat.h, docs/ra89r_carserial.md.
  *
  * Device-header free: the parsing decisions are pure so they can be checked on
  * a PC (tools/test_cat.c).

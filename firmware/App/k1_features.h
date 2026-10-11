@@ -52,7 +52,8 @@
 
 /* FT-817 CAT auto-detect on the serial port (App/cat.c, App/cat_radio.c).  The
  * finished firmware has no console, so when this is on the port is CAT-only;
- * build with it off to keep the bring-up console.  See docs/ra89r_cat.md. */
+ * build with it off to keep the bring-up console.  See docs/ra89r_cat.md and
+ * docs/ra89r_carserial.md. */
 #define ENABLE_CAT 1
 
 /* FM broadcast: the RA89R *does* carry a BK1080 FM receiver (docs/ra89r_bk1080.md),
