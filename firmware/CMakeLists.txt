@@ -92,6 +92,8 @@ set(APP_SOURCES
     App/app/scan_dual.c
     App/app/dtmf.c
     App/app/scanner.c
+    App/cat.c
+    App/cat_radio.c
     App/board.c
     App/radio.c
     App/functions.c
