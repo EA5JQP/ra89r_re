@@ -123,12 +123,6 @@
 #define KEYPAD_ANALOG_A_MASK  ((1u << 2) | (1u << 3) | (1u << 6) | (1u << 7))
 #define KEYPAD_ANALOG_B_MASK  ((1u << 0) | (1u << 1))
 #define KEYPAD_PTT2_PIN       (1u << 9)
-/* PTT1 is read on PB10 -- the stock's PTT1 line (`ReadInputDataBit` mask 0x400
- * @ 0x0802192E, docs/ra89r_pins.md).  PTT1 also pulls the PA2 ladder fully low
- * (keypad.c), so PB9/PTT2 is the only *separate* PTT key; boot-time code must
- * use PTT1, never PTT2, because PB9 low at reset is the bootloader's
- * update-mode gate. */
-#define KEYPAD_PTT1_PIN       (1u << 10)
 
 /* RF transceivers: two BK481x parts are fitted, sharing one bit-banged bus with
  * a chip select each (docs/ra89r_rfpath.md).  Clock `PA12`, bidirectional data `PB12`

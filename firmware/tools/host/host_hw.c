@@ -123,7 +123,6 @@ int              host_rx_scan_source(void) { return s_host_scan_source; }
  * exercised without a radio. */
 static KEY_Code_t s_host_key  = KEY_INVALID;
 static bool       s_host_ptt2 = false;
-static bool       s_host_ptt1 = false;
 
 void host_set_key(KEY_Code_t key)
 {
@@ -135,11 +134,6 @@ void host_set_ptt2(bool pressed)
     s_host_ptt2 = pressed;
 }
 
-void host_set_ptt1(bool pressed)
-{
-    s_host_ptt1 = pressed;
-}
-
 KEY_Code_t keypad_poll(void)
 {
     return s_host_key;
@@ -149,12 +143,6 @@ KEY_Code_t keypad_poll(void)
 bool keypad_ptt2_level(void)
 {
     return !s_host_ptt2;
-}
-
-/* PB10: PTT1, the main PTT, low = pressed (see driver/keypad.c). */
-bool keypad_ptt1_level(void)
-{
-    return !s_host_ptt1;
 }
 
 /* `helper/boot.c` prints what it sampled and names the keys; the preview links

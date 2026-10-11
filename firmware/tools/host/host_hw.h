@@ -9,12 +9,9 @@
 /* The key the host's keypad reader reports; KEY_INVALID = nothing pressed. */
 void host_set_key(KEY_Code_t key);
 
-/* The PTT2 line (PB9): true = held.  Kept for the tx-stand-in; the boot-mode
- * check no longer reads it (PB9 is the bootloader's update-mode gate). */
+/* The PTT2 line (PB9): true = held.  The boot-mode check no longer reads it
+ * (PB9 is the bootloader's update-mode gate); it stays for the tx stand-in. */
 void host_set_ptt2(bool pressed);
-
-/* The PTT1 line (PB10), the main PTT the boot-mode check reads: true = held. */
-void host_set_ptt1(bool pressed);
 
 void host_systick_advance(uint32_t milliseconds);
 

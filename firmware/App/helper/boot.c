@@ -49,16 +49,16 @@ BOOT_Mode_t BOOT_GetMode(void)
 
     /* Two samples, 20 ms apart, as the K1: the PTT has to be held for both.
      *
-     * The PTT is PTT1 -- the *main* PTT, on PB10 -- not PTT2.  PTT2 is PB9,
-     * which is the bootloader's update-mode gate: holding PTT2 with any PA2 key
-     * at reset drops the radio into update mode instead of this application, so
-     * it must never be the boot combination key.  PTT1 also pulls the PA2 ladder
-     * fully low (keypad.c), so its window masks SIDE1 on the shared line; PTT1
-     * held is therefore the whole condition. */
+     * The PTT is PTT1 -- the *main* PTT -- which on this radio pulls the PA2
+     * ladder fully low, i.e. it is the KEY_PTT window, read from the ladder.
+     * It is NOT read from PB9 (PTT2): PB9 is the bootloader's update-mode gate,
+     * so holding it with any PA2 key at reset enters update mode instead of this
+     * application.  (PTT1 shares the PA2 line with SIDE1, so its window masks
+     * SIDE1 on that line; PTT1 held is therefore the whole condition.) */
     for (i = 0; i < 2; i++)
     {
         Keys[i]       = keypad_poll();
-        PttPressed[i] = !keypad_ptt1_level() || (Keys[i] == KEY_PTT);
+        PttPressed[i] = (Keys[i] == KEY_PTT);
         SYSTEM_DelayMs(20);
     }
 

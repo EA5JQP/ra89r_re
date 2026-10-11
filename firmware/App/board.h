@@ -25,7 +25,6 @@
 #define KEYPAD_ANALOG_A_PORT GPIOA
 #define KEYPAD_ANALOG_B_PORT GPIOB
 #define KEYPAD_PTT2_PORT     GPIOB
-#define KEYPAD_PTT1_PORT     GPIOB
 
 /* RF transceivers -- one shared 3-wire bus, a select per chip (board_pins.h) */
 #define BK_SCL_PORT          GPIOA

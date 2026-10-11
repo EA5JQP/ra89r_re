@@ -101,9 +101,4 @@ const uint8_t *keypad_variants(int code);
 /* PTT2 on PB9: the level as read (low = pressed). */
 bool keypad_ptt2_level(void);
 
-/* PTT1 -- the *main* PTT -- on PB10: the level as read (low = pressed).  This
- * is the PTT the stock reads on its own line; PB9 (PTT2) is the bootloader's
- * update-mode gate, so boot-time code must use this, not PTT2. */
-bool keypad_ptt1_level(void);
-
 #endif /* DRIVER_KEYPAD_H */

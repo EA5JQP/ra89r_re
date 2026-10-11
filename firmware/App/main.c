@@ -1493,8 +1493,7 @@ int main(void)
     gpio_config_analog(KEYPAD_ANALOG_A_PORT, KEYPAD_ANALOG_A_MASK);
     gpio_config_analog(KEYPAD_ANALOG_B_PORT, KEYPAD_ANALOG_B_MASK);
     gpio_config_input(KEYPAD_PTT2_PORT, KEYPAD_PTT2_PIN);
-    gpio_config_input(KEYPAD_PTT1_PORT, KEYPAD_PTT1_PIN);
-    uart_puts("keypad: PA2/PA3/PA6/PA7/PB0/PB1 analog, PB9/PB10 inputs (default state)\n");
+    uart_puts("keypad: PA2/PA3/PA6/PA7/PB0/PB1 analog, PB9 input (default state)\n");
     if (keypad_init())
         uart_printf("keypad: ADC scanning 6 channels through DMA (%u keypad lines), "
                     "PTT2 on PB9\n", (unsigned)KEYPAD_LINE_COUNT);

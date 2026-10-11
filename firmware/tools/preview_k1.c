@@ -826,37 +826,34 @@ int main(void)
             failures++;
     }
 
-    /* The K1's boot-time key mode (helper/boot.c): holding the main PTT at
-     * power-on opens the hidden menu.  PTT1 is PB10 -- NOT PTT2/PB9, which is
-     * the bootloader's update-mode gate -- and it also masks the PA2 ladder, so
-     * the condition is PTT1 held. */
+    /* The K1's boot-time key mode (helper/boot.c): holding PTT1 at power-on
+     * opens the hidden menu.  PTT1 is the KEY_PTT ladder window -- NOT PB9
+     * (PTT2), which is the bootloader's update-mode gate. */
     {
         bool         ok;
         BOOT_Mode_t  m;
 
-        host_set_key(KEY_SIDE1);
-        host_set_ptt1(true);
+        host_set_key(KEY_PTT);
         m = BOOT_GetMode();
         ok = (m == BOOT_MODE_F_LOCK);
         printf("[boot] %s PTT1 held -> F-lock (hidden menu)\n", ok ? "ok  " : "FAIL");
         if (!ok) failures++;
 
-        host_set_ptt1(false);
+        host_set_key(KEY_INVALID);
         m = BOOT_GetMode();
         ok = (m == BOOT_MODE_NORMAL);
         printf("[boot] %s no PTT -> normal\n", ok ? "ok  " : "FAIL");
         if (!ok) failures++;
 
-        /* PTT2/PB9 must NOT open it: that line is the bootloader's gate. */
-        host_set_ptt2(true);
+        /* PTT2 must NOT open it: that line is the bootloader's gate. */
+        host_set_key(KEY_PTT2);
         m = BOOT_GetMode();
         ok = (m == BOOT_MODE_NORMAL);
-        printf("[boot] %s PTT2/PB9 alone -> normal (bootloader gate)\n", ok ? "ok  " : "FAIL");
+        printf("[boot] %s PTT2 -> normal (not the boot PTT)\n", ok ? "ok  " : "FAIL");
         if (!ok) failures++;
 
         host_set_key(KEY_INVALID);
         host_set_ptt2(false);
-        host_set_ptt1(false);
     }
 
     /* The K1 backlight driver: the logic is host-testable, the TIM7/DMA writes
