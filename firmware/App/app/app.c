@@ -1324,8 +1324,12 @@ void APP_Update(void)
     if (gReducedService)
         return;
 
-    if (gCurrentFunction != FUNCTION_TRANSMIT)
+    if (gCurrentFunction != FUNCTION_TRANSMIT) {
+        uint32_t _t = systick_millis();
         HandleFunction();
+        if ((uint32_t)(systick_millis() - _t) > 25u)
+            uart_printf("[func] dt=%ums\n", (unsigned)(systick_millis() - _t));
+    }
 
 #ifdef ENABLE_FMRADIO_EMBEDDED
 //  if (gFmRadioCountdown_500ms > 0)
@@ -1341,7 +1345,10 @@ void APP_Update(void)
         && !UI_MAIN_ShouldHoldScanResume())
 #endif
     {   // scanning
+        uint32_t _t = systick_millis();
         CHFRSCANNER_ContinueScanning();
+        if ((uint32_t)(systick_millis() - _t) > 25u)
+            uart_printf("[step] dt=%ums\n", (unsigned)(systick_millis() - _t));
     }
 
 #ifdef ENABLE_NOAA
