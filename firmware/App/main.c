@@ -2007,6 +2007,15 @@ int main(void)
             case 'C':
                 audio_path_toggle();
                 break;
+            case 'U': {
+                bool on = !tx_probe_keep_4815_rx_enabled();
+
+                tx_probe_keep_4815_rx(on);
+                uart_printf("\nfull-duplex probe: BK4815 across TX %s\n",
+                            on ? "LEFT IN RX (untouched)"
+                               : "driven as before (normal)");
+                break;
+            }
             case 'T':
                 tx_diag();
                 break;

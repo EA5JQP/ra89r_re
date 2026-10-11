@@ -64,6 +64,12 @@ void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source);
 void tx_stop(void);
 
 bool tx_active(void);
+
+/* PROBE (full-duplex, throwaway): when on, tx_start/tx_stop leave the BK4815
+ * alone (no T/R write, no TX-mode retune), so a BK4815 left in RX survives a
+ * BK4829 transmission.  Console 'U'. */
+void tx_probe_keep_4815_rx(bool on);
+bool tx_probe_keep_4815_rx_enabled(void);
 tx_source_t tx_source(void);
 
 /* Read PTT from the keypad and drive the measured transmit chain; called by the
