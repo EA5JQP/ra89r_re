@@ -9,7 +9,6 @@
 #include "driver/bk4815.h"
 #include "driver/pa.h"
 #include "driver/rx.h"
-#include "driver/uart.h"
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 #include "driver/systick.h"
 #endif
@@ -1269,9 +1268,6 @@ void CHFRSCANNER_Found(void)
 
 void CHFRSCANNER_Stop(void)
 {
-    /* DEBUG (bug 1): confirm the stop path runs (and when). */
-    uart_printf("[scan] stop (dir %d)\n", (int)gScanStateDir);
-
     if(initialCROSS_BAND_RX_TX != CROSS_BAND_OFF) {
         gEeprom.CROSS_BAND_RX_TX = initialCROSS_BAND_RX_TX;
         initialCROSS_BAND_RX_TX = CROSS_BAND_OFF;
