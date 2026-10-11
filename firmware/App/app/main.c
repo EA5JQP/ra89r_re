@@ -26,6 +26,7 @@
 #include "app/generic.h"
 #include "app/main.h"
 #include "app/scanner.h"
+#include "driver/uart.h"
 
 #ifdef ENABLE_SPECTRUM
 #include "app/spectrum.h"
@@ -703,6 +704,10 @@ static void MAIN_Key_DIGITS(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 
 static void MAIN_Key_EXIT(bool bKeyPressed, bool bKeyHeld)
 {
+    /* DEBUG (bug 1): does EXIT reach here on the first tap, and is the scan
+     * still active?  Remove once the airband scan-stop latency is settled. */
+    uart_printf("[exit] p=%d h=%d scan=%d\n", bKeyPressed ? 1 : 0, bKeyHeld ? 1 : 0, (int)gScanStateDir);
+
     if (!bKeyHeld && bKeyPressed) { // exit key pressed
         gBeepToPlay = BEEP_1KHZ_60MS_OPTIONAL;  // beep when key is pressed
         return;                                 // don't use the key till it's released
