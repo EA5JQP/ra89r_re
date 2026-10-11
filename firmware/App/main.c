@@ -2102,14 +2102,24 @@ int main(void)
              * slice too, and driver/rx.c’s squelch read is one BK4819_GetRSSI()
              * -- about 0.6 ms of bit-banged RF bus, so running it thousands of
              * times a second leaves the application almost no CPU at all. */
-            APP_Update();
+            {
+                uint32_t t0 = systick_millis();
+                APP_Update();
+                if (gScanStateDir != SCAN_OFF && (uint32_t)(systick_millis() - t0) > 25u)
+                    uart_printf("[upd] dt=%ums\n", (unsigned)(systick_millis() - t0));
+            }
 
             if ((uint32_t)(now - slice10) >= 10u) {
+                uint32_t t1 = systick_millis();
+
                 slice10 = now;
                 APP_TimeSlice10ms();
 
                 tx_poll_ptt();
                 rx_service();
+
+                if (gScanStateDir != SCAN_OFF && (uint32_t)(systick_millis() - t1) > 25u)
+                    uart_printf("[ts] dt=%ums\n", (unsigned)(systick_millis() - t1));
             }
             if ((uint32_t)(now - slice500) >= 500u) {
                 slice500 = now;
