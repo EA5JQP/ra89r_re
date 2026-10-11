@@ -346,7 +346,7 @@ void RADIO_ConfigureChannel(const unsigned int VFO, const unsigned int configure
          * including where a frequency channel's own frequency is kept. */
         ChannelScanDisplayInfo_t info;
 
-        if (SETTINGS_FetchChannelScanDisplayInfo(channel, &info))
+        if (SETTINGS_FetchChannelScanDisplayInfo(VFO, channel, &info))
         {
             pVfo->TX_OFFSET_FREQUENCY_DIRECTION = info.txOffsetFrequencyDirection;
             pVfo->Modulation                    = info.modulation;
@@ -370,10 +370,18 @@ void RADIO_ConfigureChannel(const unsigned int VFO, const unsigned int configure
 #endif
             pVfo->DTMF_PTT_ID_TX_MODE  = info.dtmfPttIdTxMode;
 
-            if (info.rx.Frequency == 0xFFFFFFFFu)
-                pVfo->freq_config_RX.Frequency = frequencyBandTable[band].lower;
-            else
-                pVfo->freq_config_RX.Frequency = info.rx.Frequency;
+            /* Only a full reload (a VFO switch) takes the channel's own
+             * frequency.  A plain reconfigure must not: it runs in the same pass
+             * as a frequency step, before that step has been saved (the save is
+             * deferred to key release), so re-reading would undo the step and
+             * the VFO could never be tuned. */
+            if (VFO_CONFIGURE_RELOAD == configure)
+            {
+                if (info.rx.Frequency == 0xFFFFFFFFu)
+                    pVfo->freq_config_RX.Frequency = frequencyBandTable[band].lower;
+                else
+                    pVfo->freq_config_RX.Frequency = info.rx.Frequency;
+            }
 
             pVfo->TX_OFFSET_FREQUENCY = info.offset;
         }

@@ -1030,14 +1030,6 @@ static void MAIN_Key_UP_DOWN(bool bKeyPressed, bool bKeyHeld, int8_t Direction)
                 gTxVfo->freq_config_RX.Frequency = frequency;
                 BK4819_SetFrequency(frequency);
                 BK4819_RX_TurnOn();
-                /* Commit the new frequency into the channel image *now*.  The
-                 * VFO reconfigure in CheckKeys reloads a frequency channel's
-                 * frequency from it (RADIO_ConfigureChannel, radio.c), and the
-                 * deferred save (flagSaveChannel, on key release) would leave
-                 * that reload reading the old value and undo the step -- one
-                 * step forward, one back.  This write is the port's RAM image
-                 * (codeplug_freq_set), not a flash write. */
-                SETTINGS_SaveChannel(gTxVfo->CHANNEL_SAVE, gEeprom.TX_VFO, gTxVfo, 1);
                 gRequestSaveChannel = 1;
                 return;
             }

@@ -483,7 +483,7 @@ bool SETTINGS_FetchChannelScanInfo(const uint16_t channel, uint32_t *frequency, 
 {
     ChannelScanDisplayInfo_t info;
 
-    if (!SETTINGS_FetchChannelScanDisplayInfo(channel, &info)) {
+    if (!SETTINGS_FetchChannelScanDisplayInfo(gEeprom.RX_VFO, channel, &info)) {
         if (frequency != 0)
             *frequency = 0u;
         if (modulation != 0)
@@ -498,7 +498,7 @@ bool SETTINGS_FetchChannelScanInfo(const uint16_t channel, uint32_t *frequency, 
     return true;
 }
 
-bool SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDisplayInfo_t *info)
+bool SETTINGS_FetchChannelScanDisplayInfo(uint8_t vfo, const uint16_t channel, ChannelScanDisplayInfo_t *info)
 {
     if (info == 0)
         return false;
@@ -515,7 +515,7 @@ bool SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDis
     }
 
     if (IS_FREQ_CHANNEL(channel))
-        return codeplug_freq_get(channel, gEeprom.RX_VFO, info);
+        return codeplug_freq_get(channel, vfo, info);
 
     return false;
 }
@@ -645,7 +645,7 @@ void SETTINGS_SaveChannel(uint16_t Channel, uint8_t VFO, const VFO_Info_t *pVFO,
         info.dtmfPttIdTxMode = pVFO->DTMF_PTT_ID_TX_MODE;
 
         if (IS_FREQ_CHANNEL(Channel)) {
-            codeplug_freq_set(Channel, gEeprom.TX_VFO, &info);
+            codeplug_freq_set(Channel, VFO, &info);
         } else {
             uint8_t raw[16];
 

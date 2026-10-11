@@ -443,7 +443,7 @@ static void print_profile(void)
     t0 = systick_millis();
     for (i = 0; i < 20u; i++) {
         ChannelScanDisplayInfo_t info;
-        if (SETTINGS_FetchChannelScanDisplayInfo(0, &info))
+        if (SETTINGS_FetchChannelScanDisplayInfo(gEeprom.RX_VFO, 0, &info))
             sink += info.rx.Frequency;
     }
     t1 = systick_millis();

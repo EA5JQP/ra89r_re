@@ -328,7 +328,7 @@ void     SETTINGS_FixupVfoPointers(void);
 
 uint32_t SETTINGS_FetchChannelFrequency(const uint16_t channel);
 bool     SETTINGS_FetchChannelScanInfo(const uint16_t channel, uint32_t *frequency, ModulationMode_t *modulation);
-bool     SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDisplayInfo_t *info);
+bool     SETTINGS_FetchChannelScanDisplayInfo(uint8_t vfo, const uint16_t channel, ChannelScanDisplayInfo_t *info);
 void     SETTINGS_FetchChannelName(char *s, const uint16_t channel);
 /* The K1's ChannelAttributes_t as a plain u16, decoded from the stock codeplug
  * (whose format now lives in settings.c).  0xFFFF = no such channel. */

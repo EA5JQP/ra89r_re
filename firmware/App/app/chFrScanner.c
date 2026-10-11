@@ -434,7 +434,7 @@ static bool ScanFastUpdateDisplayVfo(uint16_t channel, uint32_t *frequency, Modu
 {
     ChannelScanDisplayInfo_t info;
 
-    if (!SETTINGS_FetchChannelScanDisplayInfo(channel, &info))
+    if (!SETTINGS_FetchChannelScanDisplayInfo(gEeprom.RX_VFO, channel, &info))
     {
         scanFastDisplayVfoValid = false;
         return false;
@@ -1593,7 +1593,7 @@ bool CHFRSCANNER_NextCandidate(scan_candidate_t *out)
         if (!IS_MR_CHANNEL(chan))
             return false;
 
-        if (!SETTINGS_FetchChannelScanDisplayInfo(chan, &info))
+        if (!SETTINGS_FetchChannelScanDisplayInfo(gEeprom.RX_VFO, chan, &info))
             return false;
 
         out->channel           = chan;
