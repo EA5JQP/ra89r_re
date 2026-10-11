@@ -246,3 +246,14 @@ keypad.  Also worth knowing from that example: it runs its DMA 16-bit
 the value is in the low 12 bits.  **Not yet run on the radio** -- the `k` monitor is the check, and the
 raw values it prints should be unchanged (they are the same measurement, still
 averaged over eight samples).
+
+## Port note: boot-time PTT is PTT1 on PB10, never PTT2 on PB9 (2026-10-11)
+
+`PB9` is the line the **bootloader** gates on, so holding it with any `PA2` key
+at reset drops the radio into **update mode** instead of running the application
+— measured: "PTT2 + SIDE1 puts the radio in update mode".  The boot-time key
+mode (`helper/boot.c`) therefore must **not** read `PB9`.  It reads the **main
+PTT (PTT1)** on **`PB10`** instead (the stock's own PTT1 read), with the ladder
+`KEY_PTT` as a fallback.  PTT1 also pulls the `PA2` ladder fully low, so it
+masks `SIDE1` on the shared line: the hidden-menu combination is effectively
+**PTT1 held** at power-on.

@@ -88,6 +88,7 @@ typedef struct {
 } kp_line_t;
 
 static void keypad_init_ptt2(void);
+static void keypad_init_ptt1(void);
 
 /* ------------------------------------------------------------------------- */
 /* ADC -- free-running scan through DMA, as the stock application does        */
@@ -226,6 +227,7 @@ bool keypad_init(void)
     ADC1->CR2 |= ADC_CR2_EXTTRIG | ADC_CR2_SWSTART; /* kick the sequence off */
 
     keypad_init_ptt2();
+    keypad_init_ptt1();
 
     /* Prove the scan is really running, and that it is *writing*: a dead DMA
      * leaves the buffer at zero, and an all-zero read is indistinguishable from
@@ -248,6 +250,13 @@ static void keypad_init_ptt2(void)
     /* PB9 is already a plain input (main.c parks the keypad pins); nothing to do
      * beyond making sure its port clock is on for the read. */
     gpio_port_clock(KEYPAD_PTT2_PORT);
+}
+
+static void keypad_init_ptt1(void)
+{
+    /* PB10 is already a plain input (main.c parks it); just make sure its port
+     * clock is on for the read. */
+    gpio_port_clock(KEYPAD_PTT1_PORT);
 }
 /* Newest conversion of one line.  Non-blocking: it is a memory read, and at most
  * one round old -- the DMA writes all six slots and wraps. */
@@ -404,4 +413,9 @@ const char *keypad_stock_name(int code)
 bool keypad_ptt2_level(void)
 {
     return gpio_read(KEYPAD_PTT2_PORT, KEYPAD_PTT2_PIN) ? true : false;
+}
+
+bool keypad_ptt1_level(void)
+{
+    return gpio_read(KEYPAD_PTT1_PORT, KEYPAD_PTT1_PIN) ? true : false;
 }

@@ -47,12 +47,18 @@ BOOT_Mode_t BOOT_GetMode(void)
      * sample (the K1's matrix scan needs no such settle). */
     SYSTEM_DelayMs(50);
 
-    /* Two samples, 20 ms apart, as the K1: PTT has to be held for both, and the
-     * same key has to be down for both. */
+    /* Two samples, 20 ms apart, as the K1: the PTT has to be held for both.
+     *
+     * The PTT is PTT1 -- the *main* PTT, on PB10 -- not PTT2.  PTT2 is PB9,
+     * which is the bootloader's update-mode gate: holding PTT2 with any PA2 key
+     * at reset drops the radio into update mode instead of this application, so
+     * it must never be the boot combination key.  PTT1 also pulls the PA2 ladder
+     * fully low (keypad.c), so its window masks SIDE1 on the shared line; PTT1
+     * held is therefore the whole condition. */
     for (i = 0; i < 2; i++)
     {
-        PttPressed[i] = !keypad_ptt2_level();   /* PB9 low = PTT held */
         Keys[i]       = keypad_poll();
+        PttPressed[i] = !keypad_ptt1_level() || (Keys[i] == KEY_PTT);
         SYSTEM_DelayMs(20);
     }
 
@@ -68,12 +74,9 @@ BOOT_Mode_t BOOT_GetMode(void)
         gKeyReading0     = Keys[0];
         gKeyReading1     = Keys[0];
         gDebounceCounter = 2;
-
-        if (Keys[0] == KEY_SIDE1)
-            return BOOT_MODE_F_LOCK;
     }
 
-    return BOOT_MODE_NORMAL;
+    return BOOT_MODE_F_LOCK;
 }
 
 void BOOT_ProcessMode(BOOT_Mode_t Mode)

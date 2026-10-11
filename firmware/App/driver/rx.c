@@ -140,11 +140,18 @@ void rx_poll(void)
         return;
 
     if (s_audio_4815) {
+        /* Squelch 0 is the K1's "always open": RADIO_ConfigureSquelchAndOutputPower()
+         * forces the BK4829's chip-squelch thresholds to 0 for it.  This
+         * software gate must honour it too, or a BK4815 VFO stays muted below
+         * the fixed mark even with the user's squelch turned off. */
+        const bool squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
+
         s_rssi = bk4815_read_rssi();
 
-        if (s_force_4815_af || (!s_squelch_open && s_rssi >= RX4815_SQUELCH_OPEN_MARK))
+        if (s_force_4815_af || squelch_off ||
+            (!s_squelch_open && s_rssi >= RX4815_SQUELCH_OPEN_MARK))
             s_squelch_open = true;
-        else if (s_squelch_open && s_rssi < RX4815_SQUELCH_CLOSE_MARK)
+        else if (s_squelch_open && !squelch_off && s_rssi < RX4815_SQUELCH_CLOSE_MARK)
             s_squelch_open = false;
 
         /* Drive the three gates every poll, not only on a transition.  The K1's
