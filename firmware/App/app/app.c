@@ -38,6 +38,7 @@
 #include "app/generic.h"
 #include "app/main.h"
 #include "app/menu.h"
+#include "driver/uart.h"
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
     #include "app/rxtx_log.h"
 #endif
@@ -2608,9 +2609,11 @@ Skip:
     }
 
     if (gRequestSaveChannel > 0) { // TODO: remove the gRequestSaveChannel, why use global variable for that??
+        uart_printf("[save] step freq=%u mode=%u\n", (unsigned)gTxVfo->freq_config_RX.Frequency, (unsigned)gRequestSaveChannel);
         if ((!bKeyHeld && !bKeyPressed) || (UI_MENU_GetCurrentMenuId() != 0 && gScreenToDisplay == DISPLAY_MENU) || gScreenToDisplay == DISPLAY_SCANNER)
         {
             SETTINGS_SaveChannel(gTxVfo->CHANNEL_SAVE, gEeprom.TX_VFO, gTxVfo, gRequestSaveChannel);
+            uart_printf("[save] after SaveChannel freq=%u\n", (unsigned)gTxVfo->freq_config_RX.Frequency);
 
             if (!SCANNER_IsScanning() && gVfoConfigureMode == VFO_CONFIGURE_NONE)
                 // gVfoConfigureMode is so as we don't wipe out previously setting this variable elsewhere
@@ -2640,6 +2643,7 @@ Skip:
         gFlagReconfigureVfos = true;
         gVfoConfigureMode    = VFO_CONFIGURE_NONE;
         gFlagResetVfos       = false;
+        uart_printf("[save] after reload freq=%u\n", (unsigned)gTxVfo->freq_config_RX.Frequency);
     }
 
     if (gFlagReconfigureVfos) {
