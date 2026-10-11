@@ -292,7 +292,11 @@ static void CHFRSCANNER_AbortActiveReception(void)
 // Settle loop guard: at most this many 1us waits while the BK4819 glitch
 // indicator stays above SCAN_FAST_GLITCH_THRESHOLD. Caps the worst-case
 // settling time per step at ~50us before we read the RSSI anyway.
-#define SCAN_FAST_GLITCH_GUARD_MAX  50
+/* A noisy band (the airband) keeps the glitch indicator above the threshold, so
+ * waiting up to SCAN_FAST_GLITCH_GUARD_MAX times costs ~15 ms per candidate
+ * (each probe is a bit-banged RF-bus read) and makes a whole scan step ~90 ms --
+ * which starves the UI and the keys.  A few samples settle it just as well. */
+#define SCAN_FAST_GLITCH_GUARD_MAX  4
 #define SCAN_FAST_GLITCH_THRESHOLD  200
 // HF/VHF boundary in Hz: BK4819_PickRXFilterPathBasedOnFrequency() switches
 // the front-end filter path here, so we only re-run that (relatively

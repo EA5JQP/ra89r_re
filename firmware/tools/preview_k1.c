@@ -826,30 +826,30 @@ int main(void)
             failures++;
     }
 
-    /* The K1's boot-time key mode (helper/boot.c): PTT + SIDE1 held at power-on
-     * opens the hidden menu.  The host stands in for the keypad and PB9. */
+    /* The K1's boot-time key mode (helper/boot.c): holding PTT1 at power-on
+     * opens the hidden menu.  PTT1 is the KEY_PTT ladder window -- NOT PB9
+     * (PTT2), which is the bootloader's update-mode gate. */
     {
         bool         ok;
         BOOT_Mode_t  m;
 
-        host_set_key(KEY_SIDE1);
-        host_set_ptt2(true);
+        host_set_key(KEY_PTT);
         m = BOOT_GetMode();
         ok = (m == BOOT_MODE_F_LOCK);
-        printf("[boot] %s PTT+SIDE1 -> F-lock\n", ok ? "ok  " : "FAIL");
+        printf("[boot] %s PTT1 held -> F-lock (hidden menu)\n", ok ? "ok  " : "FAIL");
         if (!ok) failures++;
 
-        host_set_ptt2(false);
+        host_set_key(KEY_INVALID);
         m = BOOT_GetMode();
         ok = (m == BOOT_MODE_NORMAL);
-        printf("[boot] %s SIDE1 without PTT -> normal\n", ok ? "ok  " : "FAIL");
+        printf("[boot] %s no PTT -> normal\n", ok ? "ok  " : "FAIL");
         if (!ok) failures++;
 
-        host_set_key(KEY_SIDE2);
-        host_set_ptt2(true);
+        /* PTT2 must NOT open it: that line is the bootloader's gate. */
+        host_set_key(KEY_PTT2);
         m = BOOT_GetMode();
         ok = (m == BOOT_MODE_NORMAL);
-        printf("[boot] %s PTT+SIDE2 -> normal (air-copy is off here)\n", ok ? "ok  " : "FAIL");
+        printf("[boot] %s PTT2 -> normal (not the boot PTT)\n", ok ? "ok  " : "FAIL");
         if (!ok) failures++;
 
         host_set_key(KEY_INVALID);

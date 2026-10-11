@@ -50,10 +50,11 @@
 #define ENABLE_FEAT_F4HWN_SCAN_FASTER 1
 #define ENABLE_FEAT_F4HWN_SCAN_RSSI 1
 
-/* FT-817 CAT auto-detect on the serial port (App/cat.c, App/cat_radio.c).  The
- * finished firmware has no console, so when this is on the port is CAT-only;
- * build with it off to keep the bring-up console.  See docs/ra89r_cat.md and
- * docs/ra89r_carserial.md. */
+/* FT-817 CAT auto-detect on the serial port (App/cat.c, App/cat_radio.c).  CAT
+ * and the bring-up console SHARE USART1: a CAT frame is a back-to-back burst
+ * while the console is typed with gaps, so the auto-detect keeps both features
+ * live (see App/main.c).  Stays on in the default build; with it off the port
+ * is console-only.  See docs/ra89r_cat.md and docs/ra89r_carserial.md. */
 #define ENABLE_CAT 1
 
 /* FM broadcast: the RA89R *does* carry a BK1080 FM receiver (docs/ra89r_bk1080.md),

@@ -107,7 +107,11 @@ bytes have the shape that command uses:
 Because the command bytes are non-printable and the payloads are tightly
 constrained, keyboard/console bytes cannot masquerade as a frame.  The parser is
 `App/cat.c` / `App/cat.h`, host-tested by `tools/test_cat.c` (part of
-`tools/check_all.sh`).
+`tools/check_all.sh`).  Because the console shares the port, `App/main.c`
+buffers incoming bytes and separates the two by shape and timing: a valid
+5-byte frame is applied to the radio, a pause (>20 ms) flushes buffered bytes to
+the console, and an invalid full window hands its oldest byte to the console —
+so neither feature corrupts the other.
 
 ## Why receive is interrupt-driven
 
@@ -186,6 +190,7 @@ sweep 435.600 → 435.700, 5 steps: all ok
 - The baud is fixed at **115200** in `driver/uart.c` / `board_pins.h`; change it
   there (and `--baud`) if a controller needs another rate.
 - CTCSS tone snapping to `CTCSS_Options` is worth confirming against a receiver.
-- `ENABLE_CAT` (`App/k1_features.h`, default on) makes the serial port
-  **CAT-only** — the finished firmware has no console.  Build with it off to get
-  the bring-up console back; the two do not share the port.
+- `ENABLE_CAT` (`App/k1_features.h`, default on) makes USART1 carry **both** CAT
+  and the bring-up console — a frame is a back-to-back burst, the console is
+  typed with gaps, and the auto-detect separates them (see above).  Build with it
+  off for a console-only image.

@@ -41,6 +41,11 @@ bool cat_parser_feed(cat_parser_t *p, uint8_t byte, uint8_t frame[CAT_FRAME_LEN]
 
 uint8_t cat_frame_cmd(const uint8_t frame[CAT_FRAME_LEN]);
 
+/* True if the 5 bytes are a well-formed frame (the auto-detect validity rule
+ * `cat_parser_feed()` applies).  Exposed for the serial auto-detect in
+ * `App/main.c`, which tests a buffered burst before applying it. */
+bool cat_frame_valid_bytes(const uint8_t *w);
+
 /* Apply a parsed frame to the radio (App/cat_radio.c): tune the selected VFO,
  * set modulation/PTT/CTCSS, or reply to a READ. */
 void cat_apply(const uint8_t frame[CAT_FRAME_LEN]);
