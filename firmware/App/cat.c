@@ -26,8 +26,9 @@ static bool bcd_ok(const uint8_t *b, unsigned count)
 }
 
 /* A frame is valid only when its command byte is known and its four payload
- * bytes have the shape that command uses (Look4Sat's builders). */
-static bool cat_frame_valid(const uint8_t *w)
+ * bytes have the shape that command uses (Look4Sat's builders).  Exposed so the
+ * serial auto-detect in main.c can test a buffered burst before applying it. */
+bool cat_frame_valid_bytes(const uint8_t *w)
 {
     switch (w[4]) {
     case CAT_CMD_SET_FREQ:
@@ -62,7 +63,7 @@ bool cat_parser_feed(cat_parser_t *p, uint8_t byte, uint8_t frame[CAT_FRAME_LEN]
 
     if (p->n < CAT_FRAME_LEN)
         return false;
-    if (!cat_frame_valid(p->win))
+    if (!cat_frame_valid_bytes(p->win))
         return false;
 
     memcpy(frame, p->win, CAT_FRAME_LEN);

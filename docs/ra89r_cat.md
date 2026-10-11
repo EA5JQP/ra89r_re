@@ -34,11 +34,11 @@ USB-C port.
   The part has no RX FIFO and the main loop polls one byte per K1-app pass, so a
   5-byte CAT burst used to overrun; the interrupt buffers every byte.
 
-**CAT-only under `ENABLE_CAT`** (`App/k1_features.h`, default on): the finished
-firmware has no console, so with it on the serial port is CAT and nothing else.
-Build with `ENABLE_CAT` off to keep the bring-up console.  There is no mode
-switch — frames are recognised on the wire by their shape (auto-detect), so a
-CAT session needs no command.
+**CAT and the console share USART1** (`ENABLE_CAT` in `App/k1_features.h`,
+default on).  A CAT frame is a 5-byte burst; the console is typed with gaps, so
+the auto-detect buffers bytes and either applies a well-formed frame or hands
+anything else to the console — both features stay live in one image.  There is
+no mode switch — frames are recognised on the wire by their shape.
 
 **Selected VFO:** set-frequency tunes the selected TX VFO (the K1's active one)
 and mirrors it to the RX VFO; `READ` returns the RX VFO's frequency.

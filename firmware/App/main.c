@@ -39,11 +39,96 @@
 #include "driver/systick.h"
 #include "driver/uart.h"
 
-/* FT-817 CAT auto-detect (App/cat.c): the serial port carries console text and
- * CAT frames on the same wire, so bytes are fed here first. */
+/* FT-817 CAT auto-detect (App/cat.c) shares USART1 with the bring-up console.
+ *
+ * A CAT frame is a 5-byte burst -- the caller writes it in one go, so the bytes
+ * arrive back-to-back -- while console input is typed with gaps.  Bytes are
+ * buffered and then: a full, well-formed frame is applied to the radio; a pause
+ * (>20 ms) flushes whatever is buffered to the console; an invalid full window
+ * hands its oldest byte to the console.  Both features stay live and neither
+ * corrupts the other (the console is never fed a frame's bytes, so it cannot
+ * echo them or mistake a BCD byte for a command). */
 #ifdef ENABLE_CAT
 #include "cat.h"
-static cat_parser_t cat_parser;
+
+#define CAT_BURST_GAP_MS 20u
+#define CAT_Q_LEN        64u
+
+static uint8_t  cat_pend[CAT_FRAME_LEN];
+static uint8_t  cat_pend_n;
+static uint32_t cat_pend_last;
+static char     cat_q[CAT_Q_LEN];
+static uint8_t  cat_q_head;
+static uint8_t  cat_q_tail;
+
+static void cat_queue_char(char c)
+{
+    uint8_t next = (uint8_t)((cat_q_head + 1u) % CAT_Q_LEN);
+
+    if (next != cat_q_tail) {                 /* drop on overflow */
+        cat_q[cat_q_head] = c;
+        cat_q_head        = next;
+    }
+}
+
+static void cat_flush_pending(void)
+{
+    uint8_t i;
+
+    for (i = 0; i < cat_pend_n; i++)
+        cat_queue_char((char)cat_pend[i]);
+    cat_pend_n = 0;
+}
+
+static void cat_input_service(uint32_t now)
+{
+    int raw;
+
+    while ((raw = uart_getc()) >= 0) {
+        uint8_t b = (uint8_t)raw;
+        uint8_t i;
+
+        if (cat_pend_n > 0u && (uint32_t)(now - cat_pend_last) > CAT_BURST_GAP_MS)
+            cat_flush_pending();
+        cat_pend_last = now;
+
+        if (cat_pend_n < CAT_FRAME_LEN)
+            cat_pend[cat_pend_n++] = b;
+        else {
+            for (i = 1; i < CAT_FRAME_LEN; i++)
+                cat_pend[i - 1u] = cat_pend[i];
+            cat_pend[CAT_FRAME_LEN - 1u] = b;
+        }
+
+        if (cat_pend_n == CAT_FRAME_LEN) {
+            if (cat_frame_valid_bytes(cat_pend)) {
+                cat_apply(cat_pend);
+                cat_pend_n = 0;
+            } else {
+                cat_queue_char((char)cat_pend[0]);
+                for (i = 1; i < CAT_FRAME_LEN; i++)
+                    cat_pend[i - 1u] = cat_pend[i];
+                cat_pend_n = CAT_FRAME_LEN - 1u;
+            }
+        }
+    }
+
+    /* A lone typed character: flush it once the burst gap has clearly passed,
+     * so a single keystroke still reaches the console promptly. */
+    if (cat_pend_n > 0u && (uint32_t)(now - cat_pend_last) > CAT_BURST_GAP_MS)
+        cat_flush_pending();
+}
+
+static int cat_console_getc(void)
+{
+    int c;
+
+    if (cat_q_head == cat_q_tail)
+        return -1;
+    c          = (int)(uint8_t)cat_q[cat_q_tail];
+    cat_q_tail = (uint8_t)((cat_q_tail + 1u) % CAT_Q_LEN);
+    return c;
+}
 #endif
 #include "driver/py25q16.h"
 #include "app/app.h"
@@ -1537,18 +1622,14 @@ int main(void)
 
     for (;;) {
         uint32_t now = systick_millis();
+#ifdef ENABLE_CAT
+        cat_input_service(now);
+        int c = cat_console_getc();
+#else
         int c = uart_getc();
+#endif
 
         if (c >= 0) {
-#ifdef ENABLE_CAT
-            {
-                uint8_t cat_frame[CAT_FRAME_LEN];
-
-                if (cat_parser_feed(&cat_parser, (uint8_t)c, cat_frame))
-                    cat_apply(cat_frame);
-            }
-#else
-            if (1) {
             char ch = (char)c;
 
             /* echo and remember the last characters on the display */
@@ -1987,8 +2068,6 @@ int main(void)
                     lcd_refresh();
                 }
             }
-            }
-#endif
         } else {
             systick_delay_ms(1);
         }
