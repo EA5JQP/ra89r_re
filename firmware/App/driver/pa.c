@@ -147,8 +147,6 @@ static void pa_apply_chip_path(void)
     }
 }
 
-#include "driver/tx.h"
-
 void pa_select_band(uint32_t freq_10hz)
 {
     s_uhf  = pa_is_uhf(freq_10hz);
@@ -157,11 +155,8 @@ void pa_select_band(uint32_t freq_10hz)
     pa_band_path();
 
     /* The BK4815's band register 0x75, the stock's FUN_08013790: band 1 (0x11)
-     * for VHF, band 2 (0x0A) for UHF.  PROBE: leave it alone while the
-     * full-duplex toggle is on, so a BK4815 held in RX is not re-pointed at the
-     * TX band. */
-    if (!tx_probe_keep_4815_rx_enabled())
-        bk4815_write_reg(0x75, s_uhf ? 0x0Au : 0x11u);
+     * for VHF, band 2 (0x0A) for UHF. */
+    bk4815_write_reg(0x75, s_uhf ? 0x0Au : 0x11u);
 
     pa_apply_chip_path();
 }
