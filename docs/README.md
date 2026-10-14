@@ -33,6 +33,7 @@ notes and quoted addresses use a shifted coordinate system.
 | [`ra89r_scan.md`](ra89r_scan.md) | the scanner and the dual-transceiver (`SetScn` `FAST BOTH`) mode: the shared candidate stream, the lane rule, per-lane RSSI, the RX scan-source override, and what is still radio-gated |
 | [`ra89r_cat.md`](ra89r_cat.md) | FT-817 CAT on the USB-C serial port (USART1), the feature view: why Look4Sat, the parser/actions, `ENABLE_CAT`, the stand-in script, and what is open |
 | [`ra89r_carserial.md`](ra89r_carserial.md) | the FT-817 CAT **wire protocol** on the USB-C port: the 5-byte frames, BCD frequency and tone encoding, mode bytes, ACK/reply semantics, auto-detect rules, the interrupt-driven receive, and the on-radio validation transcript |
+| [`ra89r_fullduplex.md`](ra89r_fullduplex.md) | the full-duplex investigation: why two transceivers behind one band-switched front end cannot receive and transmit at once, and why a cross-band repeater can |
 | [`firmware.md`](firmware.md) | the custom firmware project: layout, build, the console, and what is verified on the radio vs. still open |
 
 ## Conventions
