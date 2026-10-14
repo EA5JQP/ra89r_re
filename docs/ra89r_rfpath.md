@@ -648,3 +648,22 @@ sweep, and the provisional table is where its results go.
    are not identified.
 5. Which string `FUN_08015D14(0x0b)` actually renders, and what the byte at
    `0x20009F28 + 0x1c` selects (the language table it indexes is built in RAM).
+
+## Full-duplex is not possible: TX and RX share one front-end path (2026-10-14)
+
+Probed on the radio (throwaway console toggle, since removed).  With the BK4815
+left **entirely** alone across TX -- no T/R write (`0x0C`), no TX-mode retune
+(`0x70`), no band register (`0x75`), and none of `pa_select_band()`'s outputs
+(`pa_band_path()`, the `0x75` band, `pa_apply_chip_path()`) -- a BK4815 held in
+receive on 145.9 **keeps receiving while the BK4829 transmits on 435.1, and the
+transmit is gone**.  Restore any one of those writes and the transmit works but
+the receive dies.
+
+So the two transceivers sit behind a single, band-switched front end (one
+antenna): the PA/front-end pins carry both directions and can point at the
+uplink **or** the downlink, not both.  True simultaneous full-duplex therefore
+needs a diplexer/duplexer -- hardware, not firmware.  What the port can do is
+**cross-band half-duplex**: RX on one VFO's band, and on PTT it switches the
+front end and transmits on the other.  Settling board-vs-port needs a schematic
+or a scope on the band-switch lines; the probe already shows those pins carry
+both directions.
