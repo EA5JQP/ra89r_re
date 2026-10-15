@@ -134,3 +134,27 @@ undone by the reconfigure".
 
 See also: `docs/ra89r_rfpath.md` (the RF path), `docs/ra89r_bk4829.md`,
 `docs/ra89r_bk4815.md`, `docs/ra89r_port.md`.
+
+## Stock repeater trace (firmware `stock_v49_raw`, base 0x08004000)
+
+The repeater is real and its options are **OFF / UNIDIR / BIDIR** — a cross-band
+repeater with a direction setting:
+
+| what | address |
+|---|---|
+| `Aut Repeat` (menu label) | `0x08027154` |
+| `OFF` | `0x08026b90` |
+| `UNIDIR` | `0x08026cec` |
+| `BIDIR` | `0x08026ce4` |
+| repeater label/value table | `0x08024ec0` — label at `0x08024ed0`, options at `0x08024ed4..0x08024edc` |
+| menu page label table | `0x08024ee0` (`Aut Repeat` at index 1) |
+
+Menu framework: `FUN_0801b2dc` **draws** an item (switches on the menu type,
+indexes a label table by the item index); `FUN_0800fb58` **reads** an item's
+value from the settings struct into the displayed value (`switch (item)` →
+`*DAT_0800fe00 = *(settings + off)`).  Both are reached from the menu loop.
+
+Next hop to the routine: take the item id from the label table at `0x08024ee0`
+(referenced in `FUN_0801b2dc` at `0x0801b80c`), find its case in `FUN_0800fb58`
+— that names the setting's offset — then xref that offset for the code that acts
+on OFF/UNIDIR/BIDIR (the repeat itself).
