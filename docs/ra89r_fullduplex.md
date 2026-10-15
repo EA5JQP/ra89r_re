@@ -4,11 +4,13 @@ The goal was satellite-style **true full duplex**: receive continuously on one
 VFO's transceiver while transmitting on the other VFO's transceiver, at the same
 time — e.g. listen on the BK4815 while keying the BK4829.
 
-**Finding: it is not possible on this board.** The two transceivers sit behind a
-single, band-switched front end: the transmit and receive paths share it, so it
-can point at the uplink **or** the downlink, never both. What the radio can do is
-**cross-band half-duplex** — RX on one VFO's band, and on PTT it switches the
-front end and transmits on the other. That is what the port's cross-band gives.
+**Finding: the port as it stands cannot, but the board can.** The stock firmware
+has a cross-band repeater mode — the **`Aut Repeat`** menu item (the manual
+lists options including **Bidir**) — so simultaneous receive on one band and
+transmit on the other is a capability of this radio. The limit is the port's
+single-domain band/path model, not the hardware. What the port offers today is
+**cross-band half-duplex**; full duplex needs the port reworked to drive each
+chip's path separately, the way the stock's repeater does.
 
 ## How the port models the two transceivers
 
@@ -57,25 +59,41 @@ of pins, two mutually exclusive positions.
 
 ## Conclusion
 
-The transmit and receive paths are not independent: they share the band switch
-(and a single antenna), so simultaneous TX and RX on two bands is impossible
-without a duplexer/diplexer. That is a hardware matter, not firmware. The port
-offers **cross-band half-duplex**: RX on one VFO's band, and on PTT it switches
-the front end and transmits on the other.
+The transmit and receive paths are not independent **in the port's current
+model**: it drives one band/path state, so simultaneous TX and RX on two bands
+is impossible as the port is written.  The **board** can do it — the stock's
+`Aut Repeat` cross-band repeater does — so the work is to give each transceiver
+its own band/path state (and its own receive chain) the way the stock's repeater
+routine does.  Until then the port offers **cross-band half-duplex**: RX on one
+VFO's band, and on PTT it switches the front end and transmits on the other.
 
-## Why a cross-band repeater can do it and this radio cannot
+## The stock's cross-band repeater (`Aut Repeat`)
 
-A cross-band repeater really does receive and transmit at once, and it can
-because its **hardware is built for it**: a **duplexer/diplexer** (or two
-antennas) splits the two bands at the antenna, and there is enough isolation
-between the high-power transmitter and the sensitive receiver. The RA89R has one
-antenna and one band-switched front-end path (above), so it has no way to present
-both bands to the two chips at once. The K1's own "cross-band" setting is not a
-repeater either: it only chooses which VFO transmits and which receives, one at a
-time.
+The stock firmware implements the repeater the product page advertises.  The
+string is `Aut Repeat` (0x08027154); it sits among the Bluetooth-app strings in
+the image, but the **manual** lists it as the repeater option with settings that
+include **Bidir** (repeat both directions).  So the radio genuinely does
+cross-band repeat, which means its hardware can present both bands at once and
+the port's single-domain band model is the obstacle, not the board.
 
-A true repeater function on this radio would need external hardware (a duplexer
-and a second antenna, or a filter/splitter), or a board revision.
+To port it, the next step is to find the routine behind `Aut Repeat` in the
+disassembly and see what it does that the port does not: which transceiver
+receives and which transmits, how it drives the band/path pins
+(`pa_band_path()` / `pa_apply_chip_path()`), and whether the receive chain stays
+live during the repeat (simultaneous) or the audio is stored and replayed
+(simplex repeater).  That difference decides how much of the port's RF model has
+to change.
+
+## Why a cross-band repeater can do it and a single-path design cannot
+
+A cross-band repeater really does receive and transmit at once.  A radio built
+for it has the hardware to present both bands simultaneously — a
+duplexer/diplexer (or two antennas) at the antenna, with enough isolation
+between the high-power transmitter and the sensitive receiver.  This radio has
+that capability (the stock repeats), but the port drives **one** band/path state
+for whichever frequency is current, so with the port's model the two directions
+exclude each other.  The stock's repeater routine must drive the two chips'
+paths separately; that is what the port needs to learn from it.
 
 ## Advantages of a per-VFO transceiver (over one shared transceiver)
 
@@ -92,12 +110,15 @@ and a second antenna, or a filter/splitter), or a board revision.
 
 ## Open / to settle
 
-- **Board vs port model.** The probe shows the pins carry both directions, but it
-  does not prove the two chips have no separate receive inputs. A schematic, or a
-  scope on the band-switch lines with the **stock** firmware, would settle it.
-- Whether the two transceivers' receive paths are electrically independent at all
-  (they share one antenna).
-- A diplexer/duplexer front end is a hardware change, out of firmware scope.
+- **Find the stock's `Aut Repeat` routine** in the disassembly (the manual's
+  Bidir option): which transceiver receives, which transmits, how it drives
+  `pa_band_path()` / `pa_apply_chip_path()` and the per-chip paths, and whether
+  the receive chain stays live during the repeat (simultaneous) or the audio is
+  stored and replayed (simplex repeater).
+- Whether the port can adopt that per-chip path model directly, or whether some
+  of it is board-specific wiring needing its own driver work.
+- The probe above is evidence about **the port's model** only — the board can do
+  it, so the board is no longer the question.
 
 ## Side finding: the VFO could not be tuned
 
