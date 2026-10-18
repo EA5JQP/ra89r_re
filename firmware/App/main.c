@@ -1553,6 +1553,10 @@ static const char *scan_mode_name(void)
  * hand.  It restores the saved VFO, range and scan mode before returning. */
 #define SCAN_BENCH_MS 3000u
 
+/* Its caller was the 'J' state capture, which is read-only now (the benchmark
+ * leaves the radio retuned).  Kept compiled for the scan work it exists for. */
+static void scan_rate_benchmark(void) __attribute__((unused));
+
 static void scan_rate_benchmark(void)
 {
     const uint32_t step  = gRxVfo->StepFrequency ? gRxVfo->StepFrequency : 2500u;

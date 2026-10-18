@@ -912,6 +912,43 @@ workspace), the headless runs need
   the register semantics and the radio runs above, but the current build has
   not yet been heard on the radio.
 
+### Root cause (2026-10-18): the K1 clears the BK4829's chip outputs behind the port's back
+
+The "first reception fine, later ones noise" -- and the later "it happens when
+we switch VFOs, and a frequency edit and edit-back fixes it, **also on
+develop**" -- is a **develop bug**, not a chip or duplex fault:
+
+- The BK4815's receive path rides the **BK4829's chip-output pins**: the
+  stock's BK4815 branch sets the 4829's pin 4 (`FUN_080137D4(0x10,0x10)`, the
+  VHF-LNA bit), and the port's `rf_dual_refresh()` mirrors that
+  (`GPIO4_PIN32_VHF_LNA`), plus `RX_ENABLE` (`GPIO0`).
+- The K1 app **clears those same outputs** in its own paths --
+  `FUNCTION_PowerSave()` (`functions.c`), the RX-off helper (`radio.c`) and the
+  sleep path (`app.c`) clear `RX_ENABLE`; the RF-setup path clears the pin-4
+  bit -- and those run on **VFO switches, wake-ups and idle**.
+- `rf_dual_refresh()` re-drives the pins **only when the roles change** (a
+  different VFO-to-transceiver binding or a new frequency), which a plain VFO
+  switch does not.  So switching VFOs leaves the BK4815 receiving with the
+  path pins down: **RSSI still reads the carrier, but the audio is noise** --
+  exactly the symptom chased all day.  Editing a VFO's frequency forces
+  `rf_dual_apply()`, which re-drives the pins, "fixing" it.
+- Evidence in the captures: the noisy state read `0x33 = 0x9004`
+  (`RX_ENABLE` clear, pin 4 set), a good one `0x9044` (both set).  Note
+  `0x40 >> Pin`: `GPIO0_PIN28_RX_ENABLE = 0` is the `0x40` bit,
+  `GPIO4_PIN32_VHF_LNA = 4` the `0x04` bit.
+- The earlier "corrupt codeplug VFO" reading was wrong: rewriting the VFO was
+  the *trigger* for the re-apply that fixed it, not the cause.
+
+**Fix (this branch):** `rx_poll()`'s BK4815 branch now re-asserts the two pins
+on change (`BK4819_IsGpioOutSet()` first, so no extra bus write) and keeps the
+part's band register `0x75` on the tune it is actually on -- `pa_select_band()`
+writes that register from whatever frequency it is handed, and the scan probes
+and the TX path hand it the BK4829's.  `rf_dual_apply()` also records the
+frequency it tuned the BK4815 to (`rf_dual_bk4815_frequency()`), which is what
+the band guard uses.  *Located, not verified*: the pin evidence is from the
+register captures, but the fix has not yet been confirmed on the radio by a
+VFO-switch test.
+
 ### Still open (revised 2026-10-17)
 
 - **The receive-during-transmit RF side is now confirmed on the radio**

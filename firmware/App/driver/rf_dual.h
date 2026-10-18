@@ -35,4 +35,10 @@ void rf_dual_apply(const rf_dual_roles_t *roles, uint32_t f4815);
 bool     rf_dual_bk4815_active(void);
 uint16_t rf_dual_bk4815_rssi(void);
 
+/* The frequency the BK4815 was last tuned to, in 10 Hz units (0 = never).
+ * rx_poll() uses it to keep the part's band register (0x75) on the tune the
+ * BK4815 is actually on -- the scan and TX paths write that register from
+ * their own (BK4829) frequency. */
+uint32_t rf_dual_bk4815_frequency(void);
+
 #endif /* DRIVER_RF_DUAL_H */

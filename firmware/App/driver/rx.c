@@ -21,6 +21,7 @@ static uint16_t s_rssi;
 static uint32_t s_freq_10hz;    /* what the BK4829 was last tuned to */
 static bool s_af_4815_written;  /* the BK4815 AF gate's applied value... */
 static bool s_af_4815_valid;    /* ...and whether that shadow can be trusted */
+static uint16_t s_band_4815_written;   /* the BK4815 band register 0x75's last written value */
 
 void rx_init(uint32_t freq_10hz)
 {
@@ -233,6 +234,37 @@ void rx_poll(void)
              * 10 ms would override that. */
             if (!tx_active())
                 audio_path_drive(gates);
+        }
+
+        /* The K1 owns the BK4829's chip outputs, and its own power-save, wake
+         * and RX-off paths clear them behind the port's back: RX_ENABLE
+         * (GPIO0, `functions.c`'s FUNCTION_PowerSave and the RX-off helpers)
+         * and -- through the RF-setup path -- the VHF-LNA pin (GPIO4).  The
+         * BK4815's receive path rides those pins (the stock's BK4815 branch
+         * sets pin 4 on the 4829), and rf_dual_refresh() only re-drives them
+         * when the roles change, so a VFO switch used to leave the BK4815
+         * receiving with the path pins down: RSSI still present but the audio
+         * noise, and a frequency edit (which forces rf_dual_apply) "fixed" it.
+         * Radio 2026-10-18: the noisy state read `0x33 = 0x9004` (RX_ENABLE
+         * clear), a good one `0x9044`.  Re-assert them while the BK4815 is the
+         * receive source; the register write happens only on a change. */
+        if (!BK4819_IsGpioOutSet(BK4819_GPIO0_PIN28_RX_ENABLE))
+            BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, true);
+        if (!BK4819_IsGpioOutSet(BK4819_GPIO4_PIN32_VHF_LNA))
+            BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, true);
+
+        /* The BK4815's band register belongs to the tune the part is on, but
+         * pa_select_band() writes it from whatever frequency it is given --
+         * the scan's probes and the TX path use the BK4829's.  Keep it on the
+         * BK4815's own tune (rf_dual_apply() sets the same value). */
+        {
+            const uint32_t f    = rf_dual_bk4815_frequency();
+            const uint16_t band = (f >= PA_BAND_SPLIT) ? 0x0Au : 0x11u;
+
+            if (f != 0u && band != s_band_4815_written) {
+                bk4815_write_reg(0x75u, band);
+                s_band_4815_written = band;
+            }
         }
         return;
     }
