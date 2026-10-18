@@ -708,7 +708,6 @@ static void fm_bench(void)
 static void bk4815_dump_registers(void)
 {
     unsigned reg;
-
     /* The routing state, so the capture is self-contained: which VFO the
      * coordinator believes it is serving, what the two VFO records hold and
      * what frequency the part actually sits on (decoded from 0x71/0x72 with
@@ -741,6 +740,8 @@ static void bk4815_dump_registers(void)
                     (unsigned)(f10 / 100000u), (unsigned)(f10 % 100000u),
                     (unsigned)band, (unsigned)bk4815_vco_divider(band),
                     (unsigned)vco, (unsigned)bk4815_read_reg(0x75));
+        uart_printf("  audio path line (PC13): %s\n",
+                    audio_path_is_on() ? "high (amplifier on)" : "low (off)");
     }
 
     uart_puts("\nBK4815 register file, as it stands now (read-only):\n");
@@ -756,6 +757,29 @@ static void bk4815_dump_registers(void)
               "       48/4A=AF profile 49=AF (bit15 mute, low nibble volume)\n"
               "       70=opctrl (A000 RX / E000 TX) 71/72=frequency word 75=band\n"
               "       7E/7F=per-band calibration\n");
+}
+
+/* Read and print the whole BK4829 register file (0x00-0x7F) as it currently
+ * stands.  The BK4815's audio reaches the speaker through the BK4829's AF
+ * stage, so a receive fault that leaves the BK4815's own registers identical
+ * (radio 2026-10-18) has to show up here -- the AF output select (0x47), the
+ * AF gain (0x48), the audio unmute (0x50) and the RX/TX block word (0x30) are
+ * the shared path's gates.  Pure reads. */
+static void bk4829_dump_registers(void)
+{
+    unsigned reg;
+
+    uart_puts("\nBK4829 register file, as it stands now (read-only):\n");
+    for (reg = 0; reg < 0x80u; reg++) {
+        if ((reg & 7u) == 0u)
+            uart_printf("  ");
+        uart_printf("%02X:%04X ", reg, (unsigned)BK4819_ReadRegister((uint8_t)reg));
+        if ((reg & 7u) == 7u)
+            uart_puts("\n");
+    }
+    uart_puts("  key: 30=RX/TX blocks (bit9 AF DAC) 33=chip GPIOs 36=PA 37=mode\n"
+              "       40=mic gain 47=AF out (bits 11:8 select, 0=mute,1=normal)\n"
+              "       48=AF gain 50=audio unmute 67=RSSI 7D=power/mic\n");
 }
 
 /* The BK4815 bench ('n'): reconfigures and tunes, so the register-file capture
@@ -1978,6 +2002,7 @@ int main(void)
                 break;
             case 'n':
                 bk4815_dump_registers();
+                bk4829_dump_registers();
                 bk4815_bench();
                 break;
             case 'e': {
