@@ -34,6 +34,8 @@ notes and quoted addresses use a shifted coordinate system.
 | [`ra89r_cat.md`](ra89r_cat.md) | FT-817 CAT on the USB-C serial port (USART1), the feature view: why Look4Sat, the parser/actions, `ENABLE_CAT`, the stand-in script, and what is open |
 | [`ra89r_carserial.md`](ra89r_carserial.md) | the FT-817 CAT **wire protocol** on the USB-C port: the 5-byte frames, BCD frequency and tone encoding, mode bytes, ACK/reply semantics, auto-detect rules, the interrupt-driven receive, and the on-radio validation transcript |
 | [`ra89r_fullduplex.md`](ra89r_fullduplex.md) | the full-duplex investigation: why two transceivers behind one band-switched front end cannot receive and transmit at once, and why a cross-band repeater can |
+| [`ra89r_jlink.md`](ra89r_jlink.md) | SWD / J-Link debugging via the `jlink-mcp` MCP server: what an `.icf` really is (XOR records the bootloader decrypts to `0x08004000`), the `PY32F403xD` custom device and its bootloader-safety guard, the SVD, the host/MCP setup, and the `PA13`/`PA14` SWD-pad caveat |
+| [`ra89r_rf_harness.md`](ra89r_rf_harness.md) | `tools/rf_harness.py`: driving a tinySA generator in step with the console's `S`/`F`/`B`/`Q` so RSSI becomes an off/on pair; the CAT tuning path, the two output stages' coverage, and what is verified vs still open |
 | [`firmware.md`](firmware.md) | the custom firmware project: layout, build, the console, and what is verified on the radio vs. still open |
 
 ## Conventions

@@ -174,9 +174,11 @@ Read off that listing, not inferred:
   the flag is 0 -- i.e. when the byte is *not* 0x11.  The launch trampoline (SP
   sanity check, `msr msp`, `blx`) is at 0x0800335A; the copy at 0x08003382 is
   what runs when 0x08000564 returns, and it tests nothing at all.
-* With PB9 and PA2 both low the radio goes to update mode whatever the byte says:
-  that is the key combination `tools/FLASHING.md` §6 is still missing.  A
-  released pin reads high (a normal power-on, nothing pressed, runs the
+* With PB9 and PA2 both low the radio goes to update mode whatever the byte says.
+  The manual equivalent is **hold both PTTs at power-on**: `PTT2` is `PB9` and
+  `PTT1` pulls `PA2` fully low ([`ra89r_keypad.md`](ra89r_keypad.md), measured:
+  `PTT2` + `SIDE1`; procedure in [`../tools/FLASHING.md`](../tools/FLASHING.md)
+  §6).  A released pin reads high (a normal power-on, nothing pressed, runs the
   application); the level convention is an inference from that, not from the
   code.
 * 0x0805FFF0 is referenced in exactly **two** places in the 16 KiB bootloader:
@@ -335,8 +337,11 @@ refused unless `--allow-bootloader-region` is given.
 
 ## 8. Open points
 
-1. **How to enter update mode** (which key is held at power-on) is not encoded in
-   the protocol; the CPS shows the prompt to the user.  Not recovered here.
+1. ~~**How to enter update mode**~~ — **resolved:** hold both PTTs at power-on.
+   The gate is `PB9` (`PTT2`) and `PA2` (pulled fully low by `PTT1`); measured in
+   [`ra89r_keypad.md`](ra89r_keypad.md) §"Port note", and the CPS's on-screen
+   prompt is the same combination.  Procedure:
+   [`../tools/FLASHING.md`](../tools/FLASHING.md) §6.
 2. **`E1`/`CLEAR` semantics** (what exactly it erases) and **`E3`/`READ05`**
    (read-out) were not exercised; the handlers are at 0x080005DC and 0x08002740.
 3. ~~The CPS's own update-file flavour~~ — **resolved.**  The updater builds a
