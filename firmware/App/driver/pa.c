@@ -37,6 +37,23 @@ static uint8_t s_band_pin_mode = PA_BAND_PIN_STOCK;
  * the stock's rule (the TX frequency's band). */
 static uint8_t s_tx_path = PA_TX_PATH_AUTO;
 
+/* Duplex test ('U', docs/ra89r_fullduplex.md): when the BK4815 is the receiving
+ * chip, the transmit path must not touch its band register (0x75) -- that would
+ * move the receiver's band.  The shared PA0/PA1 path pins can likewise be left
+ * as the receive path left them (the stock's repeat entry drives PA0 but keeps
+ * the receive chip's own band state). */
+static bool s_touch_4815 = true;
+static bool s_touch_band_pins = true;
+static bool s_touch_chip_path = true;
+
+void pa_set_touch_4815(bool on) { s_touch_4815 = on; }
+bool pa_touch_4815(void) { return s_touch_4815; }
+void pa_set_touch_band_pins(bool on) { s_touch_band_pins = on; }
+bool pa_touch_band_pins(void) { return s_touch_band_pins; }
+void pa_set_touch_chip_path(bool on) { s_touch_chip_path = on; }
+bool pa_touch_chip_path(void) { return s_touch_chip_path; }
+
+
 uint8_t pa_tx_path_mode(void) { return s_tx_path; }
 
 void pa_set_tx_path_mode(uint8_t mode)
@@ -77,6 +94,9 @@ bool pa_band_is_main(void) { return s_main; }
 
 void pa_band_path(void)
 {
+    if (!s_touch_band_pins)
+        return;
+
     /* FUN_08013A70(2) for transmit and (3) for receive both leave PA1 high and
      * PA0 low; PA0 is not the VHF/UHF selector here (pa.h). */
     gpio_write(GPIOA, PA_BAND_PA1_PIN, 1);
@@ -155,10 +175,13 @@ void pa_select_band(uint32_t freq_10hz)
     pa_band_path();
 
     /* The BK4815's band register 0x75, the stock's FUN_08013790: band 1 (0x11)
-     * for VHF, band 2 (0x0A) for UHF. */
-    bk4815_write_reg(0x75, s_uhf ? 0x0Au : 0x11u);
+     * for VHF, band 2 (0x0A) for UHF.  Skipped in the duplex test when the
+     * BK4815 is the receiving chip: its 0x75 must stay on the receive band. */
+    if (s_touch_4815)
+        bk4815_write_reg(0x75, s_uhf ? 0x0Au : 0x11u);
 
-    pa_apply_chip_path();
+    if (s_touch_chip_path)
+        pa_apply_chip_path();
 }
 
 void pa_init(void)

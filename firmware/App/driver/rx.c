@@ -83,7 +83,20 @@ void rx_set_fm_active(bool active)
  * BK4829's 0x47 or the BK4815's 0x49 = 0x9A02), so only the selected VFO is
  * heard.  `s_audio_4815` is that choice. */
 static bool s_audio_4815;
-static bool s_force_4815_af;    /* console 'A' diagnostic */
+static bool s_force_4815_af;
+static bool s_bridge_4815 = true;   /* open the BK4829 AF with the 4815's squelch */
+
+void rx_set_4815_bridge(bool on)
+{
+    s_bridge_4815 = on;
+    if (!on)
+        BK4819_SetAF(BK4819_AF_MUTE);
+}
+
+bool rx_4815_bridge(void)
+{
+    return s_bridge_4815;
+}    /* console 'A' diagnostic */
 
 /* A temporary scan-hit receive route (see rx.h).  DEFAULT follows the selected
  * VFO's own transceiver; the other values pin the hit's chip until cleared. */
@@ -146,6 +159,8 @@ void rx_poll(void)
          * the fixed mark even with the user's squelch turned off. */
         const bool squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
 
+        const bool was_open = s_squelch_open;
+
         s_rssi = bk4815_read_rssi();
 
         if (s_force_4815_af || squelch_off ||
@@ -153,6 +168,14 @@ void rx_poll(void)
             s_squelch_open = true;
         else if (s_squelch_open && !squelch_off && s_rssi < RX4815_SQUELCH_CLOSE_MARK)
             s_squelch_open = false;
+
+        /* Re-apply the stock's receive setup when a carrier appears: a
+         * transmission (or the K1's own setup) can leave the part tuned but
+         * with the demodulator back in its power-on state, which sounds like
+         * noise.  Once per squelch opening, not every poll -- it is seven bus
+         * writes. */
+        if (s_squelch_open && !was_open)
+            bk4815_enter_rx();
 
         /* Drive the three gates every poll, not only on a transition.  The K1's
          * own receive setup (RADIO_SetupRegisters -> RADIO_SetModulation, and
@@ -162,8 +185,15 @@ void rx_poll(void)
          * node the BK4815's audio rides) and the amplifier (PC13) must all be
          * open together for a BK4815 receive to be heard. */
         bk4815_set_af(s_squelch_open);
-        BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
-        audio_path_drive(s_squelch_open);
+        if (s_bridge_4815)
+            BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
+        else
+            BK4819_SetAF(BK4819_AF_MUTE);   /* hard mute, whatever the app writes */
+        /* Leave the audio-path line alone during a duplex transmission: the
+         * transmit side owns it then (console 'g'), and driving it here every
+         * 10 ms would override that. */
+        if (!tx_active())
+            audio_path_drive(s_squelch_open);
         return;
     }
 

@@ -177,6 +177,20 @@ uint16_t bk4815_tone_word(uint32_t tone_hz)
     return (uint16_t)((tone_hz << 16) / 18466u);
 }
 
+/* The stock's 4815 receive setup (`FUN_08016CEC`): demodulator/audio and the
+ * receive PA value.  The boot table alone leaves the part tuned but with the
+ * demodulator in its power-on state -- a strong carrier then reads a high RSSI
+ * and demodulates as noise.  Applied on every RX tune. */
+void bk4815_enter_rx(void)
+{
+    bk4815_write_reg(0x16u, 0xb200u);
+    bk4815_write_reg(0x2bu, 0x403fu);
+    bk4815_write_reg(0x6du, 0x6618u);   /* PA: the receive value */
+    bk4815_write_reg(0x73u, 0x81d0u);
+    bk4815_write_reg(0x70u, 0x0000u);
+    bk4815_write_reg(0x70u, 0xa000u);
+}
+
 void bk4815_set_frequency(uint32_t freq_10hz, bool tx)
 {
     /* The per-band calibration word FUN_0801703C writes to 0x7E/0x7F; band 0's
@@ -207,6 +221,9 @@ void bk4815_set_frequency(uint32_t freq_10hz, bool tx)
     calbuf[2] = (uint8_t)(cal[band] >> 8);
     calbuf[3] = (uint8_t)cal[band];
     bk4815_write_block(BK4815_REG_CAL, calbuf, (unsigned)sizeof calbuf);
+
+    if (!tx)
+        bk4815_enter_rx();
 }
 
 void bk4815_set_tone(uint32_t tone_hz)

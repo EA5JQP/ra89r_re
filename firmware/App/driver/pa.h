@@ -131,7 +131,17 @@ enum {
 };
 uint8_t     pa_tx_path_mode(void);
 void        pa_set_tx_path_mode(uint8_t mode);
-const char *pa_tx_path_name(void);
+
+/* Duplex test gating (console 'U'): when the BK4815 is the receiving chip, the
+ * transmit path must leave its band register and T/R state alone; the shared
+ * PA0/PA1 pins can also be held where the receive path left them.  Both are
+ * true by default (normal transmit behaviour). */
+void pa_set_touch_4815(bool on);
+bool pa_touch_4815(void);
+void pa_set_touch_band_pins(bool on);
+bool pa_touch_band_pins(void);
+void pa_set_touch_chip_path(bool on);
+bool pa_touch_chip_path(void);const char *pa_tx_path_name(void);
 uint16_t    pa_tx_path_bits(void);   /* the band bits the current mode yields */
 
 /* Chip side, transmit: the band pin (`0x40` VHF / `0x20` UHF) plus the T/R pin

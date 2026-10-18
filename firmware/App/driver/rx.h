@@ -64,6 +64,12 @@ bool rx_audio_is_4815(void);
 void rx_force_bk4815_af(bool on);
 bool rx_force_bk4815_af_on(void);
 
+/* Open the BK4829's AF output while the 4815's squelch is open (the port's
+ * "bridge": the 4815 audio is assumed to ride the 4829's node).  Off leaves the
+ * 4829 muted, which tells the 4829's own noise apart from 4815 audio. */
+void rx_set_4815_bridge(bool on);
+bool rx_4815_bridge(void);
+
 /* The frequency the BK4829 was last tuned to, in 10 Hz units, for diagnostics. */
 uint32_t rx_rx_frequency(void);
 

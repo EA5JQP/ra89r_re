@@ -70,6 +70,10 @@ void bk4815_write_block(uint8_t reg, const uint8_t *bytes, unsigned len);
 /* Replay the stock's boot configuration (FUN_08006A0C) in its original order. */
 void bk4815_configure(void);
 
+/* The stock's receive setup (FUN_08016CEC): demodulator/audio + receive PA.  A
+ * tuned part without it reports RSSI but demodulates noise; RX tunes call it. */
+void bk4815_enter_rx(void);
+
 /* Register writes the boot configuration consists of: 1 block plus the singles. */
 unsigned bk4815_config_writes(void);
 

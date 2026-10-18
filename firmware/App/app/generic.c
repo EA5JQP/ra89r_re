@@ -28,6 +28,7 @@
 #include "app/menu.h"
 #include "app/scanner.h"
 #include "audio.h"
+#include "driver/tx.h"
 #include "driver/keyboard.h"
 #include "dtmf.h"
 #include "external/printf/printf.h"
@@ -98,6 +99,12 @@ void GENERIC_Key_F(bool bKeyPressed, bool bKeyHeld)
 
 void GENERIC_Key_PTT(bool bKeyPressed)
 {
+    /* Swap mode ('y'): the K1's transmit path runs RADIO_SetTxParameters(),
+     * which takes the BK4829 (the receiver in this mode) out of RX.  PTT is
+     * owned by driver/tx.c there, so ignore it here. */
+    if (tx_swap())
+        return;
+
     gInputBoxIndex = 0;
 
     if (!bKeyPressed || SerialConfigInProgress())

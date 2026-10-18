@@ -27,6 +27,7 @@
 #include "driver/rf_dual.h"
 #include "driver/rx.h"
 #include "functions.h"
+#include "settings.h"
 #include "driver/clock.h"
 #include "driver/fault.h"
 #include "driver/gpio.h"
@@ -339,12 +340,587 @@ static void print_help(void)
               "          A force the BK4815 AF open (bypass squelch) to test audio\n"
               "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
               "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
+              "          U duplex test: BK4815 RX + BK4829 TX at once (satellite)\n"
+              "          I duplex TX-chip AF mode   O duplex band-path mode\n"
+              "          N TX tone test on the transmit VFO (2 s, no microphone)\n"
+              "          E duplex self-test: forces the config, 4 TX variants, verdict\n"
+              "          H duplex TX keeps the AF DAC (0x30 = 0xC3FE) on/off\n"
+              "          g duplex PC13 at TX: leave / low / high (audio path line)\n"
+              "          z 4815->4829 audio bridge on/off (tells 4829 noise from 4815 audio)\n"
+              "          o route probe: is the 4815 downlink on the 4829's mic input? (needs U)\n"
+              "          7 guided RX diagnostic: timed steps, listening prompts, verdict\n"
+              "          y swap mode: BK4829 RX + BK4815 TX (the stock's arrangement)\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
               "          5 save settings   6 flash write test   e flash dump\n"
               "          0 hand the panel to the bring-up screens (again: back)\n"
               "          t test card   b border   f fill   p animation   c clear\n"
               "          r/s panel re-init (standard / stock-app variant)\n");
+}
+
+/* ---- Duplex test mode ('U') ---------------------------------------------
+ *
+ * Satellite-style full duplex for the satellite use case: the BK4815 keeps
+ * receiving on the receive VFO while the BK4829 transmits on the transmit VFO,
+ * with the stock's per-chip register split (docs/ra89r_fullduplex.md, "What
+ * the repeat entry does to the audio registers").  The read-backs are printed
+ * here so the radio can be judged over the UART alone. */
+
+static const char *xcvr_name(rf_xcvr_t c)
+{
+    return c == RF_XCVR_BK4815 ? "BK4815" : "BK4829";
+}
+
+static void print_mhz(uint32_t f10)
+{
+    uart_printf("%u.%05u", (unsigned)(f10 / 100000u), (unsigned)(f10 % 100000u));
+}
+
+static void duplex_status(void)
+{
+    const rf_xcvr_t rxc = SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO);
+    const rf_xcvr_t txc = SETTINGS_GetVfoTransceiver(gEeprom.TX_VFO);
+
+    uart_puts("[dup] RX VFO"); uart_printf("%u", (unsigned)gEeprom.RX_VFO);
+    uart_printf(" %s @ ", xcvr_name(rxc));
+    print_mhz(gRxVfo->freq_config_RX.Frequency);
+    uart_printf(" MHz | TX VFO%u %s @ ", (unsigned)gEeprom.TX_VFO, xcvr_name(txc));
+    print_mhz(gTxVfo->freq_config_TX.Frequency);
+    uart_printf(" MHz\n[dup] af: %s\n[dup] path: %s\n[dup] tx 0x30: %s\n[dup] pc13: %s\n",
+                tx_duplex_af_name(), tx_duplex_path_name(),
+                tx_duplex_af_dac_name(), tx_duplex_pc13_name());
+}
+
+static void duplex_tick(uint32_t now)
+{
+    static uint32_t last;
+    static bool last_tx;
+
+    if (!tx_duplex_active() && !tx_swap()) {
+        last_tx = false;
+        return;
+    }
+    if ((uint32_t)(now - last) < 500u)
+        return;
+    last = now;
+
+    const bool tx = tx_active();
+
+    if (tx != last_tx) {
+        last_tx = tx;
+        uart_printf("\n[dup] %s\n", tx ? "TX keyed (BK4829) -- BK4815 RX must continue"
+                                       : "TX released");
+    }
+
+    if (tx) {
+        /* A transmitting BK4829 does not answer register reads reliably (the
+         * values do not match the writes and fluctuate between samples), so
+         * print what tx_start() programmed instead. */
+        const uint32_t f = tx_last_frequency();
+
+        if (tx_swap()) {
+            uart_printf("[swap] tx=1 sql=%d rssi4829=%u | 4815 wrote 0x0C=F823 0x6D=E718 "
+                        "0x73=8000 0x11=5800 0x12=0148 0x49=1A02 f=%u.%05u | "
+                        "4829 RX 0x47=%04X 0x30=%04X\n",
+                        rx_squelch_open() ? 1 : 0, (unsigned)BK4819_GetRSSI(),
+                        (unsigned)(f / 100000u), (unsigned)(f % 100000u),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_47),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_30));
+            return;
+        }
+
+        uart_printf("[dup] tx=1 sql=%d rssi4815=%u | 4815 0x0C=%04X 0x49=%04X 0x75=%04X | "
+                    "TX wrote 0x47=%04X 0x30=%04X 0x50=%04X 0x40=%04X 0x36=%04X 0x33=%04X "
+                    "0x7D=%04X f=%u.%05u\n",
+                    rx_squelch_open() ? 1 : 0,
+                    (unsigned)bk4815_read_rssi(),
+                    (unsigned)bk4815_read_reg(0x0Cu), (unsigned)bk4815_read_reg(0x49u),
+                    (unsigned)bk4815_read_reg(0x75u),
+                    (unsigned)tx_duplex_af_value(), (unsigned)tx_duplex_reg30_value(),
+                    (unsigned)TX_REG50_UNMUTE, (unsigned)0x3700u,
+                    (unsigned)pa_last_reg36(), (unsigned)pa_last_reg33(),
+                    (unsigned)TX_REG7D_POWER,
+                    (unsigned)(f / 100000u), (unsigned)(f % 100000u));
+    } else {
+        if (tx_swap()) {
+            uart_printf("[swap] tx=0 sql=%d rssi4829=%u | 4815 0x0C=%04X 0x49=%04X | "
+                        "4829 0x47=%04X 0x30=%04X 0x38=%04X 0x39=%04X\n",
+                        rx_squelch_open() ? 1 : 0, (unsigned)BK4819_GetRSSI(),
+                        (unsigned)bk4815_read_reg(0x0Cu),
+                        (unsigned)bk4815_read_reg(0x49u),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_47),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_30),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_38),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_39));
+        } else {
+            uart_printf("[dup] tx=0 sql=%d rssi4815=%u 4815 0x0C=%04X 0x49=%04X 0x75=%04X "
+                        "0x71=%04X 0x72=%04X 0x6D=%04X | "
+                        "4829 0x47=%04X 0x30=%04X 0x50=%04X 0x36=%04X 0x33=%04X 0x7D=%04X "
+                        "0x38=%04X 0x39=%04X pc13=%u\n",
+                        rx_squelch_open() ? 1 : 0,
+                        (unsigned)bk4815_read_rssi(),
+                        (unsigned)bk4815_read_reg(0x0Cu), (unsigned)bk4815_read_reg(0x49u),
+                        (unsigned)bk4815_read_reg(0x75u), (unsigned)bk4815_read_reg(0x71u),
+                        (unsigned)bk4815_read_reg(0x72u), (unsigned)bk4815_read_reg(0x6Du),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_47),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_30),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_50),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_36),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_33),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_7D),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_38),
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_39),
+                        audio_path_is_on() ? 1u : 0u);
+        }
+    }
+}
+
+/* Automated duplex self-test ('E'): forces the test configuration (RX VFO on
+ * the BK4815, the other VFO on the BK4829), runs a deterministic tone
+ * transmission for each variant, and measures the receive lane's RSSI through
+ * it.  Restores the previous bindings/duplex state afterwards; the panel is
+ * frozen while it runs (~15 s) because the console blocks the app loop. */
+static void duplex_selftest(void)
+{
+    static const struct {
+        uint8_t af;
+        uint8_t path;
+        bool    tr;
+    } variants[] = {
+        { 0, 0, false },   /* stock-like: TX AF muted, full band path */
+        { 1, 0, false },   /* TX AF normal: the shared-node audio stays up */
+        { 0, 1, false },   /* PA0/PA1 left as the receive path had them */
+        { 0, 0, true  },   /* also write the BK4815 T/R at transmit entry */
+    };
+
+    const uint8_t   rx_vfo = gEeprom.RX_VFO;
+    const uint8_t   tx_vfo = (uint8_t)(1u - rx_vfo);
+    const rf_xcvr_t saved_rx = SETTINGS_GetVfoTransceiver(rx_vfo);
+    const rf_xcvr_t saved_tx = SETTINGS_GetVfoTransceiver(tx_vfo);
+    const uint8_t   saved_txvfo = gEeprom.TX_VFO;
+    const bool      saved_dup = tx_duplex_active();
+    const uint32_t  rx_f = gEeprom.VfoInfo[rx_vfo].freq_config_RX.Frequency;
+    uint32_t        idle_sum = 0;
+    uint32_t        idle_avg;
+    unsigned        i;
+    unsigned        v;
+
+    uart_puts("\n[selftest] duplex self-test: forcing the test configuration\n"
+              "  (bindings restored afterwards; the panel is frozen ~15 s)\n");
+
+    SETTINGS_SetVfoTransceiver(rx_vfo, RF_XCVR_BK4815);
+    SETTINGS_SetVfoTransceiver(tx_vfo, RF_XCVR_BK4829);
+    gEeprom.TX_VFO = tx_vfo;
+    tx_set_duplex(true, true, true);
+    SETTINGS_FixupVfoPointers();
+
+    /* Put the receive chip on its VFO independently of the previous binding. */
+    bk4815_set_frequency(rx_f, false);
+    bk4815_write_reg(0x75u, (rx_f >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+
+    uart_printf("[selftest] RX VFO%u BK4815 @ ", (unsigned)rx_vfo);
+    print_mhz(rx_f);
+    uart_printf(" MHz | TX VFO%u BK4829 @ ", (unsigned)tx_vfo);
+    print_mhz(gTxVfo->freq_config_TX.Frequency);
+    uart_puts(" MHz\n[selftest] put a carrier on the RX frequency; listen on the TX one\n");
+
+    for (i = 0; i < 5u; i++) {
+        idle_sum += bk4815_read_rssi();
+        systick_delay_ms(200);
+    }
+    idle_avg = idle_sum / 5u;
+
+    if (idle_avg < 30u)
+        uart_printf("[selftest] idle rssi4815=%u: no/weak downlink carrier -- the numbers\n"
+                    "  below are not a receive verdict\n", (unsigned)idle_avg);
+    else if (idle_avg < 50u)
+        uart_printf("[selftest] idle rssi4815=%u (modest carrier; judge against the floor:\n"
+                    "  ~11 in the 145.5-TX layout, ~41 in the 446-TX layout)\n",
+                    (unsigned)idle_avg);
+    else
+        uart_printf("[selftest] idle rssi4815=%u (carrier present)\n", (unsigned)idle_avg);
+
+    for (v = 0; v < sizeof(variants) / sizeof(variants[0]); v++) {
+        uint32_t min = 0xFFFFFFFFu;
+        uint32_t sum = 0;
+
+        tx_duplex_set_af(variants[v].af);
+        tx_duplex_set_path(variants[v].path);
+        tx_duplex_set_bk4815_tr(variants[v].tr);
+
+        tx_start(gTxVfo->freq_config_TX.Frequency,
+                 gTxVfo->TXP_CalculatedSetting, TX_SOURCE_TONE);
+        for (i = 0; i < 20u; i++) {
+            const uint16_t r = bk4815_read_rssi();
+
+            if (r < min)
+                min = r;
+            sum += r;
+            systick_delay_ms(100);
+        }
+        tx_stop();
+        systick_delay_ms(300);
+
+        uart_printf("[selftest] af=%u path=%u tr=%u | idle=%u | tx min=%u avg=%u | ",
+                    (unsigned)variants[v].af, (unsigned)variants[v].path,
+                    variants[v].tr ? 1u : 0u, (unsigned)idle_avg,
+                    (unsigned)min, (unsigned)(sum / 20u));
+        if (idle_avg < 30u)
+            uart_puts("(carrier too weak)\n");
+        else if (min + 4u >= idle_avg)
+            uart_puts("RX SURVIVED TX\n");
+        else
+            uart_puts("RX LOST DURING TX\n");
+    }
+
+    tx_stop();
+    tx_set_duplex(false, false, false);
+    SETTINGS_SetVfoTransceiver(rx_vfo, saved_rx);
+    SETTINGS_SetVfoTransceiver(tx_vfo, saved_tx);
+    gEeprom.TX_VFO = saved_txvfo;
+    SETTINGS_FixupVfoPointers();
+    tx_duplex_set_bk4815_tr(false);
+    if (saved_dup)
+        tx_set_duplex(true,
+                      SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815,
+                      SETTINGS_GetVfoTransceiver(gEeprom.TX_VFO) == RF_XCVR_BK4829);
+
+    uart_puts("[selftest] done -- bindings and duplex state restored\n");
+}
+
+/* ---- Guided receive diagnostic ('7') ------------------------------------
+ *
+ * The question: "the receiver is broken -- which part?"  The test walks the
+ * operator through fixed, timed steps, samples the receive chain at each step,
+ * evaluates the result itself and prints every register it reads.  It never
+ * transmits.
+ *
+ * The console blocks the app loop, so the receive gates the poller would open
+ * (`0x49` on the BK4815, `0x47`/`0x30` on the BK4829, the PC13 audio path) are
+ * opened by the test itself: a gate that is shut because nothing polled must
+ * not be reported as "dead audio".  The listening prompts are answered with
+ * 1/2/3 and become part of the verdict -- the firmware cannot hear the speaker,
+ * but it can say which measurement plus which answer means what. */
+
+#define RXDIAG_ANSWER_MS 30000u
+
+/* One key from `accept`, echoed, or -1 after `ms` milliseconds. */
+static int rxdiag_ask(const char *accept, unsigned ms)
+{
+    const uint32_t start = systick_millis();
+
+    while ((uint32_t)(systick_millis() - start) < ms) {
+        const int c = uart_getc();
+
+        if (c >= 0) {
+            for (const char *p = accept; *p != '\0'; p++) {
+                if (*p == (char)c) {
+                    uart_printf("%c\n", (char)c);
+                    return c;
+                }
+            }
+            continue;
+        }
+        systick_delay_ms(20);
+    }
+    uart_puts("(no answer)\n");
+    return -1;
+}
+
+/* A visible countdown the operator can cut short with ENTER. */
+static void rxdiag_countdown(unsigned seconds)
+{
+    uart_puts("[rxdiag] press ENTER to start now, or wait: ");
+    for (unsigned s = 0; s < seconds; s++) {
+        for (unsigned k = 0; k < 50u; k++) {
+            const int c = uart_getc();
+
+            if (c == '\r' || c == '\n') {
+                uart_puts(" start\n");
+                return;
+            }
+            systick_delay_ms(20);
+        }
+        uart_puts(".");
+    }
+    uart_puts(" start\n");
+}
+
+static char rxdiag_char(int c)
+{
+    return c < 0 ? '-' : (char)c;
+}
+
+/* The RSSI of whichever chip is currently the receive source. */
+static uint16_t rxdiag_rssi(void)
+{
+    return rx_audio_is_4815() ? bk4815_read_rssi() : BK4819_GetRSSI();
+}
+
+/* Sample the receive RSSI for `seconds`, printing a running min/max.  When the
+ * source is the BK4815 it also samples the chip's own audio-level meters, which
+ * answer "is its demod producing audio at all?" without needing the speaker:
+ * REG73 bits 14:07 are the read-only RX audio level and REG74 is the RX signal
+ * strength before the volume control (datasheet §1.3/REG73/74). */
+static uint32_t rxdiag_measure(unsigned seconds, uint16_t *lo, uint16_t *hi,
+                               uint32_t *lvl73_mean, uint32_t *lvl74_mean)
+{
+    const uint32_t n = (uint32_t)seconds * 4u;
+    uint32_t sum = 0, l73 = 0, l74 = 0;
+
+    *lo = 0xFFFFu;
+    *hi = 0u;
+    for (uint32_t i = 0; i < n; i++) {
+        const uint16_t r = rxdiag_rssi();
+
+        sum += r;
+        if (r < *lo) *lo = r;
+        if (r > *hi) *hi = r;
+
+        uint16_t a73 = 0, a74 = 0;
+
+        if (rx_audio_is_4815()) {
+            a73 = (uint16_t)((bk4815_read_reg(0x49u) >> 7) & 0xFFu);
+            a74 = (uint16_t)(bk4815_read_reg(0x4Au) & 0x7FFFu);
+            l73 += a73;
+            l74 += a74;
+        }
+
+        if ((i % 4u) == 3u) {
+            uart_printf("\r[rxdiag]   rssi %3u  min %3u  max %3u  lvl73 %3u  lvl74 %4u ",
+                        (unsigned)r, (unsigned)*lo, (unsigned)*hi,
+                        (unsigned)a73, (unsigned)a74);
+        }
+        systick_delay_ms(250);
+    }
+    uart_puts("\n");
+    *lvl73_mean = rx_audio_is_4815() ? (l73 + n / 2u) / n : 0u;
+    *lvl74_mean = rx_audio_is_4815() ? (l74 + n / 2u) / n : 0u;
+    return (sum + n / 2u) / n;
+}
+
+/* Open the receive chain the way an open squelch would. */
+static void rxdiag_open_gates(void)
+{
+    if (rx_audio_is_4815()) {
+        bk4815_enter_rx();          /* the stock's RX set, incl. 0x6D = 0x6618 */
+        /* The 4815's own AF gate at the maximum volume (REG73 nibble), so a
+         * quiet-but-working downlink cannot be mistaken for noise. */
+        bk4815_write_reg(BK4815_REG_AF, 0x1A0Fu);
+    }
+    BK4819_RX_TurnOn();             /* 0x37 = 0x9F1F, 0x30 = 0xBFF1 */
+    BK4819_SetAF(BK4819_AF_FM);     /* 0x47 = 0x6142: the shared node alive */
+    audio_path_drive(1);            /* PC13 high */
+}
+
+static void rxdiag_dump(const char *when)
+{
+    const uint32_t f = gRxVfo->freq_config_RX.Frequency;
+
+    uart_printf("[rxdiag] %s\n", when);
+    uart_printf("[rxdiag]   source %s | VFO %u %u.%05u MHz | duplex %u | pc13 %u | squelch %s\n",
+                rx_audio_is_4815() ? "BK4815" : "BK4829",
+                (unsigned)gEeprom.RX_VFO,
+                (unsigned)(f / 100000u), (unsigned)(f % 100000u),
+                tx_duplex_active() ? 1u : 0u,
+                audio_path_is_on() ? 1u : 0u,
+                rx_squelch_open() ? "open" : "closed");
+    uart_printf("[rxdiag]   4815: 0x0C=%04X 0x49=%04X 0x6D=%04X 0x75=%04X 0x71=%04X 0x72=%04X\n",
+                (unsigned)bk4815_read_reg(0x0Cu), (unsigned)bk4815_read_reg(0x49u),
+                (unsigned)bk4815_read_reg(0x6Du), (unsigned)bk4815_read_reg(0x75u),
+                (unsigned)bk4815_read_reg(0x71u), (unsigned)bk4815_read_reg(0x72u));
+    uart_printf("[rxdiag]   4829: 0x47=%04X 0x30=%04X 0x13=%04X 0x33=%04X 0x36=%04X 0x37=%04X\n",
+                (unsigned)BK4819_ReadRegister(BK4819_REG_47),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_30),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_13),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_33),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_36),
+                (unsigned)BK4819_ReadRegister(BK4819_REG_37));
+    uart_printf("[rxdiag]   expected: 4815 0x0C=0A03, 0x6D=6618, 0x49 bit15=0 | "
+                "4829 0x30=BFF1 (BDF1 = own AF DAC off), 0x47=6142, 0x37=9F1F | pc13=1\n");
+}
+
+/* Register-level expectations, as warnings rather than a verdict. */
+static void rxdiag_warn(void)
+{
+    const uint16_t r6d = bk4815_read_reg(0x6Du);
+    const uint16_t r30 = BK4819_ReadRegister(BK4819_REG_30);
+    const uint16_t r47 = BK4819_ReadRegister(BK4819_REG_47);
+
+    if (r6d != 0x6618u)
+        uart_printf("[rxdiag] WARN: 4815 0x6D=%04X, the receive value is 6618 (%s)\n",
+                    (unsigned)r6d, r6d == 0xE718u ? "the transmit PA value!" : "not the stock's");
+    if (r30 != 0xBFF1u && r30 != 0xBDF1u)
+        uart_printf("[rxdiag] WARN: 4829 0x30=%04X, the receive word is BFF1 (BDF1 with its own AF DAC off)\n",
+                    (unsigned)r30);
+    if ((r47 >> 8 & 0xFu) == 0u)
+        uart_printf("[rxdiag] WARN: 4829 0x47=%04X has the AF output muted (AFD 0)\n",
+                    (unsigned)r47);
+    if (!audio_path_is_on())
+        uart_puts("[rxdiag] WARN: PC13 (the audio-path line) is low\n");
+}
+
+static void rxdiag_run(void)
+{
+    if (tx_active()) {
+        uart_puts("\n[rxdiag] release PTT first\n");
+        return;
+    }
+
+    const uint32_t f = gRxVfo->freq_config_RX.Frequency;
+
+    uart_puts("\n[rxdiag] guided receive diagnostic -- it never transmits\n");
+    uart_puts("[rxdiag] before starting, on the radio:\n");
+    uart_puts("[rxdiag]   1) leave the radio in the configuration that fails (normal\n"
+              "[rxdiag]      reception, or the duplex test after U)\n");
+    uart_puts("[rxdiag]   2) put radio A on the receiver's frequency below, ready to key\n");
+    uart_puts("[rxdiag]   3) you will be asked to listen and press 1, 2 or 3\n");
+    uart_printf("[rxdiag] receiver now: %s, VFO %u, %u.%05u MHz, duplex %u\n",
+                rx_audio_is_4815() ? "BK4815" : "BK4829",
+                (unsigned)gEeprom.RX_VFO,
+                (unsigned)(f / 100000u), (unsigned)(f % 100000u),
+                tx_duplex_active() ? 1u : 0u);
+    rxdiag_dump("state before the test");
+    rxdiag_countdown(20u);
+
+    rxdiag_open_gates();
+    uart_puts("[rxdiag] (the console blocks the app's poller, so the test opens the\n"
+              "[rxdiag]  receive gates itself, the 4815 AF at maximum volume)\n");
+    rxdiag_warn();
+
+    uart_puts("[rxdiag] step 1/7: do NOT transmit yet -- quiet baseline (6 s)\n");
+    uint16_t lo, hi;
+    uint32_t idle73, idle74, car73, car74;
+    const uint32_t idle = rxdiag_measure(6u, &lo, &hi, &idle73, &idle74);
+    uart_printf("[rxdiag]   idle rssi mean %u (min %u, max %u) | 4815 audio lvl73 %u lvl74 %u\n",
+                (unsigned)idle, (unsigned)lo, (unsigned)hi,
+                (unsigned)idle73, (unsigned)idle74);
+
+    uart_puts("[rxdiag] step 2/7: KEY RADIO A on the receiver frequency NOW (12 s)\n");
+    const uint32_t car = rxdiag_measure(12u, &lo, &hi, &car73, &car74);
+    const bool heard = car >= idle + 8u;
+    uart_printf("[rxdiag]   carrier rssi mean %u (min %u, max %u) | 4815 audio lvl73 %u lvl74 %u -> %s\n",
+                (unsigned)car, (unsigned)lo, (unsigned)hi,
+                (unsigned)car73, (unsigned)car74,
+                heard ? "CARRIER SEEN" : "NO CARRIER SEEN");
+
+    /* The 4815's own level readouts are printed for the record.  On this part
+     * they proved noisy (they do not track the carrier), so the listening
+     * answers, not these numbers, drive the verdict. */
+    if (rx_audio_is_4815()) {
+        uart_printf("[rxdiag]   audio-level readout (informational): lvl73 %u -> %u, "
+                    "lvl74 %u -> %u\n",
+                    (unsigned)idle73, (unsigned)car73,
+                    (unsigned)idle74, (unsigned)car74);
+    }
+
+    rxdiag_dump("state with the carrier");
+    rxdiag_warn();
+
+    int answer = -1;
+
+    if (!heard) {
+        uart_puts("[rxdiag] the RSSI did not rise, so the receiver does not see radio A.\n"
+                  "[rxdiag] keep radio A keyed and answer:\n"
+                  "[rxdiag]   1 = I hear it anyway (so only the RSSI path is wrong)\n"
+                  "[rxdiag]   3 = I hear nothing\n");
+        answer = rxdiag_ask("13", RXDIAG_ANSWER_MS);
+    } else {
+        uart_puts("[rxdiag] step 3/7: keep radio A transmitting and LISTEN to this radio:\n"
+                  "[rxdiag]   1 = I hear radio A's audio (voice/music)\n"
+                  "[rxdiag]   2 = I hear noise only\n"
+                  "[rxdiag]   3 = I hear nothing\n"
+                  "[rxdiag] answer 1/2/3 (30 s): ");
+        answer = rxdiag_ask("123", RXDIAG_ANSWER_MS);
+    }
+
+    const char *verdict = "inconclusive";
+    int after_retune = -1;
+    int again = -1;
+    int muted = -1;
+    int dac_off = -1;
+
+    if (answer == '1') {
+        verdict = heard
+            ? "receive path OK in this configuration (RF, gates and audio)"
+            : "the RSSI did not move but the audio is there -- the audio path is fine and the RSSI reading is the odd one";
+    } else if (answer < 0) {
+        verdict = "inconclusive: no answer to the listening prompt (data above stands)";
+    } else if (!heard) {
+        verdict = "RF: the receiver does not see radio A -- tuning/front-end, not audio";
+    } else {
+        /* Step 4: rewrite the frequency word -- the coordinator owns it, and a
+         * stale word would leave the part off-channel. */
+        uart_puts("[rxdiag] step 4/7: rewriting the 4815's frequency word (in case its\n"
+                  "[rxdiag] tuning is stale) -- listen again:\n"
+                  "[rxdiag]   1 = audio now   2 = still noise   3 = still nothing\n"
+                  "[rxdiag] answer 1/2/3 (30 s): ");
+        bk4815_set_frequency(f, false);
+        bk4815_write_reg(BK4815_REG_AF, 0x1A0Fu);
+        systick_delay_ms(500);
+        after_retune = rxdiag_ask("123", RXDIAG_ANSWER_MS);
+
+        if (after_retune == '1') {
+            verdict = "rewriting the 4815's frequency word brought the audio back: the part was off-channel (stale tuning), not its demod -- a coordinator/tuning bug in the 4815 lane";
+        } else {
+            /* Step 5: re-assert the receive state. */
+            uart_puts("[rxdiag] step 5/7: re-asserting the whole receive state -- listen:\n"
+                      "[rxdiag]   1 = audio now   2 = still noise   3 = still nothing\n"
+                      "[rxdiag] answer 1/2/3 (30 s): ");
+            rxdiag_open_gates();
+            systick_delay_ms(500);
+            again = rxdiag_ask("123", RXDIAG_ANSWER_MS);
+
+            if (again == '1') {
+                verdict = "audio recovered by re-asserting the receive state (a drifted demod/AF/gate)";
+            } else {
+                /* Step 6: mute the idle BK4829 and its demod noise. */
+                uart_puts("[rxdiag] step 6/7: muting the idle BK4829's AF (the other VFO's\n"
+                          "[rxdiag] demod noise) -- listen:\n"
+                          "[rxdiag]   1 = audio now   2 = noise still   3 = silence\n"
+                          "[rxdiag] answer 1/2/3 (30 s): ");
+                BK4819_SetAF(BK4819_AF_MUTE);
+                if (rx_audio_is_4815())
+                    bk4815_write_reg(BK4815_REG_AF, 0x1A0Fu);
+                systick_delay_ms(500);
+                muted = rxdiag_ask("123", RXDIAG_ANSWER_MS);
+
+                /* Step 7: reopen that stage with its own DAC off. */
+                uart_puts("[rxdiag] step 7/7: reopening the BK4829's AF stage (the 4815's\n"
+                          "[rxdiag] audio needs it) with the BK4829's own AF DAC off\n"
+                          "[rxdiag] (0x30 = BDF1) -- listen:\n"
+                          "[rxdiag]   1 = audio now   2 = noise still   3 = silence\n"
+                          "[rxdiag] answer 1/2/3 (30 s): ");
+                BK4819_WriteRegister(BK4819_REG_30, 0xBDF1u);
+                BK4819_SetAF(BK4819_AF_FM);
+                if (rx_audio_is_4815())
+                    bk4815_write_reg(BK4815_REG_AF, 0x1A0Fu);
+                systick_delay_ms(500);
+                dac_off = rxdiag_ask("123", RXDIAG_ANSWER_MS);
+
+                if (muted == '1')
+                    verdict = "the idle BK4829's demod noise was the only audio: muting that chip (console z off) leaves the downlink audible";
+                else if (dac_off == '1')
+                    verdict = "the idle BK4829's AF DAC noise was masking the 4815 audio: stage open + 0x30 = BDF1 is the 4815-lane configuration";
+                else if (dac_off == '3')
+                    verdict = "the 4815's audio is absent: with the 4829's stage open and its DAC off nothing is on the node -- the 4815's demod/front-end, not the gates";
+                else if (muted == '3')
+                    verdict = "the 4815's audio needs the BK4829's AF stage open (shared-node loading)";
+                else if (muted == '2' || dac_off == '2')
+                    verdict = "noise survives with the 4829 muted/DAC off -- the noise is the 4815's own demod (the known demod state)";
+                else
+                    verdict = "inconclusive (no answer at the later prompt)";
+            }
+        }
+    }
+
+    uart_printf("[rxdiag] answers: initial %c, after retune %c, after re-assert %c, "
+                "4829 muted %c, 4829 DAC off %c\n",
+                rxdiag_char(answer), rxdiag_char(after_retune), rxdiag_char(again),
+                rxdiag_char(muted), rxdiag_char(dac_off));
+    uart_printf("\n[rxdiag] VERDICT: %s\n", verdict);
+    rxdiag_dump("final state");
+    uart_puts("[rxdiag] done -- the app's poller re-drives the gates on its next pass\n");
 }
 
 /* What the two VFOs are actually on, and the state the VFO/channel switch
@@ -1915,6 +2491,273 @@ int main(void)
                 uart_printf("\nBK4815 AF forced %s\n",
                             rx_force_bk4815_af_on() ? "ON (squelch bypassed)" : "off");
                 break;
+            case 'U': {
+                /* Satellite-style full duplex: the BK4815 receives on the
+                 * receive VFO while the BK4829 transmits on the transmit VFO.
+                 * `U` now *forces* that configuration (bindings, TX VFO and the
+                 * receive chip's tuning) so the only thing left to do is press
+                 * PTT; `U` again restores the bindings it found. */
+                static bool      saved_valid;
+                static rf_xcvr_t saved_rx;
+                static rf_xcvr_t saved_tx;
+                static uint8_t   saved_txvfo;
+                static uint8_t   saved_rxvfo;
+
+                if (!tx_duplex_active()) {
+                    const uint8_t rx_vfo = gEeprom.RX_VFO;
+                    const uint8_t tx_vfo = (uint8_t)(1u - rx_vfo);
+
+                    saved_rx      = SETTINGS_GetVfoTransceiver(rx_vfo);
+                    saved_tx      = SETTINGS_GetVfoTransceiver(tx_vfo);
+                    saved_txvfo   = gEeprom.TX_VFO;
+                    saved_rxvfo   = rx_vfo;
+                    saved_valid   = true;
+
+                    SETTINGS_SetVfoTransceiver(rx_vfo, RF_XCVR_BK4815);
+                    SETTINGS_SetVfoTransceiver(tx_vfo, RF_XCVR_BK4829);
+                    gEeprom.TX_VFO = tx_vfo;
+                    tx_set_duplex(true, true, true);
+                    SETTINGS_FixupVfoPointers();
+
+                    /* Put the receive chip on its VFO now, not on the first
+                     * coordinator pass: the user may PTT straight away. */
+                    bk4815_set_frequency(gRxVfo->freq_config_RX.Frequency, false);
+                    bk4815_write_reg(0x75u,
+                                     (gRxVfo->freq_config_RX.Frequency >= PA_BAND_SPLIT)
+                                         ? 0x0Au : 0x11u);
+
+                    uart_puts("\nduplex ON (config forced): BK4815 receives, BK4829 transmits\n"
+                              "on the other VFO at PTT. Press U again to restore the bindings.\n");
+                    duplex_status();
+                } else {
+                    tx_set_duplex(false, false, false);
+                    if (saved_valid) {
+                        SETTINGS_SetVfoTransceiver(saved_rxvfo, saved_rx);
+                        SETTINGS_SetVfoTransceiver((uint8_t)(1u - saved_rxvfo), saved_tx);
+                        gEeprom.TX_VFO = saved_txvfo;
+                        saved_valid = false;
+                    } else {
+                        gEeprom.TX_VFO = gEeprom.RX_VFO;
+                    }
+                    SETTINGS_FixupVfoPointers();
+                    uart_puts("\nduplex OFF (bindings restored)\n");
+                }
+                break;
+            }
+            case 'I':
+                tx_duplex_next_af();
+                uart_printf("\nduplex TX-chip AF -> %s\n", tx_duplex_af_name());
+                break;
+            case 'O':
+                tx_duplex_next_path();
+                uart_printf("\nduplex band path -> %s\n", tx_duplex_path_name());
+                break;
+            case 'N': {
+                /* Deterministic transmit: the chip's own tone on the transmit
+                 * VFO, independent of the microphone -- tells "the PA/TX chain
+                 * does not radiate" apart from "the mic path is wrong". */
+                const uint32_t f = gTxVfo->freq_config_TX.Frequency;
+
+                uart_printf("\nTX tone test on %u.%05u MHz for 2 s (duplex %d)\n",
+                            (unsigned)(f / 100000u), (unsigned)(f % 100000u),
+                            tx_duplex_active() ? 1 : 0);
+                tx_start(f, gTxVfo->TXP_CalculatedSetting, TX_SOURCE_TONE);
+                systick_delay_ms(2000);
+                tx_stop();
+                uart_puts("done -- listen on the uplink frequency\n");
+                break;
+            }
+            case 'E':
+                duplex_selftest();
+                break;
+            case 'H':
+                tx_duplex_set_af_dac(!tx_duplex_af_dac());
+                uart_printf("\nduplex %s\n", tx_duplex_af_dac_name());
+                break;
+            case 'g': {
+                const uint8_t mode = (uint8_t)((tx_duplex_pc13() + 1u) % 3u);
+
+                tx_duplex_set_pc13(mode);
+                uart_printf("\nduplex %s\n", tx_duplex_pc13_name());
+                break;
+            }
+            case 'z':
+                rx_set_4815_bridge(!rx_4815_bridge());
+                uart_printf("\n4815->4829 audio bridge %s\n",
+                            rx_4815_bridge() ? "ON (the 4829 AF opens with the 4815 squelch)"
+                                             : "OFF (4829 muted: its noise cannot mask 4815 audio)");
+                break;
+            case 'o': {
+                /* Route probe (docs/ra89r_fullduplex.md, "V52 static
+                 * follow-up"): does the BK4829's microphone input carry the
+                 * BK4815's receive audio?  Needs duplex mode (U) so the receive
+                 * lane is the 4815.  The speaker is muted, the 4815's own AF is
+                 * opened, and the 4829's mic path runs as at transmit entry --
+                 * without the PA, so this neither keys nor radiates.
+                 *
+                 * The operator's own voice proves the reading first: a muted
+                 * 4815 AF or an unpowered mic path would otherwise look
+                 * exactly like "no route". */
+                if (!tx_duplex_active()) {
+                    uart_puts("\nroute probe needs duplex mode: send U first (it forces the\n"
+                              "receive VFO onto the BK4815)\n");
+                    break;
+                }
+                if (!tx_route_probe_begin()) {
+                    uart_puts("\nroute probe refused: duplex is not RX=4815 / TX=4829\n");
+                    break;
+                }
+
+                const uint32_t rf =
+                    gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency;
+
+                uart_printf("\n[route] downlink %u.%05u MHz: speaker muted, 4815 AF open\n",
+                            (unsigned)(rf / 100000u), (unsigned)(rf % 100000u));
+
+                /* 1) quiet level: no carrier, nobody talking */
+                uart_puts("[route] phase 1/4: stay quiet and do NOT transmit (2 s)\n");
+
+                uint32_t amp_sum = 0, rssi_sum = 0;
+
+                for (unsigned i = 0; i < 8u; i++) {
+                    systick_delay_ms(250);
+                    amp_sum  += tx_route_probe_vox_amp();
+                    rssi_sum += bk4815_read_rssi();
+                }
+                const uint32_t quiet     = (amp_sum + 4u) / 8u;
+                const uint32_t rssi_idle = (rssi_sum + 4u) / 8u;
+
+                /* 2) microphone control: the reading must follow the voice */
+                uint32_t voice = 0;
+                bool     mic_ok = false;
+
+                for (unsigned round = 0; round < 2u && !mic_ok; round++) {
+                    if (round == 1u) {
+                        /* The TX word did not respond: try the stock's VOX mic
+                         * word before declaring the reading unusable. */
+                        tx_route_probe_mic_mode(1);
+                    }
+                    uart_printf("[route] phase 2/4: talk into the radio's microphone (4 s), "
+                                "%s\n", round ? "stock VOX mic word" : "TX mic word");
+
+                    uint32_t v = 0;
+
+                    for (unsigned i = 0; i < 16u; i++) {
+                        systick_delay_ms(250);
+                        v += tx_route_probe_vox_amp();
+                    }
+                    voice  = (v + 8u) / 16u;
+                    mic_ok = voice > quiet + 16u;
+                }
+
+                uart_printf("[route] mic control: quiet %u, voice %u -- %s (%s)\n",
+                            (unsigned)quiet, (unsigned)voice,
+                            mic_ok ? "responsive" : "NO RESPONSE",
+                            tx_route_probe_mic_mode_get() ? "stock VOX word" : "TX word");
+
+                if (!mic_ok) {
+                    tx_route_probe_end();
+                    uart_puts("[route] inconclusive: 0x64 did not follow the microphone in either\n"
+                              "[route] mic mode, so it cannot say where the 4815's audio goes\n");
+                    break;
+                }
+
+                /* 3) carrier: same reading, with and without the downlink */
+                uart_printf("[route] idle rssi4815=%u | phase 3/4: key radio A on the\n"
+                            "[route] downlink now, do not talk (12 s)\n",
+                            (unsigned)rssi_idle);
+
+                uint32_t sum_on = 0, n_on = 0, sum_off = 0, n_off = 0;
+
+                for (unsigned i = 0; i < 48u; i++) {
+                    const uint32_t rssi = bk4815_read_rssi();
+                    const uint16_t amp  = tx_route_probe_vox_amp();
+                    const bool     on   = rssi >= rssi_idle + 8u;
+
+                    if (on) { sum_on += amp; n_on++; }
+                    else    { sum_off += amp; n_off++; }
+
+                    if ((i % 4u) == 0u) {
+                        uart_printf("[route] t=%us rssi4815=%u amp=%u carrier=%u "
+                                    "4815 0x0C=%04X\n",
+                                    (unsigned)(i / 4u + 1u), (unsigned)rssi,
+                                    (unsigned)amp, on ? 1u : 0u,
+                                    (unsigned)bk4815_read_reg(0x0Cu));
+                    }
+                    systick_delay_ms(250);
+                }
+                tx_route_probe_end();
+
+                const uint32_t mean_on  = n_on  ? sum_on  / n_on  : 0u;
+                const uint32_t mean_off = n_off ? sum_off / n_off : 0u;
+
+                uart_printf("[route] mic amp (0x64): carrier %u (n=%u) | no carrier %u (n=%u)\n",
+                            (unsigned)mean_on, (unsigned)n_on,
+                            (unsigned)mean_off, (unsigned)n_off);
+
+                if (n_on < 6u || n_off < 6u) {
+                    uart_puts("[route] inconclusive: key radio A for part of the window, repeat\n");
+                } else if (mean_on > mean_off + mean_off / 2u + 8u) {
+                    uart_puts("[route] VERDICT route 2: the 4815's audio IS on the BK4829's mic\n"
+                              "[route] input -- a BK4829 transmission relays the downlink on the\n"
+                              "[route] air, so a monitor-only satellite uplink needs a hardware change\n");
+                } else {
+                    uart_puts("[route] VERDICT route 1: no 4815 audio on the BK4829's mic input;\n"
+                              "[route] the downlink is only summed at the amplifier, so I=1 with\n"
+                              "[route] H=off keeps it audible during a BK4829 transmission\n");
+                }
+                break;
+            }
+            case 'y': {
+                /* Swap mode: the stock's arrangement -- BK4829 receives (its AF
+                 * stays valid, so the downlink is audible) and the BK4815
+                 * transmits with the stock's 4815 TX set. */
+                static bool      sv_valid;
+                static rf_xcvr_t sv_rx;
+                static rf_xcvr_t sv_tx;
+                static uint8_t   sv_txvfo;
+                static uint8_t   sv_rxvfo;
+
+                if (!tx_swap()) {
+                    const uint8_t rx_vfo = gEeprom.RX_VFO;
+                    const uint8_t tx_vfo = (uint8_t)(1u - rx_vfo);
+
+                    sv_rx      = SETTINGS_GetVfoTransceiver(rx_vfo);
+                    sv_tx      = SETTINGS_GetVfoTransceiver(tx_vfo);
+                    sv_txvfo   = gEeprom.TX_VFO;
+                    sv_rxvfo   = rx_vfo;
+                    sv_valid   = true;
+
+                    tx_set_duplex(false, false, false);
+                    SETTINGS_SetVfoTransceiver(rx_vfo, RF_XCVR_BK4829);
+                    SETTINGS_SetVfoTransceiver(tx_vfo, RF_XCVR_BK4815);
+                    gEeprom.TX_VFO = tx_vfo;
+                    tx_set_swap(true);
+                    SETTINGS_FixupVfoPointers();
+                    rx_set_frequency(gRxVfo->freq_config_RX.Frequency);  /* the 4829 */
+
+                    uart_puts("\nswap ON: BK4829 receives, BK4815 transmits on PTT\n"
+                              "the 4829 is never written during a transmission\n");
+                    uart_printf("  RX VFO%u BK4829 @ %u.%05u MHz | TX VFO%u BK4815 @ %u.%05u MHz\n",
+                                (unsigned)rx_vfo,
+                                (unsigned)(gRxVfo->freq_config_RX.Frequency / 100000u),
+                                (unsigned)(gRxVfo->freq_config_RX.Frequency % 100000u),
+                                (unsigned)tx_vfo,
+                                (unsigned)(gTxVfo->freq_config_TX.Frequency / 100000u),
+                                (unsigned)(gTxVfo->freq_config_TX.Frequency % 100000u));
+                } else {
+                    tx_set_swap(false);
+                    if (sv_valid) {
+                        SETTINGS_SetVfoTransceiver(sv_rxvfo, sv_rx);
+                        SETTINGS_SetVfoTransceiver((uint8_t)(1u - sv_rxvfo), sv_tx);
+                        gEeprom.TX_VFO = sv_txvfo;
+                        sv_valid = false;
+                    }
+                    SETTINGS_FixupVfoPointers();
+                    uart_puts("\nswap OFF (bindings restored)\n");
+                }
+                break;
+            }
             case 'n':
                 bk4815_bench();
                 break;
@@ -1967,6 +2810,9 @@ int main(void)
                 }
                 break;
             }
+            case '7':
+                rxdiag_run();
+                break;
             case '1':
                 /* The K1 GUI has the panel and the keys; this re-selects it
                  * after the bench screens were used ('0'). */
@@ -2070,6 +2916,8 @@ int main(void)
         } else {
             systick_delay_ms(1);
         }
+
+        duplex_tick(now);
 
         if (bench_panel) {
             if ((uint32_t)(now - last_tick) >= 1000u) {
