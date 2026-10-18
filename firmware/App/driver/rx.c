@@ -6,6 +6,7 @@
 #include "driver/bk4829.h"
 #include "driver/pa.h"
 #include "driver/rf_dual.h"
+#include "driver/systick.h"
 #include "driver/tx.h"
 #include "driver/led.h"
 #include "functions.h"
@@ -18,6 +19,8 @@ static bool s_squelch_open;
 static bool s_fm_active;        /* the FM feature owns the audio; see rx_set_fm_active() */
 static uint16_t s_rssi;
 static uint32_t s_freq_10hz;    /* what the BK4829 was last tuned to */
+static bool s_af_4815_written;  /* the BK4815 AF gate's applied value... */
+static bool s_af_4815_valid;    /* ...and whether that shadow can be trusted */
 
 void rx_init(uint32_t freq_10hz)
 {
@@ -147,6 +150,15 @@ static void rx_set_audio_source(bool use_4815)
     s_squelch_open = false;
 }
 
+/* Applying the BK4815's receive set (bk4815_enter_rx) nudges the part: its RSSI
+ * spikes for a moment, and acting on that would open the audio gates on the
+ * demodulator's relock transient -- the burst a squelch opening used to make.
+ * The gates stay shut for this long after the set, then the squelch judges the
+ * settled RSSI. */
+#define RX4815_SETTLE_MS 150u
+
+static uint32_t s_settle_until;         /* 0 = not settling */
+
 void rx_poll(void)
 {
     if (!s_ready)
@@ -160,40 +172,68 @@ void rx_poll(void)
         const bool squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
 
         const bool was_open = s_squelch_open;
+        const bool settling = (s_settle_until != 0u && systick_millis() < s_settle_until);
 
         s_rssi = bk4815_read_rssi();
 
-        if (s_force_4815_af || squelch_off ||
-            (!s_squelch_open && s_rssi >= RX4815_SQUELCH_OPEN_MARK))
-            s_squelch_open = true;
-        else if (s_squelch_open && !squelch_off && s_rssi < RX4815_SQUELCH_CLOSE_MARK)
-            s_squelch_open = false;
+        if (settling) {
+            /* Just applied the receive set: the RSSI is not trustworthy yet,
+             * so keep the squelch latch as it is and judge again when the
+             * settle window has passed. */
+        } else {
+            s_settle_until = 0u;
+
+            if (s_force_4815_af || squelch_off ||
+                (!s_squelch_open && s_rssi >= RX4815_SQUELCH_OPEN_MARK))
+                s_squelch_open = true;
+            else if (s_squelch_open && !squelch_off && s_rssi < RX4815_SQUELCH_CLOSE_MARK)
+                s_squelch_open = false;
+        }
 
         /* Re-apply the stock's receive setup when a carrier appears: a
          * transmission (or the K1's own setup) can leave the part tuned but
          * with the demodulator back in its power-on state, which sounds like
-         * noise.  Once per squelch opening, not every poll -- it is seven bus
-         * writes. */
-        if (s_squelch_open && !was_open)
+         * noise.  Once per squelch opening, not every poll -- the squelch stays
+         * latched open but the gates below stay shut until the set's own RSSI
+         * nudge has settled, so the transient is never heard.  The restart
+         * pair can also revert the part's AF gate (0x49) to its unmuted boot
+         * value, so the gate shadow below is invalidated here. */
+        if (s_squelch_open && !was_open) {
             bk4815_enter_rx();
+            s_af_4815_valid = false;
+            s_settle_until = systick_millis() + RX4815_SETTLE_MS;
+        }
 
-        /* Drive the three gates every poll, not only on a transition.  The K1's
-         * own receive setup (RADIO_SetupRegisters -> RADIO_SetModulation, and
-         * AUDIO_AudioPathOff) writes the shared AF node and the amplifier behind
-         * our back, so a one-shot open at the transition leaves the audio muted
-         * from then on.  The BK4815's own AF (0x49), the BK4829's AF (0x47, the
-         * node the BK4815's audio rides) and the amplifier (PC13) must all be
-         * open together for a BK4815 receive to be heard. */
-        bk4815_set_af(s_squelch_open);
-        if (s_bridge_4815)
-            BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
-        else
-            BK4819_SetAF(BK4819_AF_MUTE);   /* hard mute, whatever the app writes */
-        /* Leave the audio-path line alone during a duplex transmission: the
-         * transmit side owns it then (console 'g'), and driving it here every
-         * 10 ms would override that. */
-        if (!tx_active())
-            audio_path_drive(s_squelch_open);
+        {
+            /* Recompute, not reuse: the transition above just armed the
+             * settle window, and the pass that did it must not open the
+             * gates on the transient (the pre-arming `settling` read 0
+             * there -- the log caught the gate open in the same
+             * millisecond as the set). */
+            const bool settling_now = (s_settle_until != 0u &&
+                                       systick_millis() < s_settle_until);
+            const bool gates = s_squelch_open && !settling_now;
+
+            /* The BK4815's AF gate has no outside writer: write it on a
+             * change, like the stock's applier, not at 100 Hz -- but always
+             * once after the receive set, whose restart pair can revert it.
+             * The BK4829's 0x47 is different -- the K1 app writes it behind
+             * our back, so the bridge keeps re-driving it every poll. */
+            if (!s_af_4815_valid || gates != s_af_4815_written) {
+                bk4815_set_af(gates);
+                s_af_4815_written = gates;
+                s_af_4815_valid = true;
+            }
+            if (s_bridge_4815)
+                BK4819_SetAF(gates ? BK4819_AF_FM : BK4819_AF_MUTE);
+            else
+                BK4819_SetAF(BK4819_AF_MUTE);   /* hard mute, whatever the app writes */
+            /* Leave the audio-path line alone during a duplex transmission: the
+             * transmit side owns it then (console 'g'), and driving it here every
+             * 10 ms would override that. */
+            if (!tx_active())
+                audio_path_drive(gates);
+        }
         return;
     }
 
@@ -206,6 +246,17 @@ void rx_poll(void)
         s_squelch_open = false;
         BK4819_SetAF(BK4819_AF_MUTE);
     }
+}
+
+/* Applying the BK4815 receive set outside the poller (the TX teardown paths in
+ * driver/tx.c): the set nudges the part's RSSI, so arm the same settle window
+ * rx_poll() uses for its own application of it.  The set's restart pair can
+ * also revert the part's AF gate (0x49), so the poller's gate shadow is
+ * invalidated. */
+void rx_4815_set_applied(void)
+{
+    s_settle_until = systick_millis() + RX4815_SETTLE_MS;
+    s_af_4815_valid = false;
 }
 
 bool rx_squelch_open(void)

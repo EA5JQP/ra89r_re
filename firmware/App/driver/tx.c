@@ -463,6 +463,7 @@ void tx_stop(void)
         bk4815_write_reg(0x0cu, 0x0a03u);
         bk4815_write_reg(0x73u, 0x81d0u);
         bk4815_enter_rx();
+        rx_4815_set_applied();
         pa_set_touch_chip_path(true);
         led_set(LED_OFF);
         s_active = false;
@@ -476,6 +477,7 @@ void tx_stop(void)
         if (s_duplex_tr)
             bk4815_write_reg(0x0Cu, 0x0A03u);
         bk4815_enter_rx();                  /* the demod set survives the TX */
+        rx_4815_set_applied();              /* its writes nudge the RSSI */
         pa_rx_enable();                     /* 0x33 back, 0x36 = 0, compare 0 */
         BK4819_RX_TurnOn();
         BK4819_SetAF(BK4819_AF_MUTE);

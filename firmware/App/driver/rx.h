@@ -52,6 +52,10 @@ bool rx_ready(void);
 /* One squelch step.  Paced by the caller. */
 void rx_poll(void);
 
+/* The receive set was applied outside the poller: arm rx_poll()'s settle
+ * window (the set nudges the part's RSSI). */
+void rx_4815_set_applied(void);
+
 bool rx_squelch_open(void);
 uint16_t rx_rssi(void);
 

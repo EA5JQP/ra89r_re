@@ -3,6 +3,66 @@
 
 #include "board_pins.h"
 #include "driver/rf_bus.h"
+#include "driver/systick.h"
+
+/* --- write log: the last 24 register writes with timestamps, dumped by the
+ * console ('J').  Added to attribute receive-set corruption to a code path or
+ * to bus/chip-side garbage: the 2026-10-18 captures showed the demod set
+ * reading TX-shaped values (0x16 = 0x3200) after a reception, with no port
+ * writer for most of the words.  A value that appears in a register read-back
+ * without ever appearing here means corruption outside the port's writes. */
+static struct {
+    uint32_t ms;
+    uint8_t  reg;
+    uint16_t value;
+    bool     block;
+} bk4815_log[24];
+static unsigned bk4815_log_i;   /* next slot */
+static unsigned bk4815_log_n;   /* total writes since boot */
+
+static void bk4815_log_add(uint8_t reg, uint16_t value, bool block)
+{
+    const unsigned last = (unsigned)((bk4815_log_i +
+                          sizeof bk4815_log / sizeof bk4815_log[0] - 1u) %
+                          (sizeof bk4815_log / sizeof bk4815_log[0]));
+
+    /* The squelch poller writes 0x49 every 10 ms whether it changed or not;
+     * logging those verbatim filled the ring in 0.24 s and evicted the
+     * reception-time bursts this log exists to catch.  Record a write only
+     * when it differs from the previous one. */
+    if (bk4815_log_n != 0u && !block &&
+        bk4815_log[last].reg == reg && bk4815_log[last].value == value &&
+        !bk4815_log[last].block)
+        return;
+
+    bk4815_log[bk4815_log_i].ms    = systick_millis();
+    bk4815_log[bk4815_log_i].reg   = reg;
+    bk4815_log[bk4815_log_i].value = value;
+    bk4815_log[bk4815_log_i].block = block;
+    bk4815_log_i = (unsigned)((bk4815_log_i + 1u) %
+                              (sizeof bk4815_log / sizeof bk4815_log[0]));
+    bk4815_log_n++;
+}
+
+unsigned bk4815_log_total(void) { return bk4815_log_n; }
+
+/* Entry `back` writes ago (0 = most recent).  False when there is none. */
+bool bk4815_log_entry(unsigned back, uint32_t *ms, uint8_t *reg,
+                      uint16_t *value, bool *block)
+{
+    const unsigned size = (unsigned)(sizeof bk4815_log / sizeof bk4815_log[0]);
+    unsigned i;
+
+    if (back >= bk4815_log_n || back >= size)
+        return false;
+
+    i = (unsigned)((bk4815_log_i + size - 1u - back) % size);
+    if (ms)    *ms    = bk4815_log[i].ms;
+    if (reg)   *reg   = bk4815_log[i].reg;
+    if (value) *value = bk4815_log[i].value;
+    if (block) *block = bk4815_log[i].block;
+    return true;
+}
 
 #define CS BK4815_CS_PIN
 
@@ -106,11 +166,13 @@ void bk4815_write_reg(uint8_t reg, uint16_t value)
     b[0] = (uint8_t)(value >> 8);
     b[1] = (uint8_t)value;
     rf_bus_write(CS, (uint8_t)((reg & 0x7fu) << 1), b, 2u);
+    bk4815_log_add(reg, value, false);
 }
 
 void bk4815_write_block(uint8_t reg, const uint8_t *bytes, unsigned len)
 {
     rf_bus_write(CS, (uint8_t)((reg & 0x7fu) << 1), bytes, len);
+    bk4815_log_add(reg, len, true);
 }
 
 bool bk4815_detect(void)
@@ -177,10 +239,20 @@ uint16_t bk4815_tone_word(uint32_t tone_hz)
     return (uint16_t)((tone_hz << 16) / 18466u);
 }
 
-/* The stock's 4815 receive setup (`FUN_08016CEC`): demodulator/audio and the
- * receive PA value.  The boot table alone leaves the part tuned but with the
- * demodulator in its power-on state -- a strong carrier then reads a high RSSI
- * and demodulates as noise.  Applied on every RX tune. */
+/* The stock's 4815 receive setup (`FUN_08016CEC`), verbatim: demodulator,
+ * the receive PA value, then the operation-control restart (`0x70 = 0` /
+ * `0x70 = 0xA000`).  All of it is needed: a tuned part with only the boot
+ * table demodulates nothing, and a radio run (2026-10-18) where the trailing
+ * pair was left out showed the four register writes alone do not bring the
+ * demodulator up -- the restart cycle is what makes the reconfig take.
+ *
+ * The restart and the writes spike the part's RSSI for a moment; acting on
+ * that opens the audio gates on the transient, which was the burst a squelch
+ * opening (and the GUI load) used to make.  The fix is the squelch settle
+ * window in rx_poll() -- the gates stay shut for 150 ms after this set -- not
+ * dropping the pair.  `bk4815_set_frequency()` deliberately does NOT call
+ * this: the boot-time tune would burst into the first squelch opening's
+ * transient, and the squelch-open hook applies the set once, settled. */
 void bk4815_enter_rx(void)
 {
     bk4815_write_reg(0x16u, 0xb200u);
@@ -221,9 +293,6 @@ void bk4815_set_frequency(uint32_t freq_10hz, bool tx)
     calbuf[2] = (uint8_t)(cal[band] >> 8);
     calbuf[3] = (uint8_t)cal[band];
     bk4815_write_block(BK4815_REG_CAL, calbuf, (unsigned)sizeof calbuf);
-
-    if (!tx)
-        bk4815_enter_rx();
 }
 
 void bk4815_set_tone(uint32_t tone_hz)

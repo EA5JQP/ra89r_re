@@ -52,8 +52,16 @@
 
 /* Register 0x49 (REG73 in the datasheet): bit 15 is "hard mute" (1 = muted).
  * The stock's AF switch writes 0x9A02 to mute (`FUN_08015F48`) and 0x1A02 to
- * unmute (`FUN_0801CCE8`), and its boot config leaves 0x1A02 (unmuted). */
-#define BK4815_AF_ON   0x1a02u   /* hard mute clear */
+ * unmute (`FUN_0801CCE8`), and its boot config leaves 0x1A02 (unmuted).
+ *
+ * The low nibble is the part's output volume, and the stock's 0x1A02 runs it
+ * at 2 of 15 -- on this board that is quiet enough that the BK4815's downlink
+ * cannot be told from the BK4829's idle noise on the shared audio path, which
+ * is what the port's own diagnostics work around: every one of them opens the
+ * gate at 0x1A0F ("at maximum volume, so a quiet-but-working downlink cannot
+ * be mistaken for noise").  The normal receive path uses the same value now;
+ * wiring it to the app's volume setting is the proper follow-up. */
+#define BK4815_AF_ON   0x1a0fu   /* hard mute clear, output volume at max */
 #define BK4815_AF_OFF  0x9a02u   /* hard mute set */
 
 /* True when register 0 reads back the BK4815 id. */
@@ -70,8 +78,11 @@ void bk4815_write_block(uint8_t reg, const uint8_t *bytes, unsigned len);
 /* Replay the stock's boot configuration (FUN_08006A0C) in its original order. */
 void bk4815_configure(void);
 
-/* The stock's receive setup (FUN_08016CEC): demodulator/audio + receive PA.  A
- * tuned part without it reports RSSI but demodulates noise; RX tunes call it. */
+/* The stock's receive setup (FUN_08016CEC), verbatim: the demodulator set +
+ * receive PA and the trailing operation-control restart that makes it take.
+ * Callers are the ones that explicitly want the set (rx_poll on a squelch
+ * opening, duplex TX teardown, the console paths that block the poller) --
+ * bk4815_set_frequency() does not call it.  See the note in bk4815.c. */
 void bk4815_enter_rx(void);
 
 /* Register writes the boot configuration consists of: 1 block plus the singles. */
@@ -134,6 +145,17 @@ void bk4815_set_tone(uint32_t tone_hz);
 
 /* The chip's RSSI indicator: register 0x44, bits 6:0. */
 uint16_t bk4815_read_rssi(void);
+
+/* --- the write log ---------------------------------------------------------- */
+
+/* Total BK4815 writes since boot. */
+unsigned bk4815_log_total(void);
+
+/* The write `back` accesses ago (0 = most recent): timestamp, register, value
+ * (for a block write: the length) and whether it was a block.  False when
+ * `back` reaches past the log's 24 entries. */
+bool bk4815_log_entry(unsigned back, uint32_t *ms, uint8_t *reg,
+                      uint16_t *value, bool *block);
 
 /* Enable or mute the chip's AF output (register 0x49).  The stock switches this
  * as the receive audio source when the BK4815 is the selected transceiver. */

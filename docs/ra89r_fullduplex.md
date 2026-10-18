@@ -703,6 +703,151 @@ is what a 4829 transmit cycle does to the BK4815's receive/demod state (the
 "clean first PTT, then noise" signature),
 which `bk4815_enter_rx()` already tries to undo.
 
+**Ear test, first run (2026-10-18, console `T`, layout A: RX 145.500 on the
+4815 / TX 446.00625 on the 4829, beep state `0x47=0x6142` + `0x30=0xC3FE`).**
+With radio A's carrier on the downlink (`rssi4815` idle 30–31), keying the
+port collapsed the lane to `min 7 / max 16` for the length of the transmission
+-- the carrier left the lane entirely, and the operator heard **the beep only**
+(answer 2).  This re-confirms the 2026-10-17 layout-A desense (there: no
+carrier, floor 17 → 41; here: a carrier, 31 → 7–16), now with the downlink
+present: a UHF uplink blocks a VHF downlink lane.  It is **not** an audio-gate
+verdict — the written transmit config was exactly the intended beep state
+(`0x47=0x6142`, `0x30=0xC3FE`), so nothing in the AF switch explains the
+silence.  The test's printed verdict ("the beep masks it, mix/level") misfired
+because it weighed the 0x49 level meter, which does not track the carrier; it
+now compares the TX RSSI minimum against idle (±4, the self-test's rule) and
+warns when the split is the known-bad way round.  The run also shows the app's
+own poller healthy afterwards: squelch opens at `rssi4815` 32 / closes at 10,
+`0x6D` stayed `0x6618`, `0x75 = 0x0011`, and the tuning word (`0x71/0x72` =
+`864e c4ec`) still decodes to 145.500 MHz — the demodulator set survives a
+normal (non-duplex) TX cycle.  What remains: run `T` in **layout B** (downlink
+446.00625 on the 4815, uplink 145.5 on the 4829), the split whose lane held
+`47 → 47` in the self-test; a "beep only" there with the lane alive would be
+the mix/level question, and answer 1 the first true duplex-audio pass.
+
+**Ear test, second run (2026-10-18, console `T`, layout B: RX 446.00625 on the
+4815 / TX 145.5 on the 4829, beep state; build predates the verdict fix).**
+Idle `rssi4815` 46–49 with radio A keyed -- the self-test's 47 exactly.  During
+the port's transmission the lane **flickered**: RSSI swung 12–49 (mean 31),
+i.e. the carrier was seen at full level at moments and dropped to the noise
+floor at others -- between layout A's collapse (31 → 7–16) and the self-test's
+held `47 → 47`.  The ear answer was again **2 (beep only)**.  The self-test
+(`E`) held `min=47` in this same band layout, and the one functional difference
+is the transmit source: `E` keys a **tone** (`TX_SOURCE_TONE`), `T` keys the
+**microphone** (`TX_SOURCE_MIC`, mic ADC + TX DSP + speech) -- so the
+candidates are the mic/DSP chain itself, speech-peak PA current (supply sag
+desensing the receiver in bursts), or the `T`-specific AF state (`0x47=0x6142`
++ AF DAC on).  Separating runs, all on the new build: (a) `E` again in layout B
+(expect min 47); (b) `T` with radio A keyed continuously and the operator
+**silent** -- a held lane points at speech-peak current, a flickering one at
+the mic chain; (c) `T` with `H` off (no beep) to answer mix/level directly.
+Post-run `[dup]` telemetry again healthy (`0x75=0x000a`, tuning word `893b
+91b9` = 446.00625, squelch marks 10/48–51).
+
+**Ear test, third run (2026-10-18, console `E`, layout B, radio A keyed).**
+All four variants held the lane (`idle=47`, `tx min=47..48`, `RX SURVIVED TX`),
+**and the operator heard the downlink perfectly under the transmission** --
+"the TX is just a small beep" (the tone source's own DTMF beep).  That is the
+first true duplex-audio pass: the summed-node route (route 1) carries the
+downlink to the speaker while the BK4829 transmits, including the variant that
+writes the BK4815's T/R (`af=0 path=0 tr=1`).  Combined with the second run,
+the remaining defect is now exactly the **transmit source**: a **tone** TX
+leaves the lane held and the downlink audible; a **microphone** TX
+(`TX_SOURCE_MIC`: mic ADC + TX DSP + speech) makes the lane flicker (min 12 /
+max 49) and the downlink inaudible.  Candidates, in order: speech-peak PA
+current desensing the receiver in bursts (supply sag), the mic/DSP chain's own
+noise, or the mic-entry register state.  Separating run: `T` with radio A keyed
+continuously and the operator **silent** -- a held lane indicts speech-peak
+current, a flickering one the mic chain's configuration (then `H` off answers
+mix/level directly).
+
+**Ear test, fourth run (2026-10-18, console `T`, layout B, mic source, beep
+state, demod set applied by the test).**  The lane **held** through the
+transmission (`idle 47`, `tx min 46 max 49`) where the third run's unset-demod
+state flickered to 12 -- the mic-source TX does **not** desense the receive
+lane; the earlier flicker was an artifact of the demodulator never having been
+set (its unset state reads erratic RSSI too).  The ear answer was again **2**
+(beep only), so with the lane held and every gate written open (`0x47=0x6142`,
+`0x49` open, PC13 as RX left it) the remaining question is exactly the
+mix/level one: the loud beep vs a modest carrier.  The test used to force the
+beep state, which made `H` untestable through it; it now keys with whatever
+`H`/`I` last set.  Decisive run: `H` then `T` -- the downlink audible without
+the beep means masking; still silent with the lane held means the downlink
+audio does not reach the summed node during a TX (the 0x30 dilemma: `0xC1FE`
+may leave the node unpowered -- the last unknown).
+
+**App-mode receive regression (2026-10-18, `'J'` captures, second pass).**
+After a normal GUI boot (RX VFO on the BK4815), the first reception is correct
+and a later one is noise.  Read against the write log, the captures revise the
+first interpretation:
+
+- The noisy-state capture (uptime 4246 ms, **84 writes total**) has **no
+  `enter_rx` burst in its history** -- the squelch had never opened yet -- so
+  its demod-set reading (`0x16 = 0x3200`, `0x2B = 0x0000`, `0x73 = 0x8001`) is
+  the part's **power-on default state, not corruption** (the coincidence: the
+  swap-TX set writes the same `0x16` word, but no port code writes the
+  `0x2B`/`0x73` values, and the log shows no write happened).
+- The later capture (uptime 7045 ms, 357 writes) reads the set **correct**:
+  a reception had opened the squelch and the poller's hook applied the
+  verbatim set -- **and that reception was still noise**.  A statically
+  correct set therefore does not imply a working demodulator; the first
+  reception works with the *same* set, so the difference is in the chip's
+  dynamic state around the second one, not in the registers.
+- The log's tail also exposed the poller writing `0x49` **unconditionally
+  every 10 ms** (~97 writes/s; the stock's appliers run on transitions only).
+  That spam is now change-driven (the bridged BK4829 `0x47` stays
+  every-poll -- the K1 app writes that one behind our back), with the gate
+  shadow invalidated after every receive-set application, because the
+  restart pair can revert the part's AF gate to its unmuted boot value.
+- The write log now records only writes that differ from the previous one;
+  at ~100 Hz of gate spam the 24-entry ring held just 0.24 s and evicted the
+  reception-time bursts it exists to catch.
+
+Next reproduction: reflash, TX #1 (ok), TX #2 (noise), then `'J'` **while the
+noise is happening** (radio A still keying, squelch open).  The log will
+either catch a code path writing the TX-shaped set mid-reception, or show the
+set applied-and-untouched with `0x44` reading the carrier -- the "configured
+but ineffective" state, whose next lever is the nuclear re-assert (full boot
+table + retune + set) once per squelch opening.
+
+**Second-pass captures (same day): the hook is verified working.**  The write
+log now reads as intended: an `enter_rx` burst at every squelch opening
+(uptime 15487, 21181, 23041 ms), gate open → +15 ms shut (the settle
+window) → +160 ms reopen; 51 writes over 15.6 s (the spam fix confirmed
+live).  The noisy reception's own capture reads `squelch OPEN, RSSI 58`,
+the demod set exactly `B200/403F/6618/81D0`, `0x49` unmuted, the SNR
+indicator `0x43` fluctuating wildly between captures (5 ↔ 73) -- **the
+"configured but ineffective" state: the chip sees the carrier, the set is
+correct, and the audio is still noise.**  The log also caught a real bug
+(fixed): the gate opened in the same pass that armed the settle window --
+the pre-arming `settling` read 0 there, so each opening amplified the
+transient once before the settle kicked in; the gates now recompute the
+window after the set.
+
+Still unanswered: **whose** noise -- the bridged BK4829's own demod summed
+into the node, or the BK4815's.  The one-keystroke discriminator at the noise
+is `'z'` (bridge off, the 4829 hard-muted every poll, the 4815's own gate
+stays open): noise stops → the 4829's contribution; noise continues → the
+BK4815's demodulator itself.  If the latter, the nuclear re-assert variant
+goes in next.
+
+**Radio answer (2026-10-18): `'z'` -> silence, `'y'` -> clean audio.**  With
+the bridge off the burst disappears *and the BK4815's audio disappears with
+it* -- the BK4815's downlink only exists on the path through the BK4829's AF
+stage.  Rebinding the receive VFO to the BK4829 (`'y'`, swap) receives 446
+directly and sounds clean (RSSI 222).  So the RF is fine on both chips; what
+fails on the BK4815 lane is the **audio level on the shared path** -- the
+4815's output ends up drowned by the BK4829's idle noise, which is what the
+ear reports as "noise".  The port's own code agrees: the stock's AF gate word
+`0x49 = 0x1A02` runs the BK4815's output volume at **2 of 15**, and every
+diagnostic in this port deliberately opens it at **`0x1A0F`** -- *"at maximum
+volume, so a quiet-but-working downlink cannot be mistaken for noise"*.  The
+normal receive path was using the quiet value.  `BK4815_AF_ON` is now
+`0x1A0F` (the diagnostics' proven audible value); wiring the gate to the app's
+volume setting is the proper follow-up.  Confirming test: with the new build,
+the first and later receptions should sound identical; if a later reception is
+still noise, the level theory is dead and the nuclear re-assert goes in.
+
 **The 4815 transmit set is dead code** — already recorded in `docs/ra89r_bk4815.md`
 ("The stock never transmits through it") and `docs/ra89r_rfpath.md`; the
 swap-mode premise above predated that correction.  `FUN_080173F2(lane, mode)`
@@ -735,6 +880,38 @@ workspace), the headless runs need
 `JAVA_TOOL_OPTIONS=-Duser.home=$PWD/home`, and the helper scripts used above are
 `work/ghidra/scripts/{Decomp,Callers2}.java`.
 
+### The GUI-load burst and the duplex RX signature (2026-10-18, revised same day)
+
+- **The burst when the GUI loads.**  At boot, `rf_dual_refresh()` tunes the
+  BK4815's VFO right before the GUI comes up, and (on `edcbc9a`) the tune ran
+  `bk4815_enter_rx()`; its writes spike the part's RSSI, the next 10 ms poll
+  crossed the `0x1E` open mark, latched the squelch open and amplified the
+  demodulator's restart transient -- the burst heard exactly when the GUI
+  loads.  The same hook re-ran the set on every squelch opening and every
+  duplex PTT release.
+- **First fix, wrong (burst removed, audio broken).**  Dropping the stock's
+  trailing `0x70 = 0` / `0x70 = 0xA000` pair from the set silenced the burst --
+  and silently broke the set: with the pair left out, the four demodulator
+  writes alone do **not** bring the demodulator up (radio 2026-10-18: `E`'s
+  downlink audio vanished on that build while `rssi4815` stayed 47; with the
+  pair, the same test was heard perfectly).  Register `0x70` is the operation
+  control (`0xA000` receive / `0xE000` transmit) and the restart cycle is what
+  makes the reconfig take; the stock ends `FUN_08016CEC` with it for a reason.
+- **Second fix (current).**  The set is back verbatim, and the burst is
+  prevented where it actually happened: the **settle window**.  Applying the
+  set latches the squelch open but holds the three audio gates (4815 `0x49`,
+  4829 `0x47`, PC13) shut for 150 ms, then the squelch judges the settled
+  RSSI -- the transient is never amplified, and a real carrier opens ~150 ms
+  late.  `bk4815_set_frequency()` still does not call the set (the boot tune
+  must not burst into the first squelch opening); the squelch-open hook in
+  `rx_poll()` applies it once, settled, and the TX teardown paths arm the same
+  window (`rx_4815_set_applied()`).  The console paths that tune the 4815
+  while the poller is blocked (`U`/`E`/`T`) apply it explicitly.
+
+  *Located, not verified*: the burst mechanism and the pair's necessity fit
+  the register semantics and the radio runs above, but the current build has
+  not yet been heard on the radio.
+
 ### Still open (revised 2026-10-17)
 
 - **The receive-during-transmit RF side is now confirmed on the radio**
@@ -759,11 +936,13 @@ workspace), the headless runs need
   is unexplained — watch `0x47` across a BIDIR relay and listen to the stock's
   speaker; the audio-path line **PC13** (console `g`) is the remaining stock-side
   candidate.
-- Why duplex audio degrades after the first clean PTT: the 4829 transmit cycle
-  and the 4815's receive/demod state, not an audio register (the V52 gates are
-  above).  Console `7` is the guided way to classify it (it distinguishes "RF
-  not seen", "gates shut", "noise" and "silent" and tries the re-assert);
-  `z`/`I`/`H` are the knobs; `bk4815_enter_rx()` is the code.
+- Duplex audio is **verified with a tone transmit** (2026-10-18, layout B:
+  lane held `47 → 48`, downlink heard under the TX, all four variants).  The
+  open defect is the **microphone** transmit: its TX makes the lane flicker
+  (min 12 / max 49) and the downlink inaudible (see the ear-test runs above).
+  The separating run is `T` with radio A keyed and the operator silent; `H`/
+  `O`/`g` are the knobs, and console `7` classifies a post-TX RX state if one
+  still misbehaves.
 - The exact UNIDIR/BIDIR lane restriction over the page-context check in the
   arming routine (V52 `FUN_080190CC`, `0x20000310` against the lane object) —
   runtime.  V52 also disables the repeat when either lane's `[0x75]` flag is
