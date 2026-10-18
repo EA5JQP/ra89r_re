@@ -272,11 +272,13 @@ static int      s_dual_pri   = -2;
 static int      s_dual_sec   = -2;
 static uint32_t s_dual_pri_f = 0u;
 static uint32_t s_dual_sec_f = 0u;
+static uint8_t  s_dual_rx_vfo = 0xFFu;   /* the RX_VFO the state was applied for */
 
 void rf_dual_reapply(void)
 {
     s_dual_pri = -2;
     s_dual_sec = -2;
+    s_dual_rx_vfo = 0xFFu;
 }
 
 void rf_dual_refresh(void)
@@ -286,6 +288,24 @@ void rf_dual_refresh(void)
     const rf_dual_roles_t roles = rf_dual_choose(a_4829, b_4829, gEeprom.RX_VFO);
     uint32_t        f4829 = 0u;
     uint32_t        f4815 = 0u;
+
+    /* Switching VFOs has to re-enter the selected lane's receive
+     * configuration, the way the stock does: its receive entry (FUN_08016cec)
+     * tunes the part and applies the demodulator set, the band register and
+     * the receive-path pin *together*, every time a lane is (re)configured --
+     * a VFO switch included.  The port split those steps and ran the tune only
+     * when the BK4815's role or frequency changed, so "switch to a BK4815 VFO"
+     * left the part un-retuned while the K1's own radio setup had moved its
+     * band/path state: the RSSI still read the carrier (the squelch opened)
+     * but the demodulator produced noise, and editing the frequency and back
+     * -- which forces the re-apply -- was the workaround (radio 2026-10-18).
+     * Selecting another VFO now invalidates the applied state so both lanes
+     * re-apply, exactly what a frequency change does. */
+    if (gEeprom.RX_VFO != s_dual_rx_vfo) {
+        s_dual_rx_vfo = gEeprom.RX_VFO;
+        s_dual_pri    = -2;
+        s_dual_sec    = -2;
+    }
 
     if (roles.bk4829_vfo >= 0)
         f4829 = gEeprom.VfoInfo[roles.bk4829_vfo].freq_config_RX.Frequency;
