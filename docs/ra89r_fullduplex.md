@@ -949,6 +949,20 @@ the band guard uses.  *Located, not verified*: the pin evidence is from the
 register captures, but the fix has not yet been confirmed on the radio by a
 VFO-switch test.
 
+**Second half of the same defect: the set was never paired with the tune.**
+The stock's RX entry programs the frequency *and* the demodulator in one
+routine (`FUN_08016CEC`); the port applied the demod set only on a squelch
+opening.  A radio run on the fixed build showed the write log retuning the
+part at 5469 / 12501 / 12924 ms with **no `enter_rx` after any of them**, and
+the demod set still reading its power-on values (`0x16 = 0x3200`,
+`0x2B = 0x0000`, `0x73 = 0x8001`) -- a tuned part that had never been given
+the set, i.e. the same "RSSI follows the carrier, audio is noise" signature
+from a different route: a VFO switch or frequency edit onto the BK4815 leaves
+it unset because no squelch transition happens.  `rx_service()` now applies the
+set (with the settle window) **whenever the coordinator has (re)tuned the
+part** (`rf_dual_bk4815_frequency()` changed), so the tune and the set always
+go together, as in the stock.
+
 ### Still open (revised 2026-10-17)
 
 - **The receive-during-transmit RF side is now confirmed on the radio**

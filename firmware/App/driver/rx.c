@@ -323,6 +323,7 @@ uint32_t rx_rx_frequency(void)
 void rx_service(void)
 {
     static bool squelch_open;
+    static uint32_t s_applied_4815_freq;
 
     /* The FM feature owns the receiver and the audio while it is up (see
      * rx_set_fm_active()): leave the BK4829 alone so it cannot drive the
@@ -362,11 +363,29 @@ void rx_service(void)
         rx_set_audio_source(use_4815);
     }
 
+    /* Pair the BK4815's receive set with its tune, as the stock does: its RX
+     * entry (`FUN_08016CEC`) programs the frequency *and* the demodulator, and
+     * a part that is tuned but never given the set demodulates noise (RSSI
+     * follows the carrier, the audio does not).  The port used to apply the
+     * set only on a squelch opening, so a VFO switch or a frequency edit onto
+     * the BK4815 left it unset -- "noise after switching VFOs, fixed by
+     * editing the frequency".  Apply it whenever the coordinator has (re)tuned
+     * the part, with the settle window holding the audio gates through the
+     * set's own transient. */
+    {
+        const uint32_t f4815 = rf_dual_bk4815_frequency();
+
+        if (f4815 != 0u && f4815 != s_applied_4815_freq) {
+            s_applied_4815_freq = f4815;
+            bk4815_enter_rx();
+            rx_4815_set_applied();
+        }
+    }
+
     if (rx_ready())
         rx_poll();
 
-    if (rx_ready() && rx_squelch_open() != squelch_open) {
-        squelch_open = rx_squelch_open();
+    if (rx_ready() && rx_squelch_open() != squelch_open) {        squelch_open = rx_squelch_open();
 
         g_SquelchLost = squelch_open;
         if (!tx_active())
