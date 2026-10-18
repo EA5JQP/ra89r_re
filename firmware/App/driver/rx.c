@@ -292,6 +292,25 @@ void rf_dual_refresh(void)
     if (roles.bk4815_vfo >= 0)
         f4815 = gEeprom.VfoInfo[roles.bk4815_vfo].freq_config_RX.Frequency;
 
+    /* The BK4815's own state -- its band register 0x75 and its receive-path
+     * pin -- belongs to the tune the BK4815 is on, but two other paths write
+     * it as a side effect:
+     *   - pa_select_band() writes 0x75 from *whatever frequency it is handed*,
+     *     and the BK4829's retune path and the TX path hand it the BK4829's;
+     *     it also clears the receive-path pin through pa_apply_chip_path().
+     *   - the K1's own radio setup clears the pin through
+     *     BK4819_PickRXFilterPathBasedOnFrequency() every time it configures
+     *     a BK4829-bound VFO -- i.e. on every VFO switch and end-of-reception
+     *     reconfigure.
+     * The repair used to run only when the BK4815's role or frequency
+     * changed, so the sequence "switch to a BK4829 VFO, switch back" left the
+     * pin cleared and the band stale: the RSSI still read the carrier (the
+     * squelch opened) but the demodulator produced noise, and a frequency
+     * edit-and-back -- which forces the re-apply -- was the workaround.
+     * Own both here instead: assert/clear them after every pass's retunes
+     * (which are the clobberers), writing the register only when the value
+     * actually changes. */
+
     /* The BK4829 is retuned to its VFO here, not from the receiver's VFO: the
      * receiver may be following the BK4815 one. */
     if (f4829 != 0u && (roles.bk4829_vfo != s_dual_pri || f4829 != s_dual_pri_f)) {
@@ -304,12 +323,24 @@ void rf_dual_refresh(void)
         rf_dual_apply(&roles, f4815);
         s_dual_sec   = roles.bk4815_vfo;
         s_dual_sec_f = f4815;
+    }
 
-        /* The receive RF-path pin follows the transceiver: the stock's BK4815
-         * branch sets the BK4829's 0x33 pin 4 (`FUN_08016CEC` ->
-         * `FUN_080137D4(0x10,0x10)`), the BK4829 branch clears it.  The port's
-         * pa_apply_chip_path() clears both, so set pin 4 for a BK4815 VFO. */
-        BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA,
-                             roles.bk4815_vfo >= 0);
+    if (roles.bk4815_vfo >= 0) {
+        static uint16_t s_band_written;
+
+        {
+            const uint16_t band = (f4815 >= PA_BAND_SPLIT) ? 0x0Au : 0x11u;
+
+            if (band != s_band_written) {
+                bk4815_write_reg(0x75u, band);
+                s_band_written = band;
+            }
+        }
+
+        if (!BK4819_IsGpioOutSet(BK4819_GPIO4_PIN32_VHF_LNA))
+            BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, true);
+    } else {
+        if (BK4819_IsGpioOutSet(BK4819_GPIO4_PIN32_VHF_LNA))
+            BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, false);
     }
 }
