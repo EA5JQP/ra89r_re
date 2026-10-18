@@ -285,12 +285,16 @@ static int      s_dual_sec   = -2;
 static uint32_t s_dual_pri_f = 0u;
 static uint32_t s_dual_sec_f = 0u;
 static uint8_t  s_dual_rx_vfo = 0xFFu;   /* the RX_VFO the state was applied for */
+static bool     s_4829_parked;           /* unassigned BK4829 demodulator parked */
 
 void rf_dual_reapply(void)
 {
     s_dual_pri = -2;
     s_dual_sec = -2;
     s_dual_rx_vfo = 0xFFu;
+    /* The TX paths rewrite 0x30 themselves, so the parked shadow cannot be
+     * trusted after one: let the next pass re-assert it. */
+    s_4829_parked = false;
 }
 
 void rf_dual_refresh(void)
@@ -323,6 +327,28 @@ void rf_dual_refresh(void)
         f4829 = gEeprom.VfoInfo[roles.bk4829_vfo].freq_config_RX.Frequency;
     if (roles.bk4815_vfo >= 0)
         f4815 = gEeprom.VfoInfo[roles.bk4815_vfo].freq_config_RX.Frequency;
+
+    /* An unassigned BK4829 -- both VFOs on the BK4815, the usual setup here --
+     * is left receiving on whatever frequency it had last, and its AF output
+     * is opened by the bridge while the BK4815's squelch is open (rx_poll).
+     * The BK4815's audio reaches the speaker through that same AF stage, so the
+     * parked chip's demodulated noise sums into it: when it happens to sit on
+     * the selected channel the audio is fine (both chips demodulate it), and
+     * when it sits elsewhere all that is heard is its noise (radio 2026-10-18:
+     * the good capture had the 4829 on 446.00625 with RSSI 281, the noisy one
+     * on 145.5000; every audio register identical).
+     * Park its demodulator: drop the RX link, the demod DSP and the disc mode
+     * from 0x30, keep the AF DAC (the BK4815's audio needs that output stage)
+     * and the PLL/VCO.  Restore the full RX word when a VFO names the chip. */
+    if (roles.bk4829_vfo < 0) {
+        if (!s_4829_parked) {
+            BK4819_WriteRegister(BK4819_REG_30, 0x82F0u);
+            s_4829_parked = true;
+        }
+    } else if (s_4829_parked) {
+        BK4819_RX_TurnOn();
+        s_4829_parked = false;
+    }
 
     /* The BK4815's own state -- its band register 0x75 and its receive-path
      * pin -- belongs to the tune the BK4815 is on, but two other paths write
