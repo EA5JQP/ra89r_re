@@ -334,7 +334,7 @@ static void print_help(void)
               "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
               "          j BK1080 FM: init, id probe, tune 100.0 MHz, read status\n"
               "          a FM audio route: toggle the BK4829 AF mute (0x47) under FM\n"
-              "          n BK4815 (PB13): boot config, tune 145.7500, read meters\n"
+              "          n BK4815 (PB13): dump all registers, boot config, tune, meters\n"
               "          J dual-RF live state: roles, audio source, BK4815 regs/meters\n"
               "          A force the BK4815 AF open (bypass squelch) to test audio\n"
               "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
@@ -699,6 +699,33 @@ static void fm_bench(void)
  * 0x71/0x72 synthesizer path and reads its own 0x43/0x44 meters, to see
  * whether the synth locks and it receives.  Nothing here has run on the
  * radio -- docs/ra89r_bk4815.md. */
+/* Read and print the whole BK4815 register file (0x00-0x7F) as it currently
+ * stands.  Pure reads -- nothing is written -- so this is the state capture for
+ * a misbehaving receive: dump it while the reception is good and again while it
+ * is noise, and compare against each other and against the values the stock
+ * writes (docs/ra89r_bk4815.md).  Registers the part does not drive read back
+ * as whatever is on its data bus; the known ones are listed in the key. */
+static void bk4815_dump_registers(void)
+{
+    unsigned reg;
+
+    uart_puts("\nBK4815 register file, as it stands now (read-only):\n");
+    for (reg = 0; reg < 0x80u; reg++) {
+        if ((reg & 7u) == 0u)
+            uart_printf("  ");
+        uart_printf("%02X:%04X ", reg, (unsigned)bk4815_read_reg((uint8_t)reg));
+        if ((reg & 7u) == 7u)
+            uart_puts("\n");
+    }
+    uart_puts("  key: 00=id(4816) 01=bandwidth 04=VCO-div 0C=T/R 16/2B/6D/73=RX set\n"
+              "       22=tone 42/4C/4D/4E/56/57=compander 43=SNR 44=RSSI(bits 6:0)\n"
+              "       48/4A=AF profile 49=AF (bit15 mute, low nibble volume)\n"
+              "       70=opctrl (A000 RX / E000 TX) 71/72=frequency word 75=band\n"
+              "       7E/7F=per-band calibration\n");
+}
+
+/* The BK4815 bench ('n'): reconfigures and tunes, so the register-file capture
+ * comes first, before anything is written. */
 static void bk4815_bench(void)
 {
     uint16_t id, vco, op, hi, lo, cal, snr, rssi;
@@ -1916,6 +1943,7 @@ int main(void)
                             rx_force_bk4815_af_on() ? "ON (squelch bypassed)" : "off");
                 break;
             case 'n':
+                bk4815_dump_registers();
                 bk4815_bench();
                 break;
             case 'e': {
