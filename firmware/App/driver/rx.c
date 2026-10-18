@@ -385,7 +385,8 @@ void rx_service(void)
     if (rx_ready())
         rx_poll();
 
-    if (rx_ready() && rx_squelch_open() != squelch_open) {        squelch_open = rx_squelch_open();
+    if (rx_ready() && rx_squelch_open() != squelch_open) {
+        squelch_open = rx_squelch_open();
 
         g_SquelchLost = squelch_open;
         if (!tx_active())
@@ -405,10 +406,16 @@ static int      s_dual_sec   = -2;
 static uint32_t s_dual_pri_f = 0u;
 static uint32_t s_dual_sec_f = 0u;
 
+/* Whether the unassigned BK4829's demodulator is parked (see rf_dual_refresh). */
+static bool s_4829_parked;
+
 void rf_dual_reapply(void)
 {
     s_dual_pri = -2;
     s_dual_sec = -2;
+    /* Re-assert the parked BK4829 word on the next pass: the TX paths rewrite
+     * register 0x30 themselves, so the shadow cannot be trusted after one. */
+    s_4829_parked = false;
 }
 
 void rf_dual_refresh(void)
@@ -423,6 +430,25 @@ void rf_dual_refresh(void)
         f4829 = gEeprom.VfoInfo[roles.bk4829_vfo].freq_config_RX.Frequency;
     if (roles.bk4815_vfo >= 0)
         f4815 = gEeprom.VfoInfo[roles.bk4815_vfo].freq_config_RX.Frequency;
+
+    /* An unassigned BK4829 is not idle.  Left RX-enabled on a stale frequency
+     * it keeps demodulating, and the bridge (this same poller) sums its output
+     * into the shared audio node the BK4815's audio rides -- with both VFOs on
+     * the BK4815 that is the steady state, and the stale chip is a noise
+     * source nothing mutes (its 0x47 mute does not stop the demod).  Park its
+     * demodulator: drop the RX link, the demod DSP and the disc mode from
+     * register 0x30, keep the AF DAC (the BK4815's audio is only audible
+     * through that output stage) and the PLL/VCO.  Restore the full RX word
+     * the moment a VFO names the chip again. */
+    if (roles.bk4829_vfo < 0) {
+        if (!s_4829_parked) {
+            BK4819_WriteRegister(BK4819_REG_30, 0x82F0u);
+            s_4829_parked = true;
+        }
+    } else if (s_4829_parked) {
+        BK4819_RX_TurnOn();
+        s_4829_parked = false;
+    }
 
     /* The BK4829 is retuned to its VFO here, not from the receiver's VFO: the
      * receiver may be following the BK4815 one. */
