@@ -97,11 +97,23 @@ static uint32_t         s_scan_source_freq;
 void rx_set_scan_source_override(rx_scan_source_t source)
 {
     s_scan_source = source;
+
+    /* The scan lanes tune the chips themselves (chFrScanner.c's ScanBothProbe:
+     * pa_select_band() + bk4815_set_frequency(probe)).  rf_dual_refresh() only
+     * retunes on a change it knows about, so without this the part is left on
+     * the last probe when the scan ends: the VFO reads its own frequency, the
+     * chip is elsewhere, the squelch never opens on the real channel and a
+     * manual retune was the only way back (radio 2026-10-18: VFO A on 145.500
+     * but the BK4815 tuned to 146.25000, a scan probe).  Invalidate the
+     * applied state on entry and exit so returning to the VFOs re-applies
+     * both lanes. */
+    rf_dual_reapply();
 }
 
 void rx_clear_scan_source_override(void)
 {
     s_scan_source = RX_SCAN_SOURCE_DEFAULT;
+    rf_dual_reapply();      /* see rx_set_scan_source_override() */
 }
 
 rx_scan_source_t rx_scan_source_override(void)
