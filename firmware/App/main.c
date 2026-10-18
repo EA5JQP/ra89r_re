@@ -709,6 +709,40 @@ static void bk4815_dump_registers(void)
 {
     unsigned reg;
 
+    /* The routing state, so the capture is self-contained: which VFO the
+     * coordinator believes it is serving, what the two VFO records hold and
+     * what frequency the part actually sits on (decoded from 0x71/0x72 with
+     * the band in 0x04).  A mismatch between the selected VFO's frequency and
+     * the decoded tune is the fault this dump exists to catch. */
+    {
+        const bool      a_4829 = SETTINGS_GetVfoTransceiver(0u) != RF_XCVR_BK4815;
+        const bool      b_4829 = SETTINGS_GetVfoTransceiver(1u) != RF_XCVR_BK4815;
+        const rf_dual_roles_t roles = rf_dual_choose(a_4829, b_4829, gEeprom.RX_VFO);
+        const uint32_t  fa = gEeprom.VfoInfo[0].freq_config_RX.Frequency;
+        const uint32_t  fb = gEeprom.VfoInfo[1].freq_config_RX.Frequency;
+        const uint16_t  w_hi = bk4815_read_reg(0x71);
+        const uint16_t  w_lo = bk4815_read_reg(0x72);
+        const uint16_t  vco  = bk4815_read_reg(0x04);
+        const uint8_t   band = (uint8_t)((vco >> 7) & 3u);
+        const uint64_t  word = ((uint64_t)w_hi << 16) | w_lo;
+        const uint64_t  f10  = word * 2600000ull /
+                               ((uint64_t)bk4815_vco_divider(band) << 24);
+
+        uart_printf("\nBK4815 state capture\n"
+                    "  RX_VFO %u  TX_VFO %u   A %u.%05u MHz  B %u.%05u MHz\n",
+                    (unsigned)gEeprom.RX_VFO, (unsigned)gEeprom.TX_VFO,
+                    (unsigned)(fa / 100000u), (unsigned)(fa % 100000u),
+                    (unsigned)(fb / 100000u), (unsigned)(fb % 100000u));
+        uart_printf("  roles: BK4829<-VFO %d   BK4815<-VFO %d   audio %s  squelch %s  rssi 0x%03X\n",
+                    (int)roles.bk4829_vfo, (int)roles.bk4815_vfo,
+                    rx_audio_is_4815() ? "BK4815" : "BK4829",
+                    rx_squelch_open() ? "open" : "closed", (unsigned)rx_rssi());
+        uart_printf("  4815 is on %u.%05u MHz (band %u, Ndiv %u, 0x04=0x%04X, 0x75=0x%04X)\n",
+                    (unsigned)(f10 / 100000u), (unsigned)(f10 % 100000u),
+                    (unsigned)band, (unsigned)bk4815_vco_divider(band),
+                    (unsigned)vco, (unsigned)bk4815_read_reg(0x75));
+    }
+
     uart_puts("\nBK4815 register file, as it stands now (read-only):\n");
     for (reg = 0; reg < 0x80u; reg++) {
         if ((reg & 7u) == 0u)
