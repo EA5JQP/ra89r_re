@@ -341,10 +341,14 @@ void rf_dual_refresh(void)
      * from 0x30, keep the AF DAC (the BK4815's audio needs that output stage)
      * and the PLL/VCO.  Restore the full RX word when a VFO names the chip. */
     if (roles.bk4829_vfo < 0) {
-        if (!s_4829_parked) {
-            BK4819_WriteRegister(BK4819_REG_30, 0x82F0u);
-            s_4829_parked = true;
-        }
+        /* Re-asserted every pass, not once: the K1's own receive path calls
+         * BK4819_Conditional_RX_TurnOn_and_GPIO6_Enable() (app.c/functions.c)
+         * whenever its squelch opens, and that writes the full RX word
+         * (0xBFF1) back -- which is exactly the moment the parked chip's
+         * noise would be heard.  The bridge already re-drives 0x47 every
+         * poll for the same reason; this is 0x30's half of it. */
+        BK4819_WriteRegister(BK4819_REG_30, 0x82F0u);
+        s_4829_parked = true;
     } else if (s_4829_parked) {
         BK4819_RX_TurnOn();
         s_4829_parked = false;
