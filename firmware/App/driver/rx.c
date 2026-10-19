@@ -285,16 +285,15 @@ static int      s_dual_sec   = -2;
 static uint32_t s_dual_pri_f = 0u;
 static uint32_t s_dual_sec_f = 0u;
 static uint8_t  s_dual_rx_vfo = 0xFFu;   /* the RX_VFO the state was applied for */
-static bool     s_4829_parked;           /* unassigned BK4829 demodulator parked */
+static uint32_t s_4829_mirror_f;         /* unassigned BK4829: the BK4815 tune mirrored onto it */
 
 void rf_dual_reapply(void)
 {
     s_dual_pri = -2;
     s_dual_sec = -2;
     s_dual_rx_vfo = 0xFFu;
-    /* The TX paths rewrite 0x30 themselves, so the parked shadow cannot be
-     * trusted after one: let the next pass re-assert it. */
-    s_4829_parked = false;
+    /* Force the mirror to be re-applied as well (the TX paths retune the 4829). */
+    s_4829_mirror_f = 0u;
 }
 
 void rf_dual_refresh(void)
@@ -329,29 +328,23 @@ void rf_dual_refresh(void)
         f4815 = gEeprom.VfoInfo[roles.bk4815_vfo].freq_config_RX.Frequency;
 
     /* An unassigned BK4829 -- both VFOs on the BK4815, the usual setup here --
-     * is left receiving on whatever frequency it had last, and its AF output
-     * is opened by the bridge while the BK4815's squelch is open (rx_poll).
-     * The BK4815's audio reaches the speaker through that same AF stage, so the
-     * parked chip's demodulated noise sums into it: when it happens to sit on
-     * the selected channel the audio is fine (both chips demodulate it), and
-     * when it sits elsewhere all that is heard is its noise (radio 2026-10-18:
-     * the good capture had the 4829 on 446.00625 with RSSI 281, the noisy one
-     * on 145.5000; every audio register identical).
-     * Park its demodulator: drop the RX link, the demod DSP and the disc mode
-     * from 0x30, keep the AF DAC (the BK4815's audio needs that output stage)
-     * and the PLL/VCO.  Restore the full RX word when a VFO names the chip. */
+     * is left receiving on whatever frequency it had last.  Its RX chain is
+     * the audio path the BK4815's audio rides (radio 2026-10-18: parking its
+     * demodulator silenced the receiver completely, and muting its AF output
+     * did the same), and while it sits on another frequency its demodulated
+     * noise sums into that path -- which is the "noise, squelch open" fault
+     * chased for so long.  The one state that works is the 4829 on the *same*
+     * channel as the BK4815 (the good capture had exactly that, RSSI 281).
+     * So mirror the BK4815's tune onto the unassigned 4829: its demod then
+     * sees the same carrier, its noise is the carrier's, and the shared audio
+     * path stays alive.  A VFO that names the chip tunes it itself. */
     if (roles.bk4829_vfo < 0) {
-        /* Re-asserted every pass, not once: the K1's own receive path calls
-         * BK4819_Conditional_RX_TurnOn_and_GPIO6_Enable() (app.c/functions.c)
-         * whenever its squelch opens, and that writes the full RX word
-         * (0xBFF1) back -- which is exactly the moment the parked chip's
-         * noise would be heard.  The bridge already re-drives 0x47 every
-         * poll for the same reason; this is 0x30's half of it. */
-        BK4819_WriteRegister(BK4819_REG_30, 0x82F0u);
-        s_4829_parked = true;
-    } else if (s_4829_parked) {
-        BK4819_RX_TurnOn();
-        s_4829_parked = false;
+        if (f4815 != 0u && f4815 != s_4829_mirror_f) {
+            BK4819_SetFrequency(f4815);
+            s_4829_mirror_f = f4815;
+        }
+    } else {
+        s_4829_mirror_f = 0u;
     }
 
     /* The BK4815's own state -- its band register 0x75 and its receive-path
