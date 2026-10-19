@@ -426,15 +426,12 @@ static int      s_dual_sec   = -2;
 static uint32_t s_dual_pri_f = 0u;
 static uint32_t s_dual_sec_f = 0u;
 static uint8_t  s_dual_rx_vfo = 0xFFu;   /* the RX_VFO the state was applied for */
-static uint32_t s_4829_mirror_f;         /* unassigned BK4829: the BK4815 tune mirrored onto it */
 
 void rf_dual_reapply(void)
 {
     s_dual_pri = -2;
     s_dual_sec = -2;
     s_dual_rx_vfo = 0xFFu;
-    /* Force the mirror to be re-applied as well (the TX paths retune the 4829). */
-    s_4829_mirror_f = 0u;
 }
 
 void rf_dual_refresh(void)
@@ -481,12 +478,17 @@ void rf_dual_refresh(void)
      * sees the same carrier, its noise is the carrier's, and the shared audio
      * path stays alive.  A VFO that names the chip tunes it itself. */
     if (roles.bk4829_vfo < 0) {
-        if (f4815 != 0u && f4815 != s_4829_mirror_f) {
+        /* Read the chip's own frequency registers rather than trusting a
+         * shadow: the TX paths, the app's radio setup and the scan all retune
+         * this chip behind the coordinator's back, and a stale shadow left it
+         * demodulating the wrong channel (radio 2026-10-19: after a duplex
+         * test it sat on the transmit frequency, and its noise was the
+         * "broken RX"). */
+        const uint32_t got = ((uint32_t)BK4819_ReadRegister(0x39) << 16) |
+                             BK4819_ReadRegister(0x38);
+
+        if (f4815 != 0u && got != f4815)
             BK4819_SetFrequency(f4815);
-            s_4829_mirror_f = f4815;
-        }
-    } else {
-        s_4829_mirror_f = 0u;
     }
 
     /* The BK4815's own state -- its band register 0x75 and its receive-path

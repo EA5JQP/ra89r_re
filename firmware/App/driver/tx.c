@@ -488,6 +488,12 @@ void tx_stop(void)
         s_active = false;
         pa_set_touch_4815(true);
         pa_set_touch_band_pins(true);
+        /* The TX retuned the BK4829 to the transmit frequency; ask the
+         * coordinator to put both lanes back (the ordinary path below does the
+         * same).  Without it the mirror shadow still claimed the 4829 was on
+         * the downlink and the radio was left hearing its transmit-frequency
+         * demod noise after a duplex test (radio 2026-10-19). */
+        rf_dual_reapply();
         return;
     }
 
