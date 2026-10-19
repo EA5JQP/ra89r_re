@@ -2495,7 +2495,7 @@ int main(void)
              * app-mode receive scenarios.  The cases stay compiled (they
              * share helpers) but the writers stay unreachable. */
             if (ch != '\r' && ch != '\n' &&
-                strchr("hUIHgOzEo7TNyiJd", ch) == NULL) {
+                strchr("hUIHgOzEo7TNyiJdn", ch) == NULL) {
                 uart_puts("\nfull-duplex console -- 'h' lists the commands\n");
                 continue;
             }
