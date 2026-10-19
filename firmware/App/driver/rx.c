@@ -83,6 +83,7 @@ void rx_set_fm_active(bool active)
  * BK4829's 0x47 or the BK4815's 0x49 = 0x9A02), so only the selected VFO is
  * heard.  `s_audio_4815` is that choice. */
 static bool s_audio_4815;
+static uint32_t s_4815_freq;    /* the tune last applied to the BK4815 (for its squelch marks) */
 static bool s_force_4815_af;    /* console 'A' diagnostic */
 
 /* A temporary scan-hit receive route (see rx.h).  DEFAULT follows the selected
@@ -158,13 +159,20 @@ void rx_poll(void)
          * the fixed mark even with the user's squelch turned off. */
         const bool squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
         const bool was_open    = s_squelch_open;
+        /* The BK4815's RSSI scale differs by band (see rx.h): use the VHF pair
+         * when the part is tuned below the 280 MHz split. */
+        const bool vhf = (s_4815_freq != 0u && s_4815_freq < PA_BAND_SPLIT);
+        const uint16_t open_mark  = vhf ? RX4815_SQUELCH_OPEN_MARK_VHF
+                                        : RX4815_SQUELCH_OPEN_MARK;
+        const uint16_t close_mark = vhf ? RX4815_SQUELCH_CLOSE_MARK_VHF
+                                        : RX4815_SQUELCH_CLOSE_MARK;
 
         s_rssi = bk4815_read_rssi();
 
         if (s_force_4815_af || squelch_off ||
-            (!s_squelch_open && s_rssi >= RX4815_SQUELCH_OPEN_MARK))
+            (!s_squelch_open && s_rssi >= open_mark))
             s_squelch_open = true;
-        else if (s_squelch_open && !squelch_off && s_rssi < RX4815_SQUELCH_CLOSE_MARK)
+        else if (s_squelch_open && !squelch_off && s_rssi < close_mark)
             s_squelch_open = false;
 
         /* The K1's power save sleeps the BK4829 when idle (BK4819_Sleep():
@@ -338,6 +346,7 @@ void rf_dual_refresh(void)
         f4829 = gEeprom.VfoInfo[roles.bk4829_vfo].freq_config_RX.Frequency;
     if (roles.bk4815_vfo >= 0)
         f4815 = gEeprom.VfoInfo[roles.bk4815_vfo].freq_config_RX.Frequency;
+    s_4815_freq = f4815;
 
     /* An unassigned BK4829 -- both VFOs on the BK4815, the usual setup here --
      * is left receiving on whatever frequency it had last.  Its RX chain is
