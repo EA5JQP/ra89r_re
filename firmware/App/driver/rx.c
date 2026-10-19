@@ -272,12 +272,16 @@ void rx_poll(void)
 
         /* The BK4815's band register belongs to the tune the part is on, but
          * pa_select_band() writes it from whatever frequency it is given --
-         * the scan's probes and the TX path use the BK4829's. */
+         * the app's 4829 retune, the scan's probes and the TX path all use the
+         * BK4829's.  Read it back each poll and repair it: a shadow is not
+         * enough, because those writers move the register behind our back
+         * (radio 2026-10-19: 0x75 read 0x11 while the part was on 446.00625,
+         * and the radio stayed on the wrong band after the 'E'/'U' tests). */
         {
             const uint32_t f    = rf_dual_bk4815_frequency();
             const uint16_t band = (f >= PA_BAND_SPLIT) ? 0x0Au : 0x11u;
 
-            if (f != 0u && band != s_band_4815_written) {
+            if (f != 0u && bk4815_read_reg(0x75u) != band) {
                 bk4815_write_reg(0x75u, band);
                 s_band_4815_written = band;
             }
