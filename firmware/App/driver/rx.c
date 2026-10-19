@@ -157,6 +157,7 @@ void rx_poll(void)
          * software gate must honour it too, or a BK4815 VFO stays muted below
          * the fixed mark even with the user's squelch turned off. */
         const bool squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
+        const bool was_open    = s_squelch_open;
 
         s_rssi = bk4815_read_rssi();
 
@@ -165,6 +166,17 @@ void rx_poll(void)
             s_squelch_open = true;
         else if (s_squelch_open && !squelch_off && s_rssi < RX4815_SQUELCH_CLOSE_MARK)
             s_squelch_open = false;
+
+        /* The K1's power save sleeps the BK4829 when idle (BK4819_Sleep():
+         * 0x30 = 0, 0x37 = 0x1D00) and its own receive path wakes it through
+         * BK4819_Conditional_RX_TurnOn().  The BK4815's audio rides that
+         * chip's RX/AF chain, so the first reception after an idle period
+         * opens the gates onto a sleeping chip: the shared path is dead and
+         * the reception is noise until the app's wake runs at its end (radio
+         * 2026-10-19: first PTT noise, second one voice).  Wake it here, on
+         * the opening edge, so the first reception is like the rest. */
+        if (s_squelch_open && !was_open)
+            BK4819_RX_TurnOn();
 
         /* Drive the three gates every poll, not only on a transition.  The K1's
          * own receive setup (RADIO_SetupRegisters -> RADIO_SetModulation, and
