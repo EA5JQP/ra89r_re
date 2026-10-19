@@ -21,8 +21,10 @@ port's own settings blob (not the read-only stock codeplug) as `scan_mode_t`
 | 0 | `NORMAL` | step scan, no fast precheck |
 | 1 | `FAST` | single-lane fast-RSSI precheck on the selected VFO's chip |
 | 2 | `FAST BOTH` | the candidate stream is split across the BK4829 and the BK4815 |
+| 3 | `LISTEN` | the selected VFO keeps receiving on its own chip; the **other** chip sweeps the range |
 
-`ScanFastEnabled()` is `!= NORMAL`; `ScanBothEnabled()` is `== FAST BOTH`.
+`ScanFastEnabled()` is `!= NORMAL`; `ScanBothEnabled()` is `== FAST BOTH`;
+`ScanListenEnabled()` is `== LISTEN`.
 
 The value is persisted, which the K1's `gSetting_set_scn` was not.  The extra blob
 is now version 4 and reuses the byte the old `ScTrMd` used.  Migration: a v3 blob
@@ -93,6 +95,42 @@ hardcoded to the BK4829, so with `TrVfoA/B = 4815` the single-lane precheck
 probes the BK4829 while the full verify path follows the BK4815 assignment.
 Making the precheck lane-aware is future work; `FAST BOTH` is the mode that uses
 both chips explicitly.
+
+## Listen while scanning (`LISTEN`)
+
+`SetScn = LISTEN` keeps the selected VFO receiving on its own transceiver while
+the other one sweeps the range.  Plan:
+`docs/superpowers/plans/2026-10-19-listen-while-scanning.md`.  The constraints
+come from the board, not from taste:
+
+- the two parts are independent receivers on a shared bus (bus traffic is
+  harmless to audio), but the **band path is shared** (PA0/PA1 and the
+  BK4829's `0x33` chip path), so a probe in the other band would move the front
+  end under the receiver -- `ScanRangeFastPrecheckListen()` therefore **skips
+  candidates outside the listen lane's band**;
+- the **AF node is shared**: the BK4815's audio reaches the amplifier while the
+  BK4829's AF **DAC** (`0x30` bit 9) is on, and independently of the 4829's AF
+  output select (`0x47`) -- measured in the duplex runs (2026-10-19).  The
+  LISTEN precheck therefore does **not** mute the AF DAC (the FAST/FAST BOTH
+  precheck does: that is what makes today's scan silent), and `rx_poll()` holds
+  `0x47 = 0x6040` while a scan runs on the 4829 so the stepped chip's audio
+  cannot ride the node;
+- the walk still uses `gRxVfo` as its cursor (that is how the K1's range scan
+  steps), so **`rx_service()` yields the coordinator while a scan is active**:
+  no retune, no unassigned-4829 mirror, no band/path repair -- those read the
+  chips and would fight the probes.  `CHFRSCANNER_Stop()` clears the override
+  and the coordinator re-applies both lanes.
+
+The scanner probes the scan lane only (`BK4819_SetFrequency` + the RSSI read for
+a BK4829 lane, `bk4815_set_frequency` + `0x44` scaled x4 for a BK4815 lane), so
+the listening lane's registers are never touched.  The listen VFO's **audio**
+follows the poller's squelch as usual.
+
+**Radio gates (unvalidated):** listen on the 4815 at 446.00625 while scanning
+446.005-447.005 on the 4829 with a carrier on 446.00625 -- the downlink must
+stay audible through the sweep; a hit pauses/opens as today; stopping restores
+the VFO; PTT during a LISTEN scan must not break either lane; NORMAL/FAST/
+FAST BOTH unchanged.
 
 ## The RX scan-source override
 

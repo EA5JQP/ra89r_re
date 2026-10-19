@@ -440,7 +440,8 @@ const char* const gSubMenu_SCRAMBLER[] =
         {
             "NORMAL",
             "FAST",
-            "FAST BOTH"
+            "FAST BOTH",
+            "LISTEN"
         };
     #endif
 

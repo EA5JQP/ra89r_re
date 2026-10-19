@@ -1,5 +1,6 @@
 #include "driver/rx.h"
 
+#include "app/chFrScanner.h"
 #include "driver/audio_path.h"
 #include "driver/bk4815.h"
 #include "driver/bk4819.h"
@@ -194,7 +195,17 @@ void rx_poll(void)
          * node the BK4815's audio rides) and the amplifier (PC13) must all be
          * open together for a BK4815 receive to be heard. */
         bk4815_set_af(s_squelch_open);
-        BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
+
+        /* While a scan runs on the other chip, keep the BK4829's AF output
+         * muted with the AF DAC alive (the stock TX-entry mute word): the
+         * stepped chip's demodulated audio must not ride the shared node,
+         * while the listen lane's own audio still reaches the amplifier
+         * through it (measured in the duplex runs, 2026-10-19). */
+        if (gScanStateDir != SCAN_OFF && s_audio_4815)
+            BK4819_WriteRegister(BK4819_REG_47, 0x6040u);
+        else
+            BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
+
         audio_path_drive(s_squelch_open);
         return;
     }
@@ -255,11 +266,19 @@ void rx_service(void)
      * the BK4815's VFO. */
     if (s_scan_source == RX_SCAN_SOURCE_DEFAULT) {
         s_scan_source_applied = RX_SCAN_SOURCE_DEFAULT;
-        rf_dual_refresh();
 
-        /* The receive audio follows the selected VFO's transceiver, so a VFO on
-         * the BK4815 is audible through that chip's own AF. */
-        rx_set_audio_source(SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815);
+        /* While a scan runs, the scanner owns the scan lane's chip and walks
+         * gRxVfo's frequency as its cursor.  Retuning/mirroring/repairing here
+         * would fight the probes (and, in LISTEN mode, move the listening
+         * lane), so the coordinator yields for the duration and re-applies
+         * when the scan stops (CHFRSCANNER_Stop clears the override). */
+        if (gScanStateDir == SCAN_OFF) {
+            rf_dual_refresh();
+
+            /* The receive audio follows the selected VFO's transceiver, so a
+             * VFO on the BK4815 is audible through that chip's own AF. */
+            rx_set_audio_source(SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815);
+        }
     } else {
         /* A paused scan hit: follow the chip that found it, not the saved VFO
          * assignment.  The K1 receive setup only tunes the BK4829 when the

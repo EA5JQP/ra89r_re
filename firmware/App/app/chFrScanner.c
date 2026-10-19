@@ -85,6 +85,13 @@ static bool ScanFastEnabled(void)
 {
     return gSetting_set_scn != (uint8_t)SCAN_MODE_NORMAL;
 }
+
+/* Listen-while-scanning: the selected VFO keeps its chip while the other one
+ * sweeps (ScanRangeFastPrecheckListen). */
+static bool ScanListenEnabled(void)
+{
+    return gSetting_set_scn == (uint8_t)SCAN_MODE_LISTEN;
+}
 #endif
 
 #ifdef ENABLE_SCAN_RANGES
@@ -695,6 +702,82 @@ static scan_fast_result_t ScanRangeFastPrecheck(void)
 #endif
 
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+/* Listen-while-scanning (`SetScn = LISTEN`): the selected VFO keeps receiving
+ * on its own transceiver while the other one sweeps the range.  Only the scan
+ * lane's chip is written:
+ *   - the listen lane is left exactly as the coordinator tuned it, so the
+ *     poller's RSSI/squelch/audio keep working on it;
+ *   - the AF DAC is not muted (unlike the FAST precheck): the listen lane's
+ *     audio reaches the amplifier through that node;
+ *   - probes outside the listen lane's band are skipped, because a cross-band
+ *     probe would move the shared front-end path under the receiver.
+ * The walk still uses gRxVfo as its cursor (that is how the K1's range scan
+ * steps), which is why rx_service() must not re-tune the lanes while a scan is
+ * running -- it yields, see rx.c.  See
+ * docs/superpowers/plans/2026-10-19-listen-while-scanning.md. */
+static scan_fast_result_t ScanRangeFastPrecheckListen(void)
+{
+    const bool     listen4815 = (SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815);
+    const uint32_t listen_f   = gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency;
+    const bool     listen_uhf = (listen_f >= PA_BAND_SPLIT);
+
+    if (!gScanRangeStart)
+        return SCAN_FAST_DISABLED;
+
+    if (gRxVfo->SquelchOpenRSSIThresh == 0)
+        return SCAN_FAST_DISABLED;
+
+    for (uint8_t i = 0; i < SCAN_FAST_PRECHECK_STEPS; ++i)
+    {
+        gRxVfo->freq_config_RX.Frequency = ScanRangeNextFrequency();
+        RADIO_ApplyOffset(gRxVfo);
+
+        const uint32_t freq = gRxVfo->pRX->Frequency;
+
+        /* Wrap detection, as in ScanRangeFastPrecheck(). */
+        if (scanFastPrevFrequency != 0 &&
+            ((gScanStateDir > 0 && freq < scanFastPrevFrequency) ||
+             (gScanStateDir < 0 && freq > scanFastPrevFrequency)))
+        {
+            ScanFastResetState();
+        }
+
+        /* Stay in the listen lane's band: a probe elsewhere would move the
+         * shared band path and make the receiver deaf for that step. */
+        if ((freq >= PA_BAND_SPLIT) != listen_uhf)
+            continue;
+
+        uint16_t rssi;
+
+        if (listen4815)
+        {
+            /* Scan lane: the BK4829.  No 0x30 toggle (that is the sweep's own
+             * audio mute) and no path change: the probes stay in-band. */
+            BK4819_SetFrequency(freq);
+            rssi = ScanFastReadCandidateRssi();
+        }
+        else
+        {
+            /* Scan lane: the BK4815. */
+            bk4815_set_frequency(freq, false);
+            bk4815_write_reg(0x75u, listen_uhf ? 0x0Au : 0x11u);
+            SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
+            bk4815_read_rssi();                       /* discard the stale read */
+            rssi = (uint16_t)((bk4815_read_rssi() & 0x7fu) * SCAN_FAST4815_RSSI_SCALE);
+        }
+
+        scan_candidate_rate_add(&scanCandidateRate, 1u);
+#ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
+        ScanRssiSparklinePush(rssi);
+#endif
+
+        if (ScanFastIsCandidate(rssi))
+            return SCAN_FAST_CANDIDATE;
+    }
+
+    return SCAN_FAST_QUIET_BATCH;
+}
+
 static bool MemChannelFastPrecheck(uint16_t channel)
 {
     uint32_t frequency;
@@ -1327,6 +1410,28 @@ static void NextFreqChannel(void)
             }
 
             if (bothResult == SCAN_FAST_DISABLED)
+            {
+                scanFastLastFullTuneCandidate = false;
+                gRxVfo->freq_config_RX.Frequency = ScanRangeNextFrequency();
+            }
+            else
+            {
+                scanFastLastFullTuneCandidate = true;
+            }
+        }
+        else if (ScanListenEnabled())
+        {
+            const scan_fast_result_t listenResult = ScanRangeFastPrecheckListen();
+
+            if (listenResult == SCAN_FAST_QUIET_BATCH)
+            {
+                scanFastLastFullTuneCandidate = false;
+                gScanPauseDelayIn_10ms = 1;
+                gUpdateDisplay = true;
+                return;
+            }
+
+            if (listenResult == SCAN_FAST_DISABLED)
             {
                 scanFastLastFullTuneCandidate = false;
                 gRxVfo->freq_config_RX.Frequency = ScanRangeNextFrequency();

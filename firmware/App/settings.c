@@ -331,7 +331,7 @@ void SETTINGS_InitEEPROM(void)
 #endif
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
             if (extra.version == EXTRA_VERSION) {
-                gSetting_set_scn = (extra.scan_mode <= (uint8_t)SCAN_MODE_FAST_BOTH)
+                gSetting_set_scn = (extra.scan_mode <= (uint8_t)SCAN_MODE_LISTEN)
                                        ? extra.scan_mode : (uint8_t)SCAN_MODE_FAST;
             } else {
                 /* v3 stored the old ScTrMd byte: 0 Default -> FAST,
