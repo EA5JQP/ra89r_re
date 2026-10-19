@@ -87,6 +87,7 @@ void rx_set_fm_active(bool active)
  * BK4829's 0x47 or the BK4815's 0x49 = 0x9A02), so only the selected VFO is
  * heard.  `s_audio_4815` is that choice. */
 static bool s_audio_4815;
+static uint32_t s_4815_freq;    /* the tune last applied to the BK4815 (for its squelch marks) */
 static bool s_force_4815_af;
 static bool s_bridge_4815 = true;   /* open the BK4829 AF with the 4815's squelch */
 
@@ -100,7 +101,7 @@ void rx_set_4815_bridge(bool on)
 bool rx_4815_bridge(void)
 {
     return s_bridge_4815;
-}    /* console 'A' diagnostic */
+}
 
 /* A temporary scan-hit receive route (see rx.h).  DEFAULT follows the selected
  * VFO's own transceiver; the other values pin the hit's chip until cleared. */
@@ -114,11 +115,23 @@ static uint32_t         s_scan_source_freq;
 void rx_set_scan_source_override(rx_scan_source_t source)
 {
     s_scan_source = source;
+
+    /* The scan lanes tune the chips themselves (chFrScanner.c's ScanBothProbe:
+     * pa_select_band() + bk4815_set_frequency(probe)).  rf_dual_refresh() only
+     * retunes on a change it knows about, so without this the part is left on
+     * the last probe when the scan ends: the VFO reads its own frequency, the
+     * chip is elsewhere, the squelch never opens on the real channel and a
+     * manual retune was the only way back (radio 2026-10-18: VFO A on 145.500
+     * but the BK4815 tuned to 146.25000, a scan probe).  Invalidate the
+     * applied state on entry and exit so returning to the VFOs re-applies
+     * both lanes. */
+    rf_dual_reapply();
 }
 
 void rx_clear_scan_source_override(void)
 {
     s_scan_source = RX_SCAN_SOURCE_DEFAULT;
+    rf_dual_reapply();      /* see rx_set_scan_source_override() */
 }
 
 rx_scan_source_t rx_scan_source_override(void)
@@ -171,8 +184,14 @@ void rx_poll(void)
          * software gate must honour it too, or a BK4815 VFO stays muted below
          * the fixed mark even with the user's squelch turned off. */
         const bool squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
-
-        const bool was_open = s_squelch_open;
+        const bool was_open    = s_squelch_open;
+        /* The BK4815's RSSI scale differs by band (see rx.h): use the VHF pair
+         * when the part is tuned below the 280 MHz split. */
+        const bool vhf = (s_4815_freq != 0u && s_4815_freq < PA_BAND_SPLIT);
+        const uint16_t open_mark  = vhf ? RX4815_SQUELCH_OPEN_MARK_VHF
+                                        : RX4815_SQUELCH_OPEN_MARK;
+        const uint16_t close_mark = vhf ? RX4815_SQUELCH_CLOSE_MARK_VHF
+                                        : RX4815_SQUELCH_CLOSE_MARK;
         const bool settling = (s_settle_until != 0u && systick_millis() < s_settle_until);
 
         s_rssi = bk4815_read_rssi();
@@ -185,21 +204,28 @@ void rx_poll(void)
             s_settle_until = 0u;
 
             if (s_force_4815_af || squelch_off ||
-                (!s_squelch_open && s_rssi >= RX4815_SQUELCH_OPEN_MARK))
+                (!s_squelch_open && s_rssi >= open_mark))
                 s_squelch_open = true;
-            else if (s_squelch_open && !squelch_off && s_rssi < RX4815_SQUELCH_CLOSE_MARK)
+            else if (s_squelch_open && !squelch_off && s_rssi < close_mark)
                 s_squelch_open = false;
         }
 
-        /* Re-apply the stock's receive setup when a carrier appears: a
-         * transmission (or the K1's own setup) can leave the part tuned but
-         * with the demodulator back in its power-on state, which sounds like
-         * noise.  Once per squelch opening, not every poll -- the squelch stays
-         * latched open but the gates below stay shut until the set's own RSSI
-         * nudge has settled, so the transient is never heard.  The restart
-         * pair can also revert the part's AF gate (0x49) to its unmuted boot
-         * value, so the gate shadow below is invalidated here. */
+        /* On the opening edge do both jobs radio work found necessary:
+         *   - wake the BK4829: the K1's power save sleeps it (BK4819_Sleep():
+         *     0x30 = 0, 0x37 = 0x1D00) and only its own receive path wakes it
+         *     through BK4819_Conditional_RX_TurnOn(); the BK4815's audio rides
+         *     that chip's RX/AF chain, so the first reception after an idle
+         *     period was noise until the app's wake ran at its end (radio
+         *     2026-10-19: first PTT noise, second one voice);
+         *   - apply the stock's receive set to the BK4815 (bk4815_enter_rx):
+         *     a transmission or the K1's own setup can leave it tuned but with
+         *     the demodulator in its power-on state, which sounds like noise.
+         * The squelch stays latched open but the gates below stay shut until
+         * the set's own RSSI nudge has settled, so the transient is never
+         * heard; the restart pair can also revert the part's AF gate (0x49),
+         * so the gate shadow is invalidated here. */
         if (s_squelch_open && !was_open) {
+            BK4819_RX_TurnOn();
             bk4815_enter_rx();
             s_af_4815_valid = false;
             s_settle_until = systick_millis() + RX4815_SETTLE_MS;
@@ -208,9 +234,7 @@ void rx_poll(void)
         {
             /* Recompute, not reuse: the transition above just armed the
              * settle window, and the pass that did it must not open the
-             * gates on the transient (the pre-arming `settling` read 0
-             * there -- the log caught the gate open in the same
-             * millisecond as the set). */
+             * gates on the transient. */
             const bool settling_now = (s_settle_until != 0u &&
                                        systick_millis() < s_settle_until);
             const bool gates = s_squelch_open && !settling_now;
@@ -237,17 +261,10 @@ void rx_poll(void)
         }
 
         /* The K1 owns the BK4829's chip outputs, and its own power-save, wake
-         * and RX-off paths clear them behind the port's back: RX_ENABLE
-         * (GPIO0, `functions.c`'s FUNCTION_PowerSave and the RX-off helpers)
-         * and -- through the RF-setup path -- the VHF-LNA pin (GPIO4).  The
-         * BK4815's receive path rides those pins (the stock's BK4815 branch
-         * sets pin 4 on the 4829), and rf_dual_refresh() only re-drives them
-         * when the roles change, so a VFO switch used to leave the BK4815
-         * receiving with the path pins down: RSSI still present but the audio
-         * noise, and a frequency edit (which forces rf_dual_apply) "fixed" it.
-         * Radio 2026-10-18: the noisy state read `0x33 = 0x9004` (RX_ENABLE
-         * clear), a good one `0x9044`.  Re-assert them while the BK4815 is the
-         * receive source; the register write happens only on a change. */
+         * and RX-off paths clear them behind the port's back (RX_ENABLE /
+         * GPIO0, and the VHF-LNA pin / GPIO4 through the RF-setup path).  The
+         * BK4815's receive path rides those pins; re-assert them while the
+         * BK4815 is the receive source (register writes only on a change). */
         if (!BK4819_IsGpioOutSet(BK4819_GPIO0_PIN28_RX_ENABLE))
             BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, true);
         if (!BK4819_IsGpioOutSet(BK4819_GPIO4_PIN32_VHF_LNA))
@@ -255,8 +272,7 @@ void rx_poll(void)
 
         /* The BK4815's band register belongs to the tune the part is on, but
          * pa_select_band() writes it from whatever frequency it is given --
-         * the scan's probes and the TX path use the BK4829's.  Keep it on the
-         * BK4815's own tune (rf_dual_apply() sets the same value). */
+         * the scan's probes and the TX path use the BK4829's. */
         {
             const uint32_t f    = rf_dual_bk4815_frequency();
             const uint16_t band = (f >= PA_BAND_SPLIT) ? 0x0Au : 0x11u;
@@ -405,17 +421,16 @@ static int      s_dual_pri   = -2;
 static int      s_dual_sec   = -2;
 static uint32_t s_dual_pri_f = 0u;
 static uint32_t s_dual_sec_f = 0u;
-
-/* Whether the unassigned BK4829's demodulator is parked (see rf_dual_refresh). */
-static bool s_4829_parked;
+static uint8_t  s_dual_rx_vfo = 0xFFu;   /* the RX_VFO the state was applied for */
+static uint32_t s_4829_mirror_f;         /* unassigned BK4829: the BK4815 tune mirrored onto it */
 
 void rf_dual_reapply(void)
 {
     s_dual_pri = -2;
     s_dual_sec = -2;
-    /* Re-assert the parked BK4829 word on the next pass: the TX paths rewrite
-     * register 0x30 themselves, so the shadow cannot be trusted after one. */
-    s_4829_parked = false;
+    s_dual_rx_vfo = 0xFFu;
+    /* Force the mirror to be re-applied as well (the TX paths retune the 4829). */
+    s_4829_mirror_f = 0u;
 }
 
 void rf_dual_refresh(void)
@@ -426,29 +441,68 @@ void rf_dual_refresh(void)
     uint32_t        f4829 = 0u;
     uint32_t        f4815 = 0u;
 
+    /* Switching VFOs has to re-enter the selected lane's receive
+     * configuration, the way the stock does: its receive entry (FUN_08016cec)
+     * tunes the part and applies the demodulator set, the band register and
+     * the receive-path pin *together*, every time a lane is (re)configured --
+     * a VFO switch included.  The port split those steps and ran the tune only
+     * when the BK4815's role or frequency changed, so "switch to a BK4815 VFO"
+     * left the part un-retuned while the K1's own radio setup had moved its
+     * band/path state: the RSSI still read the carrier (the squelch opened)
+     * but the demodulator produced noise, and editing the frequency and back
+     * -- which forces the re-apply -- was the workaround (radio 2026-10-18).
+     * Selecting another VFO now invalidates the applied state so both lanes
+     * re-apply, exactly what a frequency change does. */
+    if (gEeprom.RX_VFO != s_dual_rx_vfo) {
+        s_dual_rx_vfo = gEeprom.RX_VFO;
+        s_dual_pri    = -2;
+        s_dual_sec    = -2;
+    }
+
     if (roles.bk4829_vfo >= 0)
         f4829 = gEeprom.VfoInfo[roles.bk4829_vfo].freq_config_RX.Frequency;
     if (roles.bk4815_vfo >= 0)
         f4815 = gEeprom.VfoInfo[roles.bk4815_vfo].freq_config_RX.Frequency;
+    s_4815_freq = f4815;
 
-    /* An unassigned BK4829 is not idle.  Left RX-enabled on a stale frequency
-     * it keeps demodulating, and the bridge (this same poller) sums its output
-     * into the shared audio node the BK4815's audio rides -- with both VFOs on
-     * the BK4815 that is the steady state, and the stale chip is a noise
-     * source nothing mutes (its 0x47 mute does not stop the demod).  Park its
-     * demodulator: drop the RX link, the demod DSP and the disc mode from
-     * register 0x30, keep the AF DAC (the BK4815's audio is only audible
-     * through that output stage) and the PLL/VCO.  Restore the full RX word
-     * the moment a VFO names the chip again. */
+    /* An unassigned BK4829 -- both VFOs on the BK4815, the usual setup here --
+     * is left receiving on whatever frequency it had last.  Its RX chain is
+     * the audio path the BK4815's audio rides (radio 2026-10-18: parking its
+     * demodulator silenced the receiver completely, and muting its AF output
+     * did the same), and while it sits on another frequency its demodulated
+     * noise sums into that path -- which is the "noise, squelch open" fault
+     * chased for so long.  The one state that works is the 4829 on the *same*
+     * channel as the BK4815 (the good capture had exactly that, RSSI 281).
+     * So mirror the BK4815's tune onto the unassigned 4829: its demod then
+     * sees the same carrier, its noise is the carrier's, and the shared audio
+     * path stays alive.  A VFO that names the chip tunes it itself. */
     if (roles.bk4829_vfo < 0) {
-        if (!s_4829_parked) {
-            BK4819_WriteRegister(BK4819_REG_30, 0x82F0u);
-            s_4829_parked = true;
+        if (f4815 != 0u && f4815 != s_4829_mirror_f) {
+            BK4819_SetFrequency(f4815);
+            s_4829_mirror_f = f4815;
         }
-    } else if (s_4829_parked) {
-        BK4819_RX_TurnOn();
-        s_4829_parked = false;
+    } else {
+        s_4829_mirror_f = 0u;
     }
+
+    /* The BK4815's own state -- its band register 0x75 and its receive-path
+     * pin -- belongs to the tune the BK4815 is on, but two other paths write
+     * it as a side effect:
+     *   - pa_select_band() writes 0x75 from *whatever frequency it is handed*,
+     *     and the BK4829's retune path and the TX path hand it the BK4829's;
+     *     it also clears the receive-path pin through pa_apply_chip_path().
+     *   - the K1's own radio setup clears the pin through
+     *     BK4819_PickRXFilterPathBasedOnFrequency() every time it configures
+     *     a BK4829-bound VFO -- i.e. on every VFO switch and end-of-reception
+     *     reconfigure.
+     * The repair used to run only when the BK4815's role or frequency
+     * changed, so the sequence "switch to a BK4829 VFO, switch back" left the
+     * pin cleared and the band stale: the RSSI still read the carrier (the
+     * squelch opened) but the demodulator produced noise, and a frequency
+     * edit-and-back -- which forces the re-apply -- was the workaround.
+     * Own both here instead: assert/clear them after every pass's retunes
+     * (which are the clobberers), writing the register only when the value
+     * actually changes. */
 
     /* The BK4829 is retuned to its VFO here, not from the receiver's VFO: the
      * receiver may be following the BK4815 one. */
@@ -462,12 +516,24 @@ void rf_dual_refresh(void)
         rf_dual_apply(&roles, f4815);
         s_dual_sec   = roles.bk4815_vfo;
         s_dual_sec_f = f4815;
+    }
 
-        /* The receive RF-path pin follows the transceiver: the stock's BK4815
-         * branch sets the BK4829's 0x33 pin 4 (`FUN_08016CEC` ->
-         * `FUN_080137D4(0x10,0x10)`), the BK4829 branch clears it.  The port's
-         * pa_apply_chip_path() clears both, so set pin 4 for a BK4815 VFO. */
-        BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA,
-                             roles.bk4815_vfo >= 0);
+    if (roles.bk4815_vfo >= 0) {
+        static uint16_t s_band_written;
+
+        {
+            const uint16_t band = (f4815 >= PA_BAND_SPLIT) ? 0x0Au : 0x11u;
+
+            if (band != s_band_written) {
+                bk4815_write_reg(0x75u, band);
+                s_band_written = band;
+            }
+        }
+
+        if (!BK4819_IsGpioOutSet(BK4819_GPIO4_PIN32_VHF_LNA))
+            BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, true);
+    } else {
+        if (BK4819_IsGpioOutSet(BK4819_GPIO4_PIN32_VHF_LNA))
+            BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, false);
     }
 }

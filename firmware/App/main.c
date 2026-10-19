@@ -333,6 +333,7 @@ static void print_help(void)
               "          7  guided RX diagnostic (timed steps, listening prompts)\n"
               "          T  automated duplex audio test (beep state + level sampling)\n"
               "          y  swap mode: BK4829 RX + BK4815 TX\n"
+              "          n  BK4815 state capture + both register files (read-only)\n"
               "          i/J/d  read-only state capture (app receive scenarios)\n");
 }
 
@@ -1480,6 +1481,91 @@ static void fm_bench(void)
  * 0x71/0x72 synthesizer path and reads its own 0x43/0x44 meters, to see
  * whether the synth locks and it receives.  Nothing here has run on the
  * radio -- docs/ra89r_bk4815.md. */
+/* Read and print the whole BK4815 register file (0x00-0x7F) as it currently
+ * stands.  Pure reads -- nothing is written -- so this is the state capture for
+ * a misbehaving receive: dump it while the reception is good and again while it
+ * is noise, and compare against each other and against the values the stock
+ * writes (docs/ra89r_bk4815.md).  Registers the part does not drive read back
+ * as whatever is on its data bus; the known ones are listed in the key. */
+static void bk4815_dump_registers(void)
+{
+    unsigned reg;
+    /* The routing state, so the capture is self-contained: which VFO the
+     * coordinator believes it is serving, what the two VFO records hold and
+     * what frequency the part actually sits on (decoded from 0x71/0x72 with
+     * the band in 0x04).  A mismatch between the selected VFO's frequency and
+     * the decoded tune is the fault this dump exists to catch. */
+    {
+        const bool      a_4829 = SETTINGS_GetVfoTransceiver(0u) != RF_XCVR_BK4815;
+        const bool      b_4829 = SETTINGS_GetVfoTransceiver(1u) != RF_XCVR_BK4815;
+        const rf_dual_roles_t roles = rf_dual_choose(a_4829, b_4829, gEeprom.RX_VFO);
+        const uint32_t  fa = gEeprom.VfoInfo[0].freq_config_RX.Frequency;
+        const uint32_t  fb = gEeprom.VfoInfo[1].freq_config_RX.Frequency;
+        const uint16_t  w_hi = bk4815_read_reg(0x71);
+        const uint16_t  w_lo = bk4815_read_reg(0x72);
+        const uint16_t  vco  = bk4815_read_reg(0x04);
+        const uint8_t   band = (uint8_t)((vco >> 7) & 3u);
+        const uint64_t  word = ((uint64_t)w_hi << 16) | w_lo;
+        const uint64_t  f10  = word * 2600000ull /
+                               ((uint64_t)bk4815_vco_divider(band) << 24);
+
+        uart_printf("\nBK4815 state capture\n"
+                    "  RX_VFO %u  TX_VFO %u   A %u.%05u MHz  B %u.%05u MHz\n",
+                    (unsigned)gEeprom.RX_VFO, (unsigned)gEeprom.TX_VFO,
+                    (unsigned)(fa / 100000u), (unsigned)(fa % 100000u),
+                    (unsigned)(fb / 100000u), (unsigned)(fb % 100000u));
+        uart_printf("  roles: BK4829<-VFO %d   BK4815<-VFO %d   audio %s  squelch %s  rssi 0x%03X\n",
+                    (int)roles.bk4829_vfo, (int)roles.bk4815_vfo,
+                    rx_audio_is_4815() ? "BK4815" : "BK4829",
+                    rx_squelch_open() ? "open" : "closed", (unsigned)rx_rssi());
+        uart_printf("  4815 is on %u.%05u MHz (band %u, Ndiv %u, 0x04=0x%04X, 0x75=0x%04X)\n",
+                    (unsigned)(f10 / 100000u), (unsigned)(f10 % 100000u),
+                    (unsigned)band, (unsigned)bk4815_vco_divider(band),
+                    (unsigned)vco, (unsigned)bk4815_read_reg(0x75));
+        uart_printf("  audio path line (PC13): %s\n",
+                    audio_path_is_on() ? "high (amplifier on)" : "low (off)");
+    }
+
+    uart_puts("\nBK4815 register file, as it stands now (read-only):\n");
+    for (reg = 0; reg < 0x80u; reg++) {
+        if ((reg & 7u) == 0u)
+            uart_printf("  ");
+        uart_printf("%02X:%04X ", reg, (unsigned)bk4815_read_reg((uint8_t)reg));
+        if ((reg & 7u) == 7u)
+            uart_puts("\n");
+    }
+    uart_puts("  key: 00=id(4816) 01=bandwidth 04=VCO-div 0C=T/R 16/2B/6D/73=RX set\n"
+              "       22=tone 42/4C/4D/4E/56/57=compander 43=SNR 44=RSSI(bits 6:0)\n"
+              "       48/4A=AF profile 49=AF (bit15 mute, low nibble volume)\n"
+              "       70=opctrl (A000 RX / E000 TX) 71/72=frequency word 75=band\n"
+              "       7E/7F=per-band calibration\n");
+}
+
+/* Read and print the whole BK4829 register file (0x00-0x7F) as it currently
+ * stands.  The BK4815's audio reaches the speaker through the BK4829's AF
+ * stage, so a receive fault that leaves the BK4815's own registers identical
+ * (radio 2026-10-18) has to show up here -- the AF output select (0x47), the
+ * AF gain (0x48), the audio unmute (0x50) and the RX/TX block word (0x30) are
+ * the shared path's gates.  Pure reads. */
+static void bk4829_dump_registers(void)
+{
+    unsigned reg;
+
+    uart_puts("\nBK4829 register file, as it stands now (read-only):\n");
+    for (reg = 0; reg < 0x80u; reg++) {
+        if ((reg & 7u) == 0u)
+            uart_printf("  ");
+        uart_printf("%02X:%04X ", reg, (unsigned)BK4819_ReadRegister((uint8_t)reg));
+        if ((reg & 7u) == 7u)
+            uart_puts("\n");
+    }
+    uart_puts("  key: 30=RX/TX blocks (bit9 AF DAC) 33=chip GPIOs 36=PA 37=mode\n"
+              "       40=mic gain 47=AF out (bits 11:8 select, 0=mute,1=normal)\n"
+              "       48=AF gain 50=audio unmute 67=RSSI 7D=power/mic\n");
+}
+
+/* The BK4815 bench ('n'): reconfigures and tunes, so the register-file capture
+ * comes first, before anything is written. */
 static void bk4815_bench(void)
 {
     uint16_t id, vco, op, hi, lo, cal, snr, rssi;
@@ -2917,6 +3003,8 @@ int main(void)
                 break;
             }
             case 'n':
+                bk4815_dump_registers();
+                bk4829_dump_registers();
                 bk4815_bench();
                 break;
             case 'e': {
