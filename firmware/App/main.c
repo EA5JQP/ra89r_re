@@ -996,13 +996,24 @@ static void duplex_audio_test(void)
     uint32_t rssi_idle, rssi_tx, l73_idle, l74_idle, l73_tx, l74_tx;
     unsigned i;
 
-    uart_puts("\n[duptest] automated duplex audio test (beep state)\n");
+    uart_puts("\n[duptest] duplex audio test: the E-winning combination with the MICROPHONE\n");
     if (!tx_duplex_active())
         duplex_force_on();
     if (!tx_duplex_active()) {
         uart_puts("[duptest] duplex setup failed\n");
         return;
     }
+
+    /* The 'E' self-test's surviving variant (2026-10-19): af=0 (the stock's
+     * TX-entry mute, so the transmitting chip's AF output does not load the
+     * shared node) and path=1 (PA0/PA1 left as the receive path had them, so
+     * the TX does not move the shared band path).  E transmitted a tone; this
+     * test wires the microphone in, which is the state a satellite uplink
+     * actually uses. */
+    tx_duplex_set_af(0);
+    tx_duplex_set_path(1);
+    uart_printf("[duptest] combination: AF %s | path %s\n",
+                tx_duplex_af_name(), tx_duplex_path_name());
 
     /* The 2026-10-17 self-test: a UHF transmit desenses a VHF receive lane
      * (floor 17 -> 41), the reverse layout holds -- warn when the split is the
