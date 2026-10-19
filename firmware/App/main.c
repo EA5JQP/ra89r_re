@@ -1053,10 +1053,10 @@ static void duplex_audio_test(void)
                 (unsigned)rssi_idle, (unsigned)lo, (unsigned)hi,
                 (unsigned)l73_idle, (unsigned)l74_idle);
 
-    tx_duplex_set_af(1);          /* Normal AF (0x47 = 0x6142): the node stays
-                                   * unloaded -- mode 0 mutes the downlink */
-    /* The AF DAC (and so the beep) is whatever 'H' last set: the mix/level
-     * question needs both states, so the test must not force one. */
+    /* The TX-chip AF and the AF DAC are whatever 'I' / 'H' last set: the E
+     * run found af=0 (stock TX-entry mute) + path=1 to be the combination
+     * whose lane survived and stayed audible, so the mic test must be able to
+     * use it. */
     uart_printf("[duptest] keying the microphone on %u.%05u MHz (%s, %s -- 'H' toggles the beep, 'I' the TX AF)\n",
                 (unsigned)(gTxVfo->freq_config_TX.Frequency / 100000u),
                 (unsigned)(gTxVfo->freq_config_TX.Frequency % 100000u),
