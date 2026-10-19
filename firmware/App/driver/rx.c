@@ -253,11 +253,15 @@ void rx_poll(void)
                 BK4819_SetAF(gates ? BK4819_AF_FM : BK4819_AF_MUTE);
             else
                 BK4819_SetAF(BK4819_AF_MUTE);   /* hard mute, whatever the app writes */
-            /* Leave the audio-path line alone during a duplex transmission: the
-             * transmit side owns it then (console 'g'), and driving it here every
-             * 10 ms would override that. */
+            /* Leave the audio-path line alone during an ordinary transmission:
+             * the transmit side owns it then.  In duplex the downlink rides
+             * that line, so hold it on for the whole transmission when the
+             * duplex PC13 mode says so -- the K1's RADIO_SetTxParameters()
+             * drives it low on its way into a PTT (radio 2026-10-19). */
             if (!tx_active())
                 audio_path_drive(gates);
+            else if (tx_duplex_active() && tx_duplex_pc13() == 2u)
+                audio_path_drive(1);
         }
 
         /* The K1 owns the BK4829's chip outputs, and its own power-save, wake

@@ -52,8 +52,12 @@ static uint8_t s_duplex_af;      /* 0 stock mute (default), 1 normal AF, 2 K1 mu
 static bool    s_duplex_af_dac = true;
 /* PC13 (the audio path line) during a duplex transmission: 0 = leave it as the
  * receive path left it, 1 = drive low (the stock's T/R state), 2 = drive high.
- * rx_poll does not touch the line while tx_active(), so this is authoritative. */
-static uint8_t s_duplex_pc13;
+ * Default 2: the downlink's amplifier line must stay on for the whole
+ * transmission, and a real PTT runs the K1's RADIO_SetTxParameters(), which
+ * calls AUDIO_AudioPathOff() (PC13 low) on its way in -- the console tests,
+ * with the app loop blocked, never did that, so 'T' sounded fine while a PTT
+ * was silent (radio 2026-10-19).  'g' still cycles the three modes. */
+static uint8_t s_duplex_pc13 = 2;
 /* The duplex band path: 1 = leave PA0/PA1 as the receive path had them.  The
  * 'E' run's surviving variant used this (2026-10-19): writing the transmit
  * band path moves the shared front end under the receiving chip. */
