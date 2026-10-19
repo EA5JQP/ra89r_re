@@ -917,8 +917,20 @@ static uint8_t   s_dup_saved_rxvfo;
  * the other VFO transmits on the BK4829. */
 static void duplex_force_on(void)
 {
-    const uint8_t rx_vfo = gEeprom.RX_VFO;
-    const uint8_t tx_vfo = (uint8_t)(1u - rx_vfo);
+    /* The validated satellite layout is downlink UHF / uplink VHF: the other
+     * way round (downlink VHF, uplink UHF) desenses the receive lane (radio
+     * 2026-10-17 and again 2026-10-19, where 'U' picked whatever VFO happened
+     * to be selected and the run looked like a duplex failure).  Pick the VFOs
+     * by band, not by which one is on screen: the UHF VFO receives on the
+     * BK4815, the VHF VFO transmits on the BK4829.  If both VFOs are in the
+     * same band, keep the selection and say so. */
+    const uint8_t  sel   = gEeprom.RX_VFO;
+    const uint8_t  other = (uint8_t)(sel ^ 1u);
+    const uint32_t fsel   = gEeprom.VfoInfo[sel].freq_config_RX.Frequency;
+    const uint32_t fother = gEeprom.VfoInfo[other].freq_config_RX.Frequency;
+    const uint8_t  rx_vfo = (fsel >= PA_BAND_SPLIT)      ? sel :
+                            (fother >= PA_BAND_SPLIT)    ? other : sel;
+    const uint8_t  tx_vfo = (uint8_t)(rx_vfo ^ 1u);
 
     s_dup_saved_rx    = SETTINGS_GetVfoTransceiver(rx_vfo);
     s_dup_saved_tx    = SETTINGS_GetVfoTransceiver(tx_vfo);
@@ -928,7 +940,8 @@ static void duplex_force_on(void)
 
     SETTINGS_SetVfoTransceiver(rx_vfo, RF_XCVR_BK4815);
     SETTINGS_SetVfoTransceiver(tx_vfo, RF_XCVR_BK4829);
-    gEeprom.TX_VFO = tx_vfo;
+    gEeprom.TX_VFO   = tx_vfo;
+    gEeprom.RX_VFO   = rx_vfo;
     tx_set_duplex(true, true, true);
     SETTINGS_FixupVfoPointers();
 
