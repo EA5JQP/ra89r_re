@@ -249,10 +249,19 @@ void rx_poll(void)
                 s_af_4815_written = gates;
                 s_af_4815_valid = true;
             }
-            if (s_bridge_4815)
-                BK4819_SetAF(gates ? BK4819_AF_FM : BK4819_AF_MUTE);
-            else
-                BK4819_SetAF(BK4819_AF_MUTE);   /* hard mute, whatever the app writes */
+            /* The BK4829's AF output belongs to the transmit side while a
+             * transmission is running: the duplex TX sets 0x47 to the stock's
+             * TX-entry mute (0x6040, af=0) so the transmitting chip cannot
+             * loop its TX DSP audio onto the shared node.  Re-driving the
+             * bridge here every poll re-opened it (0x6142) 10 ms into every
+             * PTT -- the noise that masked the downlink (radio 2026-10-19:
+             * lane RSSI 50, TX audio heard instead of radio A). */
+            if (!tx_active()) {
+                if (s_bridge_4815)
+                    BK4819_SetAF(gates ? BK4819_AF_FM : BK4819_AF_MUTE);
+                else
+                    BK4819_SetAF(BK4819_AF_MUTE);   /* hard mute, whatever the app writes */
+            }
             /* Leave the audio-path line alone during an ordinary transmission:
              * the transmit side owns it then.  In duplex the downlink rides
              * that line, so hold it on for the whole transmission when the
