@@ -963,6 +963,41 @@ set (with the settle window) **whenever the coordinator has (re)tuned the
 part** (`rf_dual_bk4815_frequency()` changed), so the tune and the set always
 go together, as in the stock.
 
+**Duplex after the RX base was fixed (2026-10-19).**  With develop's validated
+BK4815 lane under it (per-band marks, mirror, band/pin repair, wake on the
+squelch-open edge) the branch was merged onto that base (`7bb5338`).  Two
+results from the radio:
+
+- **`E`, variant `af=0 path=1 tr=0`: `idle=44 | tx min=49 avg=49 | RX
+  SURVIVED TX`** -- the receive lane held through a transmission and the
+  downlink was heard.  `af=0` is the stock's TX-entry mute (the transmitting
+  chip's AF output muted, so its own audio does not ride the shared node) and
+  `path=1` leaves PA0/PA1 as the receive path had them (the TX does not move
+  the shared band path).  Both differ from the branch's defaults (`af=1`,
+  `path=0`).
+  **Caveat:** `E` transmits with `TX_SOURCE_TONE`, so the microphone path is
+  not exercised -- the result says the receive lane survives a *tone*
+  transmission, not that duplex voice works.
+- **`o` (route probe) re-run on the fixed base: still inconclusive** -- the
+  microphone control phase was responsive (quiet 18 -> voice 40), but the
+  carrier phase only collected 2 of 48 samples (radio A keyed for a couple of
+  seconds of the 12 s window), and those read the mic amplitude at its quiet
+  level (8-15) against a carrier at RSSI 44-45.  That leans **route 1** again
+  (the downlink is not on the BK4829's microphone input), but it is not a
+  verdict.
+- Two "the radio is left broken after the test" bugs were found and fixed:
+  the duplex branch of `tx_stop()` returned before `rf_dual_reapply()` (the
+  4829 stayed on the transmit frequency, and its demod noise was heard as a
+  broken receiver), and the 4829 mirror / BK4815 band guard trusted shadows --
+  both now read the chip's registers back and repair them.
+
+**Test-design note:** the timed console tests (`E`, `T`, `o`, `7`) depend on
+the operator keying radio A inside a narrow window; when the timing slips the
+verdicts are meaningless (`carrier too weak`, `n=2`, `no TX was possible`).
+The `[dup]` stream, printed every 500 ms while duplex is on, is the
+timing-free alternative: key/talk freely and watch `rssi4815`, `0x49`, `0x75`
+and `pc13` while the ear reports what was audible.
+
 ### Still open (revised 2026-10-17)
 
 - **The receive-during-transmit RF side is now confirmed on the radio**
