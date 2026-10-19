@@ -998,6 +998,35 @@ The `[dup]` stream, printed every 500 ms while duplex is on, is the
 timing-free alternative: key/talk freely and watch `rssi4815`, `0x49`, `0x75`
 and `pc13` while the ear reports what was audible.
 
+**Duplex voice works (2026-10-19).**  With the E-winning combination forced and
+the microphone wired in (`T`), the radio reports:
+
+```
+[duptest] combination: AF stock TX-entry mute (0x47 = 0x6040) | path PA0/PA1 left as RX had them
+[duptest] idle: rssi 48 (min 47 max 51)
+[duptest] tx:   rssi 45 (min 44 max 47)
+[duptest] downlink lane: idle 48, during TX min 44 max 47 -- held
+[duptest] VERDICT: receive audio is audible during TX -- duplex audio works
+```
+
+and the 500 ms `[dup]` stream held `tx=1 sql=1 rssi4815=46..49` across every
+following PTT.  Those runs become the duplex defaults: `af = 0` (stock
+TX-entry mute) and `path = 1` (PA0/PA1 left as the receive path had them).
+
+**Topology correction:** during those transmissions the BK4829's AF output was
+**muted** (`0x47 = 0x6040`) and the downlink was still audible, so the BK4815's
+audio does **not** ride the 4829's AF stage -- it reaches the amplifier on its
+own.  That is route 1 of the route probe, and the earlier "the 4815 needs the
+4829's RX/AF chain" conclusion was an artifact of the broken receive base (the
+audible source was the 4829 then).  The bridge (`0x47` opened with the 4815's
+squelch) is still useful while receiving -- it keeps the 4829's own audio out
+of the way only because the mirror puts that chip on the same channel -- but it
+is not what carries the downlink.
+
+**Still unproven:** the uplink.  Nothing in this run checks whether a far
+receiver hears the microphone; that is the half of satellite operation the
+radio cannot measure itself.
+
 ### Still open (revised 2026-10-17)
 
 - **The receive-during-transmit RF side is now confirmed on the radio**

@@ -38,11 +38,13 @@ bool tx_swap(void) { return s_swap; }
 
 static bool    s_duplex;
 static bool    s_duplex_rx_is_bk4815;
-/* Default: Normal AF on the transmit chip.  On this board the BK4815's audio
- * leaves through the BK4829's AF node (measured), so muting the 4829 at TX
- * entry (the stock's 0x6040) silences the downlink even though the 4815 still
- * receives it.  Mode 0 is the stock behaviour, kept selectable with 'I'. */
-static uint8_t s_duplex_af = 1;  /* 0 stock mute, 1 normal AF, 2 K1 mute */
+/* Default: the stock's TX-entry mute on the transmit chip.  Radio 2026-10-19:
+ * duplex voice works with 0x47 = 0x6040 during the transmission -- the downlink
+ * stays audible (the BK4815 reaches the amplifier on its own; the earlier
+ * "its audio rides the BK4829's AF node" reading was an artifact of the broken
+ * receive base), and the muted TX chip cannot load that node.  Mode 1 (Normal
+ * AF) is kept selectable with 'I'. */
+static uint8_t s_duplex_af;      /* 0 stock mute (default), 1 normal AF, 2 K1 mute */
 /* Keep the BK4829's AF DAC (0x30 bit 9) enabled during a duplex transmission.
  * Default ON here to recover the "beep while TX+RX" state: with the AF DAC
  * alive the speaker node stays powered during a transmission, which is the one
@@ -52,7 +54,10 @@ static bool    s_duplex_af_dac = true;
  * receive path left it, 1 = drive low (the stock's T/R state), 2 = drive high.
  * rx_poll does not touch the line while tx_active(), so this is authoritative. */
 static uint8_t s_duplex_pc13;
-static uint8_t s_duplex_path;    /* 0 full band path, 1 leave PA0/PA1 */
+/* The duplex band path: 1 = leave PA0/PA1 as the receive path had them.  The
+ * 'E' run's surviving variant used this (2026-10-19): writing the transmit
+ * band path moves the shared front end under the receiving chip. */
+static uint8_t s_duplex_path = 1;    /* 0 full band path, 1 leave PA0/PA1 */
 static bool    s_duplex_tr;      /* write the BK4815's 0x0C at TX entry */
 static uint32_t s_last_tx_freq;  /* the frequency the last tx_start() programmed */
 
