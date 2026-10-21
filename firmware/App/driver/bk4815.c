@@ -127,6 +127,16 @@ void bk4815_configure(void)
         bk4815_write_reg(bk4815_config[i].reg, bk4815_config[i].value);
 }
 
+void bk4815_set_band(uint16_t band)
+{
+    /* The stock's FUN_08013790 is a read-modify-write: `0x75 = (read & 0xFFC0)
+     * | value`.  The upper bits are state of their own -- the datasheet's
+     * register 117 has bit 10 = LO injection side, bit 9 = tone-to-RX-audio,
+     * bits 8:6 = RX-audio source -- so a whole-word write clears them.  This
+     * port wrote the bare value until 2026-10-21. */
+    bk4815_write_reg(0x75u, (uint16_t)((bk4815_read_reg(0x75u) & 0xffc0u) | (band & 0x3fu)));
+}
+
 /* --------------------------------------------------------- receive entry --- */
 
 /* The per-VFO receive entry the stock runs after the tune, FUN_08016CEC's

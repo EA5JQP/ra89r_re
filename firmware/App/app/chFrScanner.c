@@ -788,7 +788,7 @@ static scan_fast_result_t ScanRangeFastPrecheckListen(void)
         {
             /* Scan lane: the BK4815. */
             bk4815_set_frequency(freq, false);
-            bk4815_write_reg(0x75u, listen_uhf ? 0x0Au : 0x11u);
+            bk4815_set_band(listen_uhf ? 0x0Au : 0x11u);
             SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
             bk4815_read_rssi();                       /* discard the stale read */
             rssi = (uint16_t)((bk4815_read_rssi() & 0x7fu) * SCAN_FAST4815_RSSI_SCALE);
@@ -877,6 +877,7 @@ static void SetMemScanProgressChannel(uint16_t channel)
  * fallback, so list priority/rotation stays exactly as validated. */
 static scan_dual_state_t scanBothState;
 static uint8_t           scanBothLastBand = 0xFFu;
+static uint8_t           scanBothBandWritten = 0xFFu;   /* last 0x75 band value */
 static uint32_t          scanBothPrevFrequency;
 
 /* Where the dual-lane batch spends its time, printed by console J: the
@@ -923,6 +924,7 @@ static void ScanBothReset(void)
     scanBothState.mode   = (uint8_t)SCAN_MODE_FAST_BOTH;
     scanBothState.active = true;
     scanBothLastBand     = 0xFFu;
+    scanBothBandWritten  = 0xFFu;
     scanBothPrevFrequency = 0;
 }
 
@@ -940,7 +942,10 @@ static void ScanBothTune(const scan_candidate_t *c)
 
     if (scan_dual_assign_candidate(c) == SCAN_LANE_BK4815) {
         bk4815_set_frequency(c->frequency_10hz, false);
-        bk4815_write_reg(0x75u, (c->frequency_10hz >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+        if (c->band != scanBothBandWritten) {
+            bk4815_set_band((c->frequency_10hz >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+            scanBothBandWritten = c->band;
+        }
     } else {
         ScanFastTune(c->frequency_10hz);
     }

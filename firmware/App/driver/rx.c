@@ -378,7 +378,7 @@ void rx_service(void)
         if (s_scan_source_applied != s_scan_source || s_scan_source_freq != f) {
             if (use_4815) {
                 bk4815_set_frequency(f, false);
-                bk4815_write_reg(0x75u, (f >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+                bk4815_set_band((f >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
             } else {
                 rx_set_frequency(f);
             }
@@ -523,7 +523,7 @@ void rf_dual_refresh(void)
             const uint16_t band = (f4815 >= PA_BAND_SPLIT) ? 0x0Au : 0x11u;
 
             if (band != s_band_written) {
-                bk4815_write_reg(0x75u, band);
+                bk4815_set_band(band);
                 s_band_written = band;
             }
         }

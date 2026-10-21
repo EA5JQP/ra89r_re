@@ -135,6 +135,13 @@ void bk4815_set_frequency(uint32_t freq_10hz, bool tx);
 /* Write one SELCALL/tone frequency to register 0x22. */
 void bk4815_set_tone(uint32_t tone_hz);
 
+/* Set the band value in register 0x75 the way the stock's FUN_08013790 does:
+ * read-modify-write, `(read & 0xFFC0) | band`, so the register's own state
+ * (datasheet 117: bit 10 LO injection side, bit 9 tone-to-RX-audio, bits 8:6
+ * RX-audio source) survives.  `band` is the stock's low-six-bit code: 0x09/0x11
+ * the VHF values, 0x0A/0x12 the UHF ones. */
+void bk4815_set_band(uint16_t band);
+
 /* The chip's RSSI indicator: register 0x44, bits 6:0. */
 uint16_t bk4815_read_rssi(void);
 
