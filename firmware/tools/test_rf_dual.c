@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "board_pins.h"
+#include "driver/bk4815.h"
 #include "driver/rf_dual.h"
 #include "driver/rf_bus.h"
 #include "driver/rx.h"

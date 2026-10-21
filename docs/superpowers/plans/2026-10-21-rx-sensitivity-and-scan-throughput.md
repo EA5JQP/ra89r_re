@@ -182,9 +182,12 @@ Done on `scan-listen`, target build clean:
 
 Not yet done / blocked:
 
-* **Host tests were not executed here**: this host has no x86 gcc (only the ARM
-  toolchain), so `firmware/tools/check_all.sh` cannot build them.  Run it where
-  gcc exists before merging.
+* **Host tests were run in a container** (this host has no x86 gcc, only the
+  ARM toolchain): `podman run --rm -v "$PWD":/w -w /w docker.io/library/gcc:13
+  bash firmware/tools/check_all.sh` -- all suites pass (103 test_rf, 0 failed
+  test_rf_dual, 12 beeper, 86 bk1080, scan_dual and CAT OK, preview_k1 0
+  failures).  The only warnings are the pre-existing host 64-bit pointer casts
+  in `backlight.c`.
 * The radio console is unreachable because the CH340 is on the USB-C port;
   flashing needs the Kenwood jack (update mode is the bootloader's USART1).
   Every gate above is still open.
