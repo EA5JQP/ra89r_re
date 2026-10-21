@@ -143,6 +143,24 @@ void pa_set_rx_lane(bool use_4815)
 
 bool pa_rx_lane_is_4815(void) { return s_rx_lane_4815; }
 
+/* Bench toggles (console 'y'/'z'), receive-path lines only.  PA1 is what the
+ * stock's receive entry drives low (`FUN_080093EC` -> `FUN_08011b74(GPIOA, 2,
+ * 0)`), while this port leaves it high; `0x33` pin 2 (output bit 0x10) is set
+ * or cleared by `FUN_08015D44` from a config/codeplug pair the port never
+ * writes.  Both are candidates for the antenna path the BK4815 is missing
+ * (radio 2026-10-21), so they can be swept without a rebuild. */
+void pa_set_pa1(bool high)
+{
+    gpio_write(GPIOA, PA_BAND_PA1_PIN, high ? 1 : 0);
+}
+
+void pa_toggle_pin2(void)
+{
+    const bool set = (BK4819_ReadRegister(BK4819_REG_33) & 0x10u) != 0u;
+
+    BK4819_ToggleGpioOut((BK4819_GPIO_PIN_t)2, !set);
+}
+
 /* Apply the chip-side receive path.  AUTO is the K1 application's rule (and the
  * one the radio received with); the other modes are the 'F' experiment, which
  * walks the individual LNA pins so the radio can settle the stock's own pin-4

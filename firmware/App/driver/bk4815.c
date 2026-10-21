@@ -130,11 +130,21 @@ void bk4815_configure(void)
 void bk4815_set_band(uint16_t band)
 {
     /* The stock's FUN_08013790 is a read-modify-write: `0x75 = (read & 0xFFC0)
-     * | value`.  The upper bits are state of their own -- the datasheet's
-     * register 117 has bit 10 = LO injection side, bit 9 = tone-to-RX-audio,
-     * bits 8:6 = RX-audio source -- so a whole-word write clears them.  This
-     * port wrote the bare value until 2026-10-21. */
-    bk4815_write_reg(0x75u, (uint16_t)((bk4815_read_reg(0x75u) & 0xffc0u) | (band & 0x3fu)));
+     * | value`, which preserves the register's own state.  Two of those bits
+     * must *not* be preserved here, though:
+     *
+     *   - bit 10 is the datasheet's LO injection side.  The stock's synthesizer
+     *     programs the IF in registers 0x7E/0x7F (its per-band "calibration"
+     *     word, which is really the RX IF), while this port -- like the stock's
+     *     own word -- tunes `Ndiv * fwanted` with no IF offset.  With bit 10
+     *     set (the part's reset state, 0x0400) the 4815 sees a constant
+     *     LO-leakage level (0x44 = 28 at 145-146 MHz, 21 at 174 MHz, unmoved by
+     *     a -30 dBm carrier -- radio 2026-10-21), i.e. high-side injection with
+     *     no matching IF.  Force it low-side: bit 10 = 0.
+     *   - the low six bits are the band code.
+     *
+     * Bits 15:11 and 9:6 (RX-audio source, tone-to-audio) are preserved. */
+    bk4815_write_reg(0x75u, (uint16_t)((bk4815_read_reg(0x75u) & 0xfbc0u) | (band & 0x3fu)));
 }
 
 /* --------------------------------------------------------- receive entry --- */

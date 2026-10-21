@@ -322,7 +322,7 @@ static void print_help(void)
     uart_puts("\nthe K1 GUI owns the panel; these are console diagnostics\n"
               "          h help   i diagnostics   d dump screen as ASCII\n"
               "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
-              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40), the RX path bit the stock clears\n"
+              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40)   y toggle PA1   z toggle 0x33 pin 2 (0x10)\n"
               "          D step the RF bus delay (find what still gives audio)\n"
               "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
@@ -2040,6 +2040,21 @@ int main(void)
                 rx_force_bk4815_af(!rx_force_bk4815_af_on());
                 uart_printf("\nBK4815 AF forced %s\n",
                             rx_force_bk4815_af_on() ? "ON (squelch bypassed)" : "off");
+                break;
+            case 'y':
+                /* PA1: the stock's receive entry drives it low, the port high. */
+                {
+                    static bool high = true;
+
+                    high = !high;
+                    pa_set_pa1(high);
+                    uart_printf("\nPA1 %s\n", high ? "high" : "low");
+                }
+                break;
+            case 'z':
+                pa_toggle_pin2();
+                uart_printf("\n0x33 pin 2 (0x10) toggled -> 0x%04X\n",
+                            (unsigned)BK4819_ReadRegister(BK4819_REG_33));
                 break;
             case 'g': {
                 /* Receive-path bit 0 of 0x33 (0x40): the K1 calls it

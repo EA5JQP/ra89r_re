@@ -86,6 +86,12 @@ void pa_set_rx_lane(bool use_4815);
 /* The lane last applied, for diagnostics. */
 bool pa_rx_lane_is_4815(void);
 
+/* Bench toggles (console 'y'/'z'), receive path only: PA1's level and the 0x33
+ * pin-2 bit (0x10), the two lines the stock's receive entry drives and the port
+ * does not.  See pa.c. */
+void pa_set_pa1(bool high);
+void pa_toggle_pin2(void);
+
 /* The bias PWM compare, 0 .. PA_PWM_MAX_DUTY.  Higher is more bias. */
 void pa_power(uint16_t compare);
 
