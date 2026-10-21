@@ -1333,7 +1333,10 @@ static void rf_watch(void)
                   "  in RX and these readings will not follow a carrier.\n");
 
     for (i = 0; i < 20u; i++) {
-        uint16_t v = rx_rssi();
+        /* Read the part directly: the app loop (and so rx_poll) does not run
+         * while this handler blocks, and sampling the polled value showed the
+         * same number twenty times. */
+        uint16_t v = BK4819_GetRSSI();
 
         if (v < min)
             min = v;
