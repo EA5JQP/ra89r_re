@@ -282,11 +282,14 @@ static void CHFRSCANNER_AbortActiveReception(void)
 #define SCAN_FAST_WEAK_MARGIN        8
 /* The BK4815 reports a 7-bit RSSI (0x44), about a quarter of the BK4829's
  * 9-bit scale (0x67), so the dual lane uses its own, smaller margins rather
- * than comparing scales.  These are unvalidated until measured on the radio
- * (docs/ra89r_scan.md). */
-#define SCAN_FAST4815_RSSI_MARGIN    4
-#define SCAN_FAST4815_SQUELCH_MARGIN 2
-#define SCAN_FAST4815_WEAK_MARGIN    2
+ * than comparing scales.  Radio 2026-10-21: the part's noise floor at 446 MHz
+ * read 16-17 while the SQL-1 mark was 16, i.e. inside the noise, and the lane
+ * stopped the scan on it every batch -- hence 8 (two marks' worth of margin)
+ * after the seed-only first sample.  Still unvalidated as a *threshold*; the
+ * floor-relative rule is what keeps it honest. */
+#define SCAN_FAST4815_RSSI_MARGIN    8
+#define SCAN_FAST4815_SQUELCH_MARGIN 4
+#define SCAN_FAST4815_WEAK_MARGIN    4
 /* The BK4815's 7-bit RSSI is scaled into the BK4829's 9-bit range (127*4 ~ 508)
  * when both lanes feed the one sparkline series. */
 #define SCAN_FAST4815_RSSI_SCALE     4
@@ -870,6 +873,33 @@ static scan_dual_state_t scanBothState;
 static uint8_t           scanBothLastBand = 0xFFu;
 static uint32_t          scanBothPrevFrequency;
 
+/* Where the dual-lane batch spends its time, printed by console J: the
+ * candidate pull, the tunes and the reads, accumulated in microseconds plus a
+ * batch counter.  Profiling only -- it never changes a decision. */
+static uint32_t scanBothProfUs[3];      /* 0 next-candidate, 1 tune, 2 read */
+static uint32_t scanBothProfBatches;
+static uint32_t scanBothProfProbes;
+
+void CHFRSCANNER_GetScanBothProfile(uint32_t us[3], uint32_t *batches,
+                                    uint32_t *probes)
+{
+    unsigned i;
+
+    for (i = 0; i < 3u && us != 0; i++)
+        us[i] = scanBothProfUs[i];
+    if (batches != 0)
+        *batches = scanBothProfBatches;
+    if (probes != 0)
+        *probes = scanBothProfProbes;
+}
+
+void CHFRSCANNER_ResetScanBothProfile(void)
+{
+    scanBothProfUs[0] = scanBothProfUs[1] = scanBothProfUs[2] = 0u;
+    scanBothProfBatches = 0u;
+    scanBothProfProbes  = 0u;
+}
+
 static bool ScanBothEnabled(void)
 {
     return ScanFastEnabled() &&
@@ -890,6 +920,8 @@ static void ScanBothReset(void)
  * chip.  The band switch only happens when the band actually changes. */
 static void ScanBothTune(const scan_candidate_t *c)
 {
+    const uint32_t t0 = systick_micros();
+
     if (c->band != scanBothLastBand) {
         pa_select_band(c->frequency_10hz);
         scanBothLastBand = c->band;
@@ -898,10 +930,11 @@ static void ScanBothTune(const scan_candidate_t *c)
     if (scan_dual_assign_candidate(c) == SCAN_LANE_BK4815) {
         bk4815_set_frequency(c->frequency_10hz, false);
         bk4815_write_reg(0x75u, (c->frequency_10hz >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
-        return;
+    } else {
+        ScanFastTune(c->frequency_10hz);
     }
 
-    ScanFastTune(c->frequency_10hz);
+    scanBothProfUs[1] += systick_micros() - t0;
 }
 
 /* Read a tuned lane's RSSI.  The BK4829 read keeps its glitch-indicator settle
@@ -909,13 +942,19 @@ static void ScanBothTune(const scan_candidate_t *c)
  * discarded first sample (see ScanBothProbe()'s old form). */
 static uint16_t ScanBothRead(scan_lane_chip_t lane)
 {
+    const uint32_t t0 = systick_micros();
+    uint16_t       rssi;
+
     if (lane == SCAN_LANE_BK4815) {
         SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
         bk4815_read_rssi();          /* discard the first, possibly stale read */
-        return bk4815_read_rssi();
+        rssi = bk4815_read_rssi();
+    } else {
+        rssi = ScanFastReadCandidateRssi();
     }
 
-    return ScanFastReadCandidateRssi();
+    scanBothProfUs[2] += systick_micros() - t0;
+    return rssi;
 }
 
 /* A pair of consecutive candidates on different chips in the same band is
@@ -988,14 +1027,18 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
         uint16_t         rssi[2] = { 0u, 0u };
         unsigned         have    = 0;
         unsigned         k;
+        const uint32_t   pull_t0 = systick_micros();
 
         while (have < 2u && pulled < target &&
                CHFRSCANNER_NextCandidate(&c[have])) {
             have++;
             pulled++;
         }
+        scanBothProfUs[0] += systick_micros() - pull_t0;
         if (have == 0u)
             break;
+
+        scanBothProfProbes += have;
 
         if (have == 2u && ScanBothPairUsable(&c[0], &c[1]))
             ScanBothProbePair(&c[0], &c[1], rssi);
@@ -1062,6 +1105,8 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
     if (pulled == 0u)
         return SCAN_FAST_DISABLED;
 
+    scanBothProfBatches++;
+
     if (have_hit) {
         gRxVfo->freq_config_RX.Frequency = best_frequency;
         scanBothState.selected_hit = sel;
@@ -1121,6 +1166,7 @@ void CHFRSCANNER_BenchmarkArm(uint32_t start_10hz, uint32_t stop_10hz)
 {
     const uint8_t rx = gEeprom.RX_VFO;
 
+    CHFRSCANNER_ResetScanBothProfile();
     scanBench.armed        = true;
     scanBench.rx_vfo       = rx;
     scanBench.screen       = gEeprom.ScreenChannel[rx];
@@ -1206,6 +1252,19 @@ void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out)
 }
 
 void CHFRSCANNER_BenchmarkDisarm(void) { }
+
+void CHFRSCANNER_GetScanBothProfile(uint32_t us[3], uint32_t *batches,
+                                    uint32_t *probes)
+{
+    if (us != 0)
+        us[0] = us[1] = us[2] = 0u;
+    if (batches != 0)
+        *batches = 0u;
+    if (probes != 0)
+        *probes = 0u;
+}
+
+void CHFRSCANNER_ResetScanBothProfile(void) { }
 #endif
 
 #if defined(ENABLE_FEAT_F4HWN_RESUME_STATE) || defined(ENABLE_SCAN_RANGES)

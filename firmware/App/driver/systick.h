@@ -6,6 +6,10 @@
 
 void systick_init(void);
 uint32_t systick_millis(void);
+
+/* Microsecond clock for profiling (console J).  Coarse at the tick boundary --
+ * see systick.c; use it for averages, not exact deltas. */
+uint32_t systick_micros(void);
 void systick_delay_ms(uint32_t ms);
 
 /* Busy-wait `us` microseconds over the SysTick counter.  The imported F4HWN

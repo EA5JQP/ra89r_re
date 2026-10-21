@@ -87,6 +87,28 @@ static bool s_audio_4815;
 static uint32_t s_4815_freq;    /* the tune last applied to the BK4815 (for its squelch marks) */
 static bool s_force_4815_af;    /* console 'A' diagnostic */
 
+/* Slow noise-floor estimate on the BK4815 lane.  The chip's RSSI baseline is
+ * not stable (see RX4815_FLOOR_MARGIN in rx.h), so the gate needs it to avoid
+ * opening on its own noise.  Fast down, slow up, frozen while the squelch is
+ * open (a carrier must not become the floor). */
+static uint16_t s_floor_4815;
+static bool     s_floor_4815_valid;
+
+static uint16_t rx_4815_floor(uint16_t rssi, bool closed)
+{
+    if (!s_floor_4815_valid) {
+        s_floor_4815       = rssi;
+        s_floor_4815_valid = true;
+    } else if (closed) {
+        if (rssi < s_floor_4815)
+            s_floor_4815 = rssi;
+        else
+            s_floor_4815 = (uint16_t)(s_floor_4815 + ((rssi - s_floor_4815) >> 4));
+    }
+
+    return s_floor_4815;
+}
+
 /* A temporary scan-hit receive route (see rx.h).  DEFAULT follows the selected
  * VFO's own transceiver; the other values pin the hit's chip until cleared. */
 static rx_scan_source_t s_scan_source = RX_SCAN_SOURCE_DEFAULT;
@@ -146,6 +168,7 @@ static void rx_set_audio_source(bool use_4815)
         return;
 
     s_audio_4815 = use_4815;
+    s_floor_4815_valid = false;     /* a new lane (and band) has its own floor */
     /* Mute both and let the squelch open the selected one.  The BK4815's audio
      * shares the BK4829's AF node (measured: it is only audible while the
      * BK4829's AF is open, e.g. with the K1 squelch at 0), so the BK4815 source
@@ -171,10 +194,23 @@ void rx_poll(void)
          * now scale with the user's squelch setting from the level-8 point
          * that was measured on the radio. */
         const bool     vhf = (s_4815_freq != 0u && s_4815_freq < PA_BAND_SPLIT);
-        const uint16_t open_mark  = rx_squelch_open_mark(true, !vhf, gEeprom.SQUELCH_LEVEL);
-        const uint16_t close_mark = rx_squelch_close_mark(true, !vhf, gEeprom.SQUELCH_LEVEL);
+        uint16_t       open_mark  = rx_squelch_open_mark(true, !vhf, gEeprom.SQUELCH_LEVEL);
+        uint16_t       close_mark = rx_squelch_close_mark(true, !vhf, gEeprom.SQUELCH_LEVEL);
 
         s_rssi = bk4815_read_rssi();
+
+        /* Never open inside the lane's own noise (RX4815_FLOOR_MARGIN): the
+         * fixed level marks can sit below a floor that moves between sessions,
+         * and opening on noise also made the dual scan stop every batch. */
+        {
+            const uint16_t floor = rx_4815_floor(s_rssi, !s_squelch_open);
+            const uint16_t above = (uint16_t)(floor + RX4815_FLOOR_MARGIN);
+
+            if (open_mark < above)
+                open_mark = above;
+            if (close_mark < (uint16_t)(floor + 1u))
+                close_mark = (uint16_t)(floor + 1u);
+        }
 
         if (s_force_4815_af || squelch_off ||
             (!s_squelch_open && s_rssi >= open_mark))
@@ -435,6 +471,7 @@ void rf_dual_refresh(void)
         if (roles.bk4815_vfo >= 0)
             bk4815_receive_entry(gEeprom.VfoInfo[roles.bk4815_vfo].CHANNEL_BANDWIDTH
                                  == BANDWIDTH_WIDE);
+        s_floor_4815_valid = false;     /* retuned: learn the new floor */
         s_dual_sec   = roles.bk4815_vfo;
         s_dual_sec_f = f4815;
     }

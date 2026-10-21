@@ -845,6 +845,7 @@ static const char *scan_mode_name(void)
     switch (gSetting_set_scn) {
         case SCAN_MODE_FAST_BOTH: return "FAST BOTH";
         case SCAN_MODE_FAST:      return "FAST";
+        case SCAN_MODE_LISTEN:    return "LISTEN";
         default:                  return "NORMAL";
     }
 }
@@ -993,6 +994,25 @@ static void dual_rf_diag(void)
                                                 gEeprom.SQUELCH_LEVEL));
 
     scan_rate_benchmark();
+
+    {
+        uint32_t us[3];
+        uint32_t batches = 0, probes = 0;
+
+        CHFRSCANNER_GetScanBothProfile(us, &batches, &probes);
+        if (batches != 0u) {
+            const uint32_t total = us[0] + us[1] + us[2];
+
+            uart_printf("  FAST BOTH profile: %u batches, %u probes, "
+                        "%u.%01u ms/batch\n",
+                        (unsigned)batches, (unsigned)probes,
+                        (unsigned)(total / batches / 1000u),
+                        (unsigned)((total / batches / 100u) % 10u));
+            uart_printf("    per batch: next-candidate %u us  tune %u us  read %u us\n",
+                        (unsigned)(us[0] / batches), (unsigned)(us[1] / batches),
+                        (unsigned)(us[2] / batches));
+        }
+    }
 
     uart_puts("  sampling 0x44 for ~5 s -- key a signal on the selected VFO now:\n");
 

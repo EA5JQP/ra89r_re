@@ -46,6 +46,15 @@
 #define RX4815_SQUELCH_OPEN_MARK_VHF   0x14u   /* 20, VHF */
 #define RX4815_SQUELCH_CLOSE_MARK_VHF  0x0Eu   /* 14, VHF */
 
+/* The BK4815's RSSI floor moves between sessions and bands (17 at 446 MHz on
+ * 2026-10-21, 0-13 at 145.5 on 2026-10-19), so the level mark alone can sit
+ * *below* the noise: at SQL 1 the VHF mark was 6 while the floor was 17, and
+ * the lane was permanently open (and the dual scan stopped on noise every
+ * batch).  The gate therefore keeps a slow floor estimate and never opens
+ * inside `FLOOR_MARGIN` of it; the level mark still decides where the floor
+ * allows it to matter. */
+#define RX4815_FLOOR_MARGIN  4u
+
 /* The marks scale with the user's squelch setting.  The pairs above are the
  * *level 8* point -- they are what was measured on the radio -- and each step
  * below 8 lowers the opening mark, so SQL 1 hears signals SQL 8 never opens on.

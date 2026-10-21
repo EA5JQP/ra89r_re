@@ -45,6 +45,20 @@ uint32_t systick_millis(void)
     return s_millis;
 }
 
+/* Microsecond clock for profiling only.  SysTick counts down from LOAD every
+ * millisecond, so the fraction within the current tick is LOAD - VAL.  A tick
+ * landing between the two reads can make one sample up to 1 ms early; the
+ * counters it feeds are averages, so that is acceptable -- do not use this
+ * where an exact delta matters. */
+uint32_t systick_micros(void)
+{
+    const uint32_t ticks_per_us = SystemCoreClock / 1000000u;
+    const uint32_t ms           = s_millis;
+    const uint32_t val          = SysTick->VAL;
+
+    return ms * 1000u + (SysTick->LOAD - val) / ticks_per_us;
+}
+
 void systick_delay_ms(uint32_t ms)
 {
     uint32_t start = s_millis;

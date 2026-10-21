@@ -55,6 +55,13 @@ void CHFRSCANNER_BenchmarkArm(uint32_t start_10hz, uint32_t stop_10hz);
 void CHFRSCANNER_BenchmarkRun(uint8_t mode);          /* 0 = FAST, 1 = FAST BOTH */
 void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out);
 void CHFRSCANNER_BenchmarkDisarm(void);
+
+/* Where the dual-lane batch spends its time (console J, profiling only):
+ * us[0] = candidate pull, us[1] = tunes, us[2] = RSSI reads, plus the batch and
+ * probe counters.  Reset at BenchmarkArm() so each run is fresh. */
+void CHFRSCANNER_GetScanBothProfile(uint32_t us[3], uint32_t *batches,
+                                    uint32_t *probes);
+void CHFRSCANNER_ResetScanBothProfile(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 const VFO_Info_t *CHFRSCANNER_GetScanDisplayVfo(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
