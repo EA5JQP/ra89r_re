@@ -57,9 +57,10 @@ void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out);
 void CHFRSCANNER_BenchmarkDisarm(void);
 
 /* Where the dual-lane batch spends its time (console J, profiling only):
- * us[0] = candidate pull, us[1] = tunes, us[2] = RSSI reads, plus the batch and
- * probe counters.  Reset at BenchmarkArm() so each run is fresh. */
-void CHFRSCANNER_GetScanBothProfile(uint32_t us[4], uint32_t *batches,
+ * us[0] = candidate pull, us[1] = tunes, us[2] = RSSI reads, us[3] = the whole
+ * precheck call, us[4] = the gap between one batch and the next; plus the
+ * batch and probe counters.  Reset at BenchmarkArm() so each run is fresh. */
+void CHFRSCANNER_GetScanBothProfile(uint32_t us[5], uint32_t *batches,
                                     uint32_t *probes);
 void CHFRSCANNER_ResetScanBothProfile(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER

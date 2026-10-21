@@ -876,16 +876,17 @@ static uint32_t          scanBothPrevFrequency;
 /* Where the dual-lane batch spends its time, printed by console J: the
  * candidate pull, the tunes and the reads, accumulated in microseconds plus a
  * batch counter.  Profiling only -- it never changes a decision. */
-static uint32_t scanBothProfUs[4];      /* 0 pull, 1 tune, 2 read, 3 whole precheck */
+static uint32_t scanBothProfUs[5];      /* 0 pull, 1 tune, 2 read, 3 wall, 4 gap */
 static uint32_t scanBothProfBatches;
 static uint32_t scanBothProfProbes;
+static uint32_t scanBothProfLastEnd;
 
-void CHFRSCANNER_GetScanBothProfile(uint32_t us[4], uint32_t *batches,
+void CHFRSCANNER_GetScanBothProfile(uint32_t us[5], uint32_t *batches,
                                     uint32_t *probes)
 {
     unsigned i;
 
-    for (i = 0; i < 4u && us != 0; i++)
+    for (i = 0; i < 5u && us != 0; i++)
         us[i] = scanBothProfUs[i];
     if (batches != 0)
         *batches = scanBothProfBatches;
@@ -895,10 +896,13 @@ void CHFRSCANNER_GetScanBothProfile(uint32_t us[4], uint32_t *batches,
 
 void CHFRSCANNER_ResetScanBothProfile(void)
 {
-    scanBothProfUs[0] = scanBothProfUs[1] = 0u;
-    scanBothProfUs[2] = scanBothProfUs[3] = 0u;
+    unsigned i;
+
+    for (i = 0; i < 5u; i++)
+        scanBothProfUs[i] = 0u;
     scanBothProfBatches = 0u;
     scanBothProfProbes  = 0u;
+    scanBothProfLastEnd = 0u;
 }
 
 static bool ScanBothEnabled(void)
@@ -999,13 +1003,12 @@ static void ScanBothProbePair(const scan_candidate_t *a, const scan_candidate_t 
 }
 
 /* How many candidate pairs one interval probes.  The K1's scanner runs one
- * precheck batch per app pass, and that pass (display included) is what paced
- * the measured 61 ms per 12-candidate batch -- so the batch is the throughput
- * knob, not the bus.  24 candidates per batch keeps a pass busy without
- * delaying a hit's audible hand-over by more than the batch itself.  The scan
- * benchmark (console 'J') is the check: FAST BOTH must beat its measured
- * 168 probes/s. */
-#define SCAN_BOTH_PRECHECK_PAIRS 12u
+ * precheck batch per app pass, and everything outside the precheck (the 10 ms
+ * scheduler slot plus the throttled redraw) was ~10.6 ms per batch on
+ * 2026-10-21, so a longer batch amortizes it: 48 candidates at 27.8 ms in the
+ * batch plus the gap.  A hit is still reported at the end of the batch, i.e.
+ * within ~40 ms of sweep.  */
+#define SCAN_BOTH_PRECHECK_PAIRS 24u
 
 /* One interval of the dual-lane range sweep, in ordinal order; the earliest
  * ordinal wins if both lanes hit.  No candidate array is kept: the pairs are
@@ -1030,6 +1033,9 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
 
     {
         const uint32_t batch_t0 = systick_micros();
+
+        if (scanBothProfLastEnd != 0u)
+            scanBothProfUs[4] += batch_t0 - scanBothProfLastEnd;
 
     while (pulled < target) {
         scan_candidate_t c[2];
@@ -1116,6 +1122,7 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
 
     scanBothProfBatches++;
     scanBothProfUs[3] += systick_micros() - batch_t0;
+    scanBothProfLastEnd = systick_micros();
 
     if (have_hit) {
         gRxVfo->freq_config_RX.Frequency = best_frequency;
@@ -1264,11 +1271,11 @@ void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out)
 
 void CHFRSCANNER_BenchmarkDisarm(void) { }
 
-void CHFRSCANNER_GetScanBothProfile(uint32_t us[4], uint32_t *batches,
+void CHFRSCANNER_GetScanBothProfile(uint32_t us[5], uint32_t *batches,
                                     uint32_t *probes)
 {
     if (us != 0)
-        us[0] = us[1] = us[2] = us[3] = 0u;
+        us[0] = us[1] = us[2] = us[3] = us[4] = 0u;
     if (batches != 0)
         *batches = 0u;
     if (probes != 0)

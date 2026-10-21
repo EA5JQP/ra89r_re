@@ -996,7 +996,7 @@ static void dual_rf_diag(void)
     scan_rate_benchmark();
 
     {
-        uint32_t us[4];
+        uint32_t us[5];
         uint32_t batches = 0, probes = 0;
 
         CHFRSCANNER_GetScanBothProfile(us, &batches, &probes);
@@ -1010,9 +1010,11 @@ static void dual_rf_diag(void)
                         (unsigned)((total / batches / 100u) % 10u),
                         (unsigned)(us[3] / batches / 1000u),
                         (unsigned)((us[3] / batches / 100u) % 10u));
-            uart_printf("    per batch: next-candidate %u us  tune %u us  read %u us  wall %u us\n",
+            uart_printf("    per batch: pull %u us  tune %u us  read %u us  "
+                        "precheck %u us  gap %u us\n",
                         (unsigned)(us[0] / batches), (unsigned)(us[1] / batches),
-                        (unsigned)(us[2] / batches), (unsigned)(us[3] / batches));
+                        (unsigned)(us[2] / batches), (unsigned)(us[3] / batches),
+                        (unsigned)(us[4] / batches));
         }
     }
 
