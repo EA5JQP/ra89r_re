@@ -876,16 +876,16 @@ static uint32_t          scanBothPrevFrequency;
 /* Where the dual-lane batch spends its time, printed by console J: the
  * candidate pull, the tunes and the reads, accumulated in microseconds plus a
  * batch counter.  Profiling only -- it never changes a decision. */
-static uint32_t scanBothProfUs[3];      /* 0 next-candidate, 1 tune, 2 read */
+static uint32_t scanBothProfUs[4];      /* 0 pull, 1 tune, 2 read, 3 whole precheck */
 static uint32_t scanBothProfBatches;
 static uint32_t scanBothProfProbes;
 
-void CHFRSCANNER_GetScanBothProfile(uint32_t us[3], uint32_t *batches,
+void CHFRSCANNER_GetScanBothProfile(uint32_t us[4], uint32_t *batches,
                                     uint32_t *probes)
 {
     unsigned i;
 
-    for (i = 0; i < 3u && us != 0; i++)
+    for (i = 0; i < 4u && us != 0; i++)
         us[i] = scanBothProfUs[i];
     if (batches != 0)
         *batches = scanBothProfBatches;
@@ -895,7 +895,8 @@ void CHFRSCANNER_GetScanBothProfile(uint32_t us[3], uint32_t *batches,
 
 void CHFRSCANNER_ResetScanBothProfile(void)
 {
-    scanBothProfUs[0] = scanBothProfUs[1] = scanBothProfUs[2] = 0u;
+    scanBothProfUs[0] = scanBothProfUs[1] = 0u;
+    scanBothProfUs[2] = scanBothProfUs[3] = 0u;
     scanBothProfBatches = 0u;
     scanBothProfProbes  = 0u;
 }
@@ -940,13 +941,16 @@ static void ScanBothTune(const scan_candidate_t *c)
 /* Read a tuned lane's RSSI.  The BK4829 read keeps its glitch-indicator settle
  * and near-candidate re-check; the BK4815 read keeps its fixed settle and the
  * discarded first sample (see ScanBothProbe()'s old form). */
-static uint16_t ScanBothRead(scan_lane_chip_t lane)
+static uint16_t ScanBothRead(scan_lane_chip_t lane, bool already_settled)
 {
     const uint32_t t0 = systick_micros();
     uint16_t       rssi;
 
     if (lane == SCAN_LANE_BK4815) {
-        SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
+        /* The fixed settle is only needed when nothing else covered it: in a
+         * pair the BK4829 read runs first and takes longer than this delay. */
+        if (!already_settled)
+            SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
         bk4815_read_rssi();          /* discard the first, possibly stale read */
         rssi = bk4815_read_rssi();
     } else {
@@ -971,8 +975,10 @@ static bool ScanBothPairUsable(const scan_candidate_t *a, const scan_candidate_t
 }
 
 /* Tune and read a pair; `rssi[0]`/`rssi[1]` follow the candidates' order.  The
- * BK4815 is always tuned and read last, so its settle delay is paid once for
- * the pair and the BK4829's settle happens under it. */
+ * BK4815 is always tuned and read last, so the BK4829's read runs after both
+ * tunes and its duration covers the BK4815's settle -- which is therefore
+ * skipped.  Only the stranded 4815 case (a pair that could not be pipelined)
+ * still pays the fixed delay. */
 static void ScanBothProbePair(const scan_candidate_t *a, const scan_candidate_t *b,
                               uint16_t *rssi)
 {
@@ -982,13 +988,13 @@ static void ScanBothProbePair(const scan_candidate_t *a, const scan_candidate_t 
     if (lane_a == SCAN_LANE_BK4815) {
         ScanBothTune(b);
         ScanBothTune(a);
-        rssi[1] = ScanBothRead(lane_b);
-        rssi[0] = ScanBothRead(lane_a);
+        rssi[1] = ScanBothRead(lane_b, false);   /* BK4829: covers a's settle */
+        rssi[0] = ScanBothRead(lane_a, true);
     } else {
         ScanBothTune(a);
         ScanBothTune(b);
-        rssi[0] = ScanBothRead(lane_a);
-        rssi[1] = ScanBothRead(lane_b);
+        rssi[0] = ScanBothRead(lane_a, false);   /* BK4829: covers b's settle */
+        rssi[1] = ScanBothRead(lane_b, true);
     }
 }
 
@@ -1022,6 +1028,9 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
     scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
     scanBothState.selected_hit = SCAN_LANE_NONE;
 
+    {
+        const uint32_t batch_t0 = systick_micros();
+
     while (pulled < target) {
         scan_candidate_t c[2];
         uint16_t         rssi[2] = { 0u, 0u };
@@ -1045,7 +1054,7 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
         else {
             for (k = 0; k < have; k++) {
                 ScanBothTune(&c[k]);
-                rssi[k] = ScanBothRead(scan_dual_assign_candidate(&c[k]));
+                rssi[k] = ScanBothRead(scan_dual_assign_candidate(&c[k]), false);
             }
         }
 
@@ -1106,6 +1115,7 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
         return SCAN_FAST_DISABLED;
 
     scanBothProfBatches++;
+    scanBothProfUs[3] += systick_micros() - batch_t0;
 
     if (have_hit) {
         gRxVfo->freq_config_RX.Frequency = best_frequency;
@@ -1117,6 +1127,7 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
     }
 
     return SCAN_FAST_QUIET_BATCH;
+    }   /* batch_t0 scope */
 }
 #endif /* ENABLE_SCAN_RANGES */
 
@@ -1253,11 +1264,11 @@ void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out)
 
 void CHFRSCANNER_BenchmarkDisarm(void) { }
 
-void CHFRSCANNER_GetScanBothProfile(uint32_t us[3], uint32_t *batches,
+void CHFRSCANNER_GetScanBothProfile(uint32_t us[4], uint32_t *batches,
                                     uint32_t *probes)
 {
     if (us != 0)
-        us[0] = us[1] = us[2] = 0u;
+        us[0] = us[1] = us[2] = us[3] = 0u;
     if (batches != 0)
         *batches = 0u;
     if (probes != 0)
@@ -1535,6 +1546,21 @@ void CHFRSCANNER_Stop(void)
     gUpdateDisplay = true;
 }
 
+/* The sweep's per-quiet-batch display refresh was a large share of the wall
+ * time (radio 2026-10-21: 32 ms of probe work inside a 48 ms batch), so the
+ * status line is redrawn every `SCAN_DISPLAY_DIVIDER` batches instead of every
+ * one.  A hit still refreshes immediately. */
+#define SCAN_DISPLAY_DIVIDER 4
+static uint8_t scanDisplayDivider;
+
+static void ScanRequestDisplay(void)
+{
+    if (++scanDisplayDivider >= SCAN_DISPLAY_DIVIDER) {
+        scanDisplayDivider = 0;
+        gUpdateDisplay     = true;
+    }
+}
+
 static void NextFreqChannel(void)
 {
 #ifdef ENABLE_SCAN_RANGES
@@ -1548,7 +1574,7 @@ static void NextFreqChannel(void)
             {
                 scanFastLastFullTuneCandidate = false;
                 gScanPauseDelayIn_10ms = 1;
-                gUpdateDisplay = true;
+                ScanRequestDisplay();
                 return;
             }
 
@@ -1570,7 +1596,7 @@ static void NextFreqChannel(void)
             {
                 scanFastLastFullTuneCandidate = false;
                 gScanPauseDelayIn_10ms = 1;
-                gUpdateDisplay = true;
+                ScanRequestDisplay();
                 return;
             }
 
@@ -1592,7 +1618,7 @@ static void NextFreqChannel(void)
             {
                 scanFastLastFullTuneCandidate = false;
                 gScanPauseDelayIn_10ms = 1;
-                gUpdateDisplay = true;
+                ScanRequestDisplay();
                 return;
             }
 

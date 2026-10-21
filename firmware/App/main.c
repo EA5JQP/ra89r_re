@@ -996,7 +996,7 @@ static void dual_rf_diag(void)
     scan_rate_benchmark();
 
     {
-        uint32_t us[3];
+        uint32_t us[4];
         uint32_t batches = 0, probes = 0;
 
         CHFRSCANNER_GetScanBothProfile(us, &batches, &probes);
@@ -1004,13 +1004,15 @@ static void dual_rf_diag(void)
             const uint32_t total = us[0] + us[1] + us[2];
 
             uart_printf("  FAST BOTH profile: %u batches, %u probes, "
-                        "%u.%01u ms/batch\n",
+                        "%u.%01u ms/batch in the batch, %u.%01u ms/batch wall\n",
                         (unsigned)batches, (unsigned)probes,
                         (unsigned)(total / batches / 1000u),
-                        (unsigned)((total / batches / 100u) % 10u));
-            uart_printf("    per batch: next-candidate %u us  tune %u us  read %u us\n",
+                        (unsigned)((total / batches / 100u) % 10u),
+                        (unsigned)(us[3] / batches / 1000u),
+                        (unsigned)((us[3] / batches / 100u) % 10u));
+            uart_printf("    per batch: next-candidate %u us  tune %u us  read %u us  wall %u us\n",
                         (unsigned)(us[0] / batches), (unsigned)(us[1] / batches),
-                        (unsigned)(us[2] / batches));
+                        (unsigned)(us[2] / batches), (unsigned)(us[3] / batches));
         }
     }
 
