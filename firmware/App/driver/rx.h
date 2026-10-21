@@ -55,19 +55,62 @@
  * allows it to matter. */
 #define RX4815_FLOOR_MARGIN  4u
 
-/* The marks scale with the user's squelch setting.  The pairs above are the
- * *level 8* point -- they are what was measured on the radio -- and each step
- * below 8 lowers the opening mark, so SQL 1 hears signals SQL 8 never opens on.
- * This is not the stock's own calibration yet: the stock derives its threshold
- * from the per-frequency squelch page at external flash 0x3710 (with the RSSI
- * page at 0x3860) through FUN_0800E3F6/FUN_0801D568, which is still undecoded
- * (docs/superpowers/plans/2026-10-21-rx-sensitivity-and-scan-throughput.md).
- * Until then the knob at least does something, monotone in 0..9, and level 8
- * reproduces the previously fixed behaviour. */
+/* The marks scale with the user's squelch setting and with the lane's *own*
+ * noise floor, because a fixed mark cannot work on this board: on 2026-10-21
+ * the BK4829's floor measured 96-103 at 145.5 and 76-79 at 446, while the
+ * BK4815's sat at 10-18, and the stock-like fixed pairs (0xCF/0xB4) then hid
+ * every signal below full strength.  The stock itself compares against a
+ * threshold just above its floor (its squelch page values are 23-37, on a
+ * lower-noise AGC setting), so a floor + margin rule is the faithful shape.
+ *
+ * `level` is gEeprom.SQUELCH_LEVEL (0 = off, handled by the caller):
+ * margin = base + step * level, hysteresis below the opening mark. */
+#define RX_SQUELCH_MARGIN_BASE_4829   6u
+#define RX_SQUELCH_MARGIN_STEP_4829   6u
+#define RX_SQUELCH_MARGIN_BASE_4815   2u
+#define RX_SQUELCH_MARGIN_STEP_4815   2u
+#define RX_SQUELCH_HYST_4829          12u
+#define RX_SQUELCH_HYST_4815          4u
+
+/* The margin above the learned floor, monotone in the squelch level. */
+static inline uint16_t rx_squelch_margin(bool use_4815, uint8_t level)
+{
+    const uint8_t lv = (level > 9u) ? 9u : level;
+
+    return (uint16_t)(use_4815
+                          ? (RX_SQUELCH_MARGIN_BASE_4815 + RX_SQUELCH_MARGIN_STEP_4815 * lv)
+                          : (RX_SQUELCH_MARGIN_BASE_4829 + RX_SQUELCH_MARGIN_STEP_4829 * lv));
+}
+
+/* The opening mark for a lane whose floor is `floor`.  The old fixed pairs are
+ * used as a *lower* bound only when the floor is not known yet (floor 0).
+ */
+static inline uint16_t rx_squelch_open_mark_from_floor(bool use_4815, bool uhf,
+                                                       uint8_t level, uint16_t floor)
+{
+    if (floor == 0u)
+        return use_4815 ? (uhf ? RX4815_SQUELCH_OPEN_MARK : RX4815_SQUELCH_OPEN_MARK_VHF)
+                        : RX_SQUELCH_OPEN_MARK;
+
+    return (uint16_t)(floor + rx_squelch_margin(use_4815, level));
+}
+
+static inline uint16_t rx_squelch_close_mark_from_floor(bool use_4815, bool uhf,
+                                                        uint8_t level, uint16_t floor)
+{
+    const uint16_t open = rx_squelch_open_mark_from_floor(use_4815, uhf, level, floor);
+    const uint16_t hyst = use_4815 ? RX_SQUELCH_HYST_4815 : RX_SQUELCH_HYST_4829;
+
+    return (uint16_t)((open > hyst) ? (uint16_t)(open - hyst) : 0u);
+}
+
+/* Backwards-compatible wrappers for callers that only know the level (the
+ * scanner's 4815 lane, tests): the fixed level-8 anchor plus the level steps.
+ */
 #define RX_SQUELCH_STEP_4829   6u    /* per level on the 9-bit 0x67 scale */
 #define RX_SQUELCH_STEP_4815   2u    /* per level on the 7-bit 0x44 scale */
-#define RX_SQUELCH_HYST_4829   27u   /* the stock pair's hysteresis (0xCF-0xB4) */
-#define RX_SQUELCH_HYST_4815   6u
+#define RX_SQUELCH_HYST_4829_FIXED   27u   /* the stock pair's hysteresis */
+#define RX_SQUELCH_HYST_4815_FIXED   6u
 
 /* Signed level offset from the level-8 anchor: -7 at level 1, 0 at 8, +1 at 9. */
 static inline int rx_squelch_level_offset(uint8_t level)
@@ -98,7 +141,8 @@ static inline uint16_t rx_squelch_open_mark(bool use_4815, bool uhf, uint8_t lev
 static inline uint16_t rx_squelch_close_mark(bool use_4815, bool uhf, uint8_t level)
 {
     const uint16_t open = rx_squelch_open_mark(use_4815, uhf, level);
-    const uint16_t hyst = use_4815 ? RX_SQUELCH_HYST_4815 : RX_SQUELCH_HYST_4829;
+    const uint16_t hyst = use_4815 ? RX_SQUELCH_HYST_4815_FIXED
+                                  : RX_SQUELCH_HYST_4829_FIXED;
 
     return (uint16_t)((open > hyst) ? (uint16_t)(open - hyst) : 0u);
 }
@@ -119,6 +163,15 @@ void rx_poll(void);
 
 bool rx_squelch_open(void);
 uint16_t rx_rssi(void);
+
+/* The marks actually in force right now: the active lane's learned floor plus
+ * the level-derived margin (rx_squelch_open_mark_from_floor above).  The
+ * scanner uses the opening mark so the sweep and the audio agree. */
+uint16_t rx_squelch_open_mark_now(void);
+uint16_t rx_squelch_close_mark_now(void);
+
+/* The active lane's floor estimate (0 while it is still unknown). */
+uint16_t rx_squelch_floor(void);
 
 /* True when the receive audio is currently taken from the BK4815 (the selected
  * RX VFO's transceiver), for the console diagnostic. */

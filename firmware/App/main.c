@@ -951,15 +951,11 @@ static void dual_rf_diag(void)
     uart_printf("  audio source: %s   squelch %s   rssi 0x%03X\n",
                 rx_audio_is_4815() ? "BK4815" : "BK4829",
                 rx_squelch_open() ? "OPEN" : "closed", (unsigned)rx_rssi());
-    uart_printf("  SQL level %u (0 = off)  marks: BK4829 open %u close %u | "
-                "BK4815 UHF open %u close %u | VHF open %u close %u\n",
+    uart_printf("  SQL level %u (0 = off)  lane floor %u  live marks open %u close %u\n",
                 (unsigned)gEeprom.SQUELCH_LEVEL,
-                (unsigned)rx_squelch_open_mark(false, false, gEeprom.SQUELCH_LEVEL),
-                (unsigned)rx_squelch_close_mark(false, false, gEeprom.SQUELCH_LEVEL),
-                (unsigned)rx_squelch_open_mark(true, true, gEeprom.SQUELCH_LEVEL),
-                (unsigned)rx_squelch_close_mark(true, true, gEeprom.SQUELCH_LEVEL),
-                (unsigned)rx_squelch_open_mark(true, false, gEeprom.SQUELCH_LEVEL),
-                (unsigned)rx_squelch_close_mark(true, false, gEeprom.SQUELCH_LEVEL));
+                (unsigned)rx_squelch_floor(),
+                (unsigned)rx_squelch_open_mark_now(),
+                (unsigned)rx_squelch_close_mark_now());
     uart_printf("  RX lane path: pin 4 (0x33 bit 0x04) %s  (lane is %s)\n",
                 pa_rx_lane_is_4815() ? "SET" : "clear",
                 pa_rx_lane_is_4815() ? "BK4815" : "BK4829");
@@ -983,15 +979,19 @@ static void dual_rf_diag(void)
     uart_printf("          0x70=0x%04X 0x71=0x%04X 0x72=0x%04X 0x75=0x%04X\n",
                 (unsigned)bk4815_read_reg(0x70), (unsigned)bk4815_read_reg(0x71),
                 (unsigned)bk4815_read_reg(0x72), (unsigned)bk4815_read_reg(0x75));
-    uart_printf("          0x43(SNR)=0x%04X 0x44(RSSI)=0x%04X -> %u  (marks open 0x%02X close 0x%02X)\n",
+    uart_printf("          0x43(SNR)=0x%04X 0x44(RSSI)=0x%04X -> %u  "
+                "(this lane: floor %u open %u close %u)\n",
                 (unsigned)bk4815_read_reg(0x43), (unsigned)bk4815_read_reg(0x44),
                 (unsigned)(bk4815_read_reg(0x44) & 0x7fu),
-                (unsigned)rx_squelch_open_mark(true,
-                                               gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
-                                               gEeprom.SQUELCH_LEVEL),
-                (unsigned)rx_squelch_close_mark(true,
-                                                gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
-                                                gEeprom.SQUELCH_LEVEL));
+                (unsigned)rx_squelch_floor(),
+                (unsigned)rx_squelch_open_mark_from_floor(true,
+                                                          gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
+                                                          gEeprom.SQUELCH_LEVEL,
+                                                          (uint16_t)(bk4815_read_reg(0x44) & 0x7fu)),
+                (unsigned)rx_squelch_close_mark_from_floor(true,
+                                                           gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
+                                                           gEeprom.SQUELCH_LEVEL,
+                                                           (uint16_t)(bk4815_read_reg(0x44) & 0x7fu)));
 
     scan_rate_benchmark();
 

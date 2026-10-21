@@ -287,9 +287,15 @@ static void CHFRSCANNER_AbortActiveReception(void)
  * stopped the scan on it every batch -- hence 8 (two marks' worth of margin)
  * after the seed-only first sample.  Still unvalidated as a *threshold*; the
  * floor-relative rule is what keeps it honest. */
-#define SCAN_FAST4815_RSSI_MARGIN    8
+#define SCAN_FAST4815_RSSI_MARGIN    12
 #define SCAN_FAST4815_SQUELCH_MARGIN 4
 #define SCAN_FAST4815_WEAK_MARGIN    4
+
+/* A candidate is confirmed with one more probe of the same frequency before it
+ * is handed to the expensive full tune.  Radio 2026-10-21: at 145.5 the BK4815
+ * lane's floor was seeded from a 3-7 sample and its own 10-12 jitter then read
+ * as a hit every batch, so FAST BOTH spent ~53 ms/batch on full re-tunes
+ * (1.08x over FAST) while the same sweep at 446 MHz ran at 1.67x. */
 /* The BK4815's 7-bit RSSI is scaled into the BK4829's 9-bit range (127*4 ~ 508)
  * when both lanes feed the one sparkline series. */
 #define SCAN_FAST4815_RSSI_SCALE     4
@@ -512,11 +518,11 @@ static uint16_t ScanFastGetNoiseTrigger(void)
  * does not carry (it reads 0xFF), so the trigger was **247** on the 9-bit
  * `0x67` scale, above any signal the radio can report (a keyed carrier measured
  * 236).  The precheck was therefore nearly deaf on the BK4829 lane.  Use the
- * same level-derived mark the receive gate uses (driver/rx.h), so the scanner
- * and the audio agree on what "a signal" is. */
+ * live mark from the receive gate (driver/rx.c), which tracks the lane's floor,
+ * so the scanner and the audio agree on what "a signal" is. */
 static uint16_t ScanFastReceiveMark(void)
 {
-    return rx_squelch_open_mark(false, false, gEeprom.SQUELCH_LEVEL);
+    return rx_squelch_open_mark_now();
 }
 
 /* Squelch off (level 0) keeps the K1's rule: no fast precheck at all. */
@@ -965,6 +971,14 @@ static uint16_t ScanBothRead(scan_lane_chip_t lane, bool already_settled)
     return rssi;
 }
 
+/* One candidate, tune then read: the confirmation probe and the non-pipelined
+ * fallback. */
+static uint16_t ScanBothProbeOne(const scan_candidate_t *c)
+{
+    ScanBothTune(c);
+    return ScanBothRead(scan_dual_assign_candidate(c), false);
+}
+
 /* A pair of consecutive candidates on different chips in the same band is
  * probed as a pipeline: tune both, then read both.  The second tune's bus time
  * (and, for a BK4815 in the pair, its settle delay) covers the first chip's
@@ -1107,12 +1121,21 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
             lane_state->candidates++;
 
             if (scan_dual_rssi_candidate(lane_state, rssi[k], squelch,
-                                         noise_margin, squelch_margin, weak_margin) &&
-                (!have_hit || c[k].ordinal < best_ordinal)) {
-                have_hit       = true;
-                best_ordinal   = c[k].ordinal;
-                best_frequency = c[k].frequency_10hz;
-                sel            = lane;
+                                         noise_margin, squelch_margin, weak_margin)) {
+                /* Confirm on one more probe before the expensive full tune: a
+                 * single noisy sample used to cost a whole re-tune every batch
+                 * (see SCAN_BOTH_CONFIRM_RSSI_DROP). */
+                const uint16_t again = ScanBothProbeOne(&c[k]);
+                const bool     still =
+                    (again >= ScanFastSaturatingAdd(lane_state->noise_floor, noise_margin)) &&
+                    (again >= ScanFastSaturatingSub(squelch, squelch_margin));
+
+                if (still && (!have_hit || c[k].ordinal < best_ordinal)) {
+                    have_hit       = true;
+                    best_ordinal   = c[k].ordinal;
+                    best_frequency = c[k].frequency_10hz;
+                    sel            = lane;
+                }
             }
         }
     }
