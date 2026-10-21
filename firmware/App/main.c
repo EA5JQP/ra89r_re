@@ -950,6 +950,18 @@ static void dual_rf_diag(void)
     uart_printf("  audio source: %s   squelch %s   rssi 0x%03X\n",
                 rx_audio_is_4815() ? "BK4815" : "BK4829",
                 rx_squelch_open() ? "OPEN" : "closed", (unsigned)rx_rssi());
+    uart_printf("  SQL level %u (0 = off)  marks: BK4829 open %u close %u | "
+                "BK4815 UHF open %u close %u | VHF open %u close %u\n",
+                (unsigned)gEeprom.SQUELCH_LEVEL,
+                (unsigned)rx_squelch_open_mark(false, false, gEeprom.SQUELCH_LEVEL),
+                (unsigned)rx_squelch_close_mark(false, false, gEeprom.SQUELCH_LEVEL),
+                (unsigned)rx_squelch_open_mark(true, true, gEeprom.SQUELCH_LEVEL),
+                (unsigned)rx_squelch_close_mark(true, true, gEeprom.SQUELCH_LEVEL),
+                (unsigned)rx_squelch_open_mark(true, false, gEeprom.SQUELCH_LEVEL),
+                (unsigned)rx_squelch_close_mark(true, false, gEeprom.SQUELCH_LEVEL));
+    uart_printf("  RX lane path: pin 4 (0x33 bit 0x04) %s  (lane is %s)\n",
+                pa_rx_lane_is_4815() ? "SET" : "clear",
+                pa_rx_lane_is_4815() ? "BK4815" : "BK4829");
     uart_printf("  VFO A %u.%05u MHz   VFO B %u.%05u MHz\n",
                 (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency / 100000u),
                 (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency % 100000u),
@@ -973,7 +985,12 @@ static void dual_rf_diag(void)
     uart_printf("          0x43(SNR)=0x%04X 0x44(RSSI)=0x%04X -> %u  (marks open 0x%02X close 0x%02X)\n",
                 (unsigned)bk4815_read_reg(0x43), (unsigned)bk4815_read_reg(0x44),
                 (unsigned)(bk4815_read_reg(0x44) & 0x7fu),
-                (unsigned)RX4815_SQUELCH_OPEN_MARK, (unsigned)RX4815_SQUELCH_CLOSE_MARK);
+                (unsigned)rx_squelch_open_mark(true,
+                                               gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
+                                               gEeprom.SQUELCH_LEVEL),
+                (unsigned)rx_squelch_close_mark(true,
+                                                gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
+                                                gEeprom.SQUELCH_LEVEL));
 
     scan_rate_benchmark();
 

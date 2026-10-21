@@ -135,6 +135,13 @@ bool rx_force_bk4815_af_on(void)
 
 static void rx_set_audio_source(bool use_4815)
 {
+    /* The receive-path pin belongs to the lane, not to a VFO assignment: the
+     * stock sets it for its BK4815 entry and clears it for the BK4829's, and a
+     * wrongly set pin costs the BK4829 ~16 dB at VHF (measured).  Re-assert it
+     * on every pass, because the app's own radio setup and the scan probes write
+     * 0x33 too. */
+    pa_set_rx_lane(use_4815);
+
     if (use_4815 == s_audio_4815)
         return;
 
@@ -158,15 +165,14 @@ void rx_poll(void)
          * forces the BK4829's chip-squelch thresholds to 0 for it.  This
          * software gate must honour it too, or a BK4815 VFO stays muted below
          * the fixed mark even with the user's squelch turned off. */
-        const bool squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
-        const bool was_open    = s_squelch_open;
-        /* The BK4815's RSSI scale differs by band (see rx.h): use the VHF pair
-         * when the part is tuned below the 280 MHz split. */
-        const bool vhf = (s_4815_freq != 0u && s_4815_freq < PA_BAND_SPLIT);
-        const uint16_t open_mark  = vhf ? RX4815_SQUELCH_OPEN_MARK_VHF
-                                        : RX4815_SQUELCH_OPEN_MARK;
-        const uint16_t close_mark = vhf ? RX4815_SQUELCH_CLOSE_MARK_VHF
-                                        : RX4815_SQUELCH_CLOSE_MARK;
+        const bool     squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
+        const bool     was_open    = s_squelch_open;
+        /* The BK4815's RSSI scale differs by band (see rx.h), and both marks
+         * now scale with the user's squelch setting from the level-8 point
+         * that was measured on the radio. */
+        const bool     vhf = (s_4815_freq != 0u && s_4815_freq < PA_BAND_SPLIT);
+        const uint16_t open_mark  = rx_squelch_open_mark(true, !vhf, gEeprom.SQUELCH_LEVEL);
+        const uint16_t close_mark = rx_squelch_close_mark(true, !vhf, gEeprom.SQUELCH_LEVEL);
 
         s_rssi = bk4815_read_rssi();
 
@@ -212,12 +218,18 @@ void rx_poll(void)
 
     s_rssi = BK4819_GetRSSI();
 
-    if (!s_squelch_open && s_rssi >= RX_SQUELCH_OPEN_MARK) {
-        s_squelch_open = true;
-        BK4819_SetAF(BK4819_AF_FM);
-    } else if (s_squelch_open && s_rssi < RX_SQUELCH_CLOSE_MARK) {
-        s_squelch_open = false;
-        BK4819_SetAF(BK4819_AF_MUTE);
+    {
+        const bool     squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
+        const uint16_t open_mark   = rx_squelch_open_mark(false, false, gEeprom.SQUELCH_LEVEL);
+        const uint16_t close_mark  = rx_squelch_close_mark(false, false, gEeprom.SQUELCH_LEVEL);
+
+        if (!s_squelch_open && (squelch_off || s_rssi >= open_mark)) {
+            s_squelch_open = true;
+            BK4819_SetAF(BK4819_AF_FM);
+        } else if (s_squelch_open && !squelch_off && s_rssi < close_mark) {
+            s_squelch_open = false;
+            BK4819_SetAF(BK4819_AF_MUTE);
+        }
     }
 }
 
@@ -416,6 +428,13 @@ void rf_dual_refresh(void)
 
     if (roles.bk4815_vfo != s_dual_sec || f4815 != s_dual_sec_f) {
         rf_dual_apply(&roles, f4815);
+        /* The rest of the stock's per-VFO receive entry (FUN_08016CEC): the
+         * demod/baseband/AF block and the channel-spacing bit in 0x01, taken
+         * from this VFO's own bandwidth.  It runs on the (re)configuration, not
+         * on every pass, and never from the scanner's probes. */
+        if (roles.bk4815_vfo >= 0)
+            bk4815_receive_entry(gEeprom.VfoInfo[roles.bk4815_vfo].CHANNEL_BANDWIDTH
+                                 == BANDWIDTH_WIDE);
         s_dual_sec   = roles.bk4815_vfo;
         s_dual_sec_f = f4815;
     }
@@ -431,11 +450,10 @@ void rf_dual_refresh(void)
                 s_band_written = band;
             }
         }
-
-        if (!BK4819_IsGpioOutSet(BK4819_GPIO4_PIN32_VHF_LNA))
-            BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, true);
-    } else {
-        if (BK4819_IsGpioOutSet(BK4819_GPIO4_PIN32_VHF_LNA))
-            BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, false);
     }
+
+    /* The 0x33 receive-path pin is the *lane's*, set by rx_set_audio_source()
+     * through pa_set_rx_lane(): a VFO merely naming the BK4815 no longer sets
+     * it, because that costs the BK4829 ~16 dB at VHF when it is the lane being
+     * heard (measured, docs/ra89r_rfpath.md). */
 }

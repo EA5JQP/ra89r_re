@@ -46,6 +46,54 @@
 #define RX4815_SQUELCH_OPEN_MARK_VHF   0x14u   /* 20, VHF */
 #define RX4815_SQUELCH_CLOSE_MARK_VHF  0x0Eu   /* 14, VHF */
 
+/* The marks scale with the user's squelch setting.  The pairs above are the
+ * *level 8* point -- they are what was measured on the radio -- and each step
+ * below 8 lowers the opening mark, so SQL 1 hears signals SQL 8 never opens on.
+ * This is not the stock's own calibration yet: the stock derives its threshold
+ * from the per-frequency squelch page at external flash 0x3710 (with the RSSI
+ * page at 0x3860) through FUN_0800E3F6/FUN_0801D568, which is still undecoded
+ * (docs/superpowers/plans/2026-10-21-rx-sensitivity-and-scan-throughput.md).
+ * Until then the knob at least does something, monotone in 0..9, and level 8
+ * reproduces the previously fixed behaviour. */
+#define RX_SQUELCH_STEP_4829   6u    /* per level on the 9-bit 0x67 scale */
+#define RX_SQUELCH_STEP_4815   2u    /* per level on the 7-bit 0x44 scale */
+#define RX_SQUELCH_HYST_4829   27u   /* the stock pair's hysteresis (0xCF-0xB4) */
+#define RX_SQUELCH_HYST_4815   6u
+
+/* Signed level offset from the level-8 anchor: -7 at level 1, 0 at 8, +1 at 9. */
+static inline int rx_squelch_level_offset(uint8_t level)
+{
+    const uint8_t lv = (level > 9u) ? 9u : level;
+
+    return (int)lv - 8;
+}
+
+/* The opening / closing mark for a lane.  `use_4815` picks the chip's scale,
+ * `uhf` its band split (the BK4815's RSSI reads lower on VHF), and `level` is
+ * gEeprom.SQUELCH_LEVEL.  A return of 0 for the open mark means "always open"
+ * and is the caller's level-0 case. */
+static inline uint16_t rx_squelch_open_mark(bool use_4815, bool uhf, uint8_t level)
+{
+    const int off = rx_squelch_level_offset(level);
+
+    if (use_4815) {
+        const int base = (int)(uhf ? RX4815_SQUELCH_OPEN_MARK : RX4815_SQUELCH_OPEN_MARK_VHF);
+        const int v    = base + off * (int)RX_SQUELCH_STEP_4815;
+
+        return (uint16_t)((v > 1) ? v : 1);
+    }
+
+    return (uint16_t)((int)RX_SQUELCH_OPEN_MARK + off * (int)RX_SQUELCH_STEP_4829);
+}
+
+static inline uint16_t rx_squelch_close_mark(bool use_4815, bool uhf, uint8_t level)
+{
+    const uint16_t open = rx_squelch_open_mark(use_4815, uhf, level);
+    const uint16_t hyst = use_4815 ? RX_SQUELCH_HYST_4815 : RX_SQUELCH_HYST_4829;
+
+    return (uint16_t)((open > hyst) ? (uint16_t)(open - hyst) : 0u);
+}
+
 /* Bring the RF up and start receiving on `freq_10hz` (10 Hz units, the same
  * convention as the codeplug).  Idempotent enough to be called again to retune. */
 void rx_init(uint32_t freq_10hz);

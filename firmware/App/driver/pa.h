@@ -72,6 +72,20 @@
  * PA is unbiased until a transmission asks for power. */
 void pa_init(void);
 
+/* Which transceiver is the one being listened to, for the `0x33` receive-path
+ * pin (pin 4, `PA_REG33_RX_MAIN`).  The stock ties that pin to the receive
+ * branch, not to the board's band: its BK4815 receive entry sets it
+ * (`FUN_08016CEC` -> `FUN_080137D4(0x10, 0x10)`) and its BK4829 entry clears it
+ * (`FUN_08016DE8` -> `FUN_080137D4(0x10, 0)`).  It is worth ~16 dB on the
+ * BK4829 at VHF when wrongly set (measured; docs/ra89r_rfpath.md), so it must
+ * follow the **audio lane** -- a VFO merely being *assigned* to the BK4815 is
+ * not enough.  `pa_apply_chip_path()` (and therefore every receive re-entry)
+ * re-asserts this choice. */
+void pa_set_rx_lane(bool use_4815);
+
+/* The lane last applied, for diagnostics. */
+bool pa_rx_lane_is_4815(void);
+
 /* The bias PWM compare, 0 .. PA_PWM_MAX_DUTY.  Higher is more bias. */
 void pa_power(uint16_t compare);
 

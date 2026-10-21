@@ -70,6 +70,13 @@ void bk4815_write_block(uint8_t reg, const uint8_t *bytes, unsigned len);
 /* Replay the stock's boot configuration (FUN_08006A0C) in its original order. */
 void bk4815_configure(void);
 
+/* The stock's per-VFO receive entry (FUN_08016CEC, see bk4815.h): the demod/
+ * baseband/AF block it writes after the tune, including the channel-spacing
+ * bit in register 0x01 (`wide` = 25 kHz, else 12.5 kHz) and the `0x70`
+ * receive restart pair.  Called on a lane (re)configuration, not per scan
+ * probe. */
+void bk4815_receive_entry(bool wide);
+
 /* Register writes the boot configuration consists of: 1 block plus the singles. */
 unsigned bk4815_config_writes(void);
 
