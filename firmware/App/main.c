@@ -1318,10 +1318,12 @@ static void rf_watch(void)
 {
     uint16_t min = 0xFFFFu, max = 0, last = 0;
     unsigned i;
+    const uint16_t open  = rx_squelch_open_mark_now();
+    const uint16_t close = rx_squelch_close_mark_now();
 
-    uart_printf("\nRF: BK4829 reg 0x67 every 200 ms for 4 s "
-                "(0xB4 / 0xCF are the stock's squelch marks)\n"
+    uart_printf("\nRF: reg 0x67 / 0x44 every 200 ms for 4 s (live marks open %u close %u)\n"
                 "  RX %u.%05u MHz, %s, %s (>134 MHz split)\n",
+                (unsigned)open, (unsigned)close,
                 (unsigned)(rx_rx_frequency() / 100000u),
                 (unsigned)(rx_rx_frequency() % 100000u),
                 pa_band_is_uhf() ? "UHF" : "VHF",
@@ -1331,7 +1333,7 @@ static void rf_watch(void)
                   "  in RX and these readings will not follow a carrier.\n");
 
     for (i = 0; i < 20u; i++) {
-        uint16_t v = BK4819_GetRSSI();
+        uint16_t v = rx_rssi();
 
         if (v < min)
             min = v;
@@ -1340,7 +1342,8 @@ static void rf_watch(void)
         last = v;
 
         uart_printf("  %02u: 0x%03X%4u %s\n", i, (unsigned)v, (unsigned)v,
-                    v >= 0xCFu ? "open" : (v < 0xB4u ? "quiet" : "between"));
+                    v >= rx_squelch_open_mark_now() ? "open"
+                        : (v < rx_squelch_close_mark_now() ? "quiet" : "between"));
         systick_delay_ms(200);
     }
 

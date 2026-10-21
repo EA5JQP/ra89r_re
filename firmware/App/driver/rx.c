@@ -195,6 +195,9 @@ void rx_set_scan_source_override(rx_scan_source_t source)
 void rx_clear_scan_source_override(void)
 {
     s_scan_source = RX_SCAN_SOURCE_DEFAULT;
+    /* A scan writes the chips under the poller, so after one stops the floor
+     * learned before it may not describe this channel: start over. */
+    rx_floor_invalidate();
     rf_dual_reapply();      /* see rx_set_scan_source_override() */
 }
 
@@ -252,8 +255,12 @@ void rx_poll(void)
         s_rssi = bk4815_read_rssi();
 
         /* Learn the lane's floor (frozen while open) and take the marks from
-         * it: a fixed mark cannot work on this board (see rx.h). */
-        (void)rx_floor_update(1u, s_rssi, !s_squelch_open);
+         * it: a fixed mark cannot work on this board (see rx.h).  Not while a
+         * scan runs: it retunes this very chip under the poller, and the
+         * samples it reads there dragged the floor to its minimum and left the
+         * gate unable to open on a real signal (radio 2026-10-21). */
+        if (gScanStateDir == SCAN_OFF)
+            (void)rx_floor_update(1u, s_rssi, !s_squelch_open);
 
         {
             const uint16_t open_mark  = rx_squelch_open_mark_now();
@@ -305,7 +312,8 @@ void rx_poll(void)
     {
         const bool     squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
 
-        (void)rx_floor_update(0u, s_rssi, !s_squelch_open);
+        if (gScanStateDir == SCAN_OFF)
+            (void)rx_floor_update(0u, s_rssi, !s_squelch_open);
 
         {
             const uint16_t open_mark  = rx_squelch_open_mark_now();
