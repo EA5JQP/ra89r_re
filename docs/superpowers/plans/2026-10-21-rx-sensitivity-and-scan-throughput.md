@@ -192,6 +192,66 @@ Not yet done / blocked:
   flashing needs the Kenwood jack (update mode is the bootloader's USART1).
   Every gate above is still open.
 
+## Radio session 2026-10-21 (automated, tinySA over the two serial ports)
+
+### Measured with the port build, receive only (no PTT, no TX register)
+
+BK4829, selected lane, `0x67` (9-bit), carrier from the tinySA:
+
+| band | floor | −38 dBm | −30 dBm | −20 dBm |
+|---|---|---|---|---|
+| 446.00625 | 56.5 (54-59) | +5 | **+21** (~10.7 dB) | 199, saturated |
+| 145.5000 (earlier) | 96-103 | — | carrier 233-252 | — |
+
+The saturation at 199 is the AGC table's lowest-gain entry, not a
+sensitivity limit.  Rough 10 dB quieting point: **−31 dBm** (with this
+coupling).
+
+BK4815, same antenna and a correct tune (`0x71/0x72 = 0x893b91b9` = 446.00625,
+`0x75 = 0x0A`, `0x0C = 0x0A03`): **no response at all**, in either band, over
+28 dB of generator level.  Swept with every receive-path combination the port
+can drive -- `0x33` pin 0 set/cleared, pin 2 (`0x10`) set/cleared, pin 4 set,
+PA1 high/low -- and always 13-15 (VHF) or 11-13 (UHF)
+flat.  Its earlier documented response (16 -> 41 at 145.75) is **not
+reproducible now**; either it was measured through the 4829's coupling or the
+board routes the 4815's RF input with a line this port does not drive.  Until a
+scope/logic-analyser trace of the stock settles it, **the BK4815 is not a usable
+receiver in this port** and both VFOs belong on the BK4829 (the settings
+default).
+
+Two real fixes came out of the session:
+
+* `0x75` must keep **bit 10 = 0** (low-side injection) for this port's
+  synthesiser word, which omits the IF offset the datasheet's high-side form
+  needs.  Preserving the part's reset `0x0400` (high side) gave a constant
+  LO-leakage level (0x44 = 28 over 145-146.5, 21 at 174) that no carrier moved;
+  with low side the baseline returns to 13.5.
+* `0x33` pin 0 (`0x40`, the K1's "RX_ENABLE") is cleared on a BK4815 lane, as
+  the stock's receive entry does (`FUN_080093EC` -> `FUN_080137D4(3, 0)`); a
+  BK4829 lane keeps it.
+
+### Scan throughput, `J` benchmark, 446.00625..447.00625, 12.5 kHz
+
+| build | FAST | FAST BOTH | ratio |
+|---|---|---|---|
+| before this branch | 97/s | 168/s | 1.73x |
+| 12-candidate batch, old trigger | 335/s | 502/s | 1.49x |
+| 48-candidate batch + settle skip | 401/s | **671/s** | **1.67x** |
+
+Absolute Both throughput is **4x** the branch's starting point.  At 145.5 the
+same build measured 1.08x with a 53 ms/batch gap: the 4815 lane's jitter read
+as a hit every batch and each one bought a full re-tune.  The confirmation
+probe and the 12-count 4815 margin in this change target exactly that; the
+number is still to be measured.
+
+### Squelch gate
+
+With the fixed marks the 4815 lane sat permanently open at 145.5 (mark 12
+against a floor of 13.8) and imported 100+ counts above the floor on the 4829.
+The floor + margin rule is in this change; the first flash of it exposed a
+floor-tracker bug (a mid-retune sample dragged the floor to 1, open mark 11 <
+noise 13), now guarded by a per-lane minimum and a plausible-drop limit.
+
 ## The CPS test map (`docs/TestData-FackPrichal.test`)
 
 A TYT CPS map (21-byte channel records, `MapRev=1`), 0x0000-0x16A0.  Its

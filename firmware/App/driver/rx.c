@@ -94,23 +94,36 @@ static bool s_force_4815_af;    /* console 'A' diagnostic */
 /* Slow noise-floor estimate per lane.  The chip RSSI baselines are not stable
  * (see rx.h), so the gate needs its own floor to avoid opening on noise.  Fast
  * down, slow up, frozen while the squelch is open (a carrier must not become
- * the floor).  Index 0 = BK4829, 1 = BK4815. */
+ * the floor).  Index 0 = BK4829, 1 = BK4815.
+ *
+ * Two guards matter, both from the radio (2026-10-21): a sample taken while the
+ * part is being retuned reads near zero and used to drag the floor to 1, which
+ * left the squelch permanently open on the 13-15 noise; and no real floor on
+ * this board is below the per-lane minimum measured there. */
+#define RX_FLOOR_MIN_4829   40u   /* measured 54-61 UHF, 96-103 VHF */
+#define RX_FLOOR_MIN_4815    8u   /* measured 11-18 */
+#define RX_FLOOR_MAX_DROP    8u   /* a plausible one-sample fall */
+
 static uint16_t s_floor[2];
 static bool     s_floor_valid[2];
 
 static uint16_t rx_floor_update(uint8_t lane, uint16_t rssi, bool closed)
 {
+    const uint16_t min = (lane == 1u) ? RX_FLOOR_MIN_4815 : RX_FLOOR_MIN_4829;
+
     if (lane > 1u)
         lane = 0u;
 
     if (!s_floor_valid[lane]) {
-        s_floor[lane]       = rssi;
+        s_floor[lane]       = (rssi < min) ? min : rssi;
         s_floor_valid[lane] = true;
     } else if (closed) {
-        if (rssi < s_floor[lane])
-            s_floor[lane] = rssi;
-        else
+        if (rssi < s_floor[lane]) {
+            if ((uint16_t)(s_floor[lane] - rssi) <= RX_FLOOR_MAX_DROP)
+                s_floor[lane] = (rssi < min) ? min : rssi;
+        } else {
             s_floor[lane] = (uint16_t)(s_floor[lane] + ((rssi - s_floor[lane]) >> 4));
+        }
     }
 
     return s_floor[lane];
