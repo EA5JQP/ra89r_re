@@ -56,25 +56,32 @@ monotonically increasing `ordinal`.  The list cursor was factored out into
 * **Hit arbitration** (`scan_dual_choose_hit`): if both lanes hit in one batch the
   lower original ordinal wins, so scan order is preserved.
 
-## What the "FAST BOTH" path actually does (software, not yet radio-validated)
+## What the "FAST BOTH" path actually does
 
 `ScanBothFastPrecheck()` in `app/chFrScanner.c` runs when `SetScn = FAST BOTH`
 and the fast scan is enabled:
 
-1. pull a full fast batch per lane (`2 * SCAN_FAST_PRECHECK_STEPS` candidates)
-   from the shared cursor;
-2. probe each candidate on its assigned chip in ordinal order — the BK4829 lane
-   through the existing `ScanFastTune`/`ScanFastReadCandidateRssi`, the BK4815
-   lane through `bk4815_set_frequency` + `0x44`;
+1. pull up to `2 * SCAN_BOTH_PRECHECK_PAIRS` (24) candidates from the shared
+   cursor, in pairs;
+2. probe a pair of consecutive candidates on **different chips in the same
+   band** as a pipeline: tune both, then read both.  The second tune's bus time
+   (and, with a BK4815 in the pair, its fixed settle delay) covers the first
+   chip's settling, so a pair costs less than two independent probes; the
+   BK4815 is always tuned/read last.  Pairs in different bands fall back to one
+   probe at a time, because the shared front end would move the path under the
+   first chip before it was read (`ScanBothPairUsable`);
 3. update each lane's floor with `scan_dual_rssi_candidate`;
 4. on a hit, point `gRxVfo` at the winning candidate and set the RX scan-source
    override to the winning chip, then let the existing full single-candidate
    tune/verify path run.
 
 The RF path is **shared**: the band/path is switched before a lane's sample
-(`pa_select_band`), and the two parts share one bit-banged bus, so the lanes are
-time-multiplexed, not simultaneous.  No wall-clock speed-up is claimed until it
-is measured on the radio.
+(`pa_select_band`, only on a band change), and the two parts share one
+bit-banged bus, so the bus work is still serialized; what overlaps is the
+settling.  The batch size is the throughput lever the measurement pointed at:
+the K1 scanner runs one precheck batch per app pass, and the pass (display
+included) paced the measured 61 ms per 12-candidate batch, so 24 candidates per
+pass roughly doubles throughput until the probes themselves fill the pass.
 
 Both lanes feed the RSSI sparkline: the BK4829's 9-bit `0x67` value as-is and the
 BK4815's 7-bit `0x44` value scaled ×4 into the same range, so the graph works in
@@ -132,6 +139,23 @@ stay audible through the sweep; a hit pauses/opens as today; stopping restores
 the VFO; PTT during a LISTEN scan must not break either lane; NORMAL/FAST/
 FAST BOTH unchanged.
 
+## The scanner's squelch trigger (fixed 2026-10-21)
+
+The fast precheck's threshold used to be `gRxVfo->SquelchOpenRSSIThresh`, which
+the K1 computes from six bytes per squelch level of **its own** EEPROM
+calibration at `0x010060`.  This radio's external flash has nothing there (it
+reads `0xFF`), so the trigger was **247** on `0x67`'s 9-bit scale -- above any
+signal the part reports (a keyed carrier measured 236).  Both `FAST` and the
+BK4829 lane of `FAST BOTH` were nearly deaf as a result, while still counting
+every probe, so the throughput benchmark did not show it.
+
+`ScanFastReceiveMark()` now returns the same level-derived mark the receive gate
+uses (`rx_squelch_open_mark()` in `driver/rx.h`), for the scan lane and for the
+BK4815 lane's squelch, so the scanner and the audio agree on what a signal is;
+`ScanFastSquelchEnabled()` keeps the K1's "squelch off = no fast precheck" rule.
+This is code-level and unvalidated on the radio: the gate is a hit on each lane
+at the measured carrier levels (see the plan's gates).
+
 ## The RX scan-source override
 
 A paused hit may have been found by the BK4815 while the selected VFO is normally
@@ -182,13 +206,12 @@ probe design should be revisited or `FAST BOTH` removed.
 | 1 | 300 probes / 3083 ms = 97/s | 516 / 3070 ms = 168/s | 1.73x |
 | 2 | 300 / 3083 = 97/s | 516 / 3070 = 168/s | 1.72x |
 
-So `FAST BOTH` is about **1.7x**, not 2x: the BK4829's per-candidate tune/settle
-is the expensive half (~10 ms each), and the BK4815 lane adds cheaper probes.  The
-sweep was above the 134 MHz split, so both lanes were used.  Note that `FAST BOTH`
-also probes one batch per lane per interval, so some of the gain is simply "more
-candidates per scheduler batch"; below 134 MHz all candidates stay on the BK4829
-and both lanes' batches still run, which should still be faster but is not yet
-measured.
+That was the **12-candidate** FAST BOTH batch.  The batch is now 24 candidates
+with the paired probe (`SCAN_BOTH_PRECHECK_PAIRS`), so the earlier figure is the
+baseline to beat; the same `J` run has to show it.  Note that `FAST BOTH` also
+probes more candidates per scheduler interval, which is where most of the gain
+comes from, and that below 134 MHz all candidates stay on the BK4829 while both
+lanes' batches still run.
 
 ## Open / radio-validation gates
 
@@ -201,8 +224,9 @@ behaviour has run on the radio.
   and is not expected to speed up.
 * Whether the shared band/path switch lets a lane's RSSI reading be meaningful
   after the other lane moved the path (cross-band interleaving).
-* The BK4815 lane's squelch mark and margins (currently
-  `RX4815_SQUELCH_OPEN_MARK` and the shared `SCAN_FAST_*` margins).
+* The BK4815 lane's squelch margins (`SCAN_FAST4815_*`); its **opening mark**
+  now follows `SQUELCH_LEVEL` (`rx_squelch_open_mark()` in `driver/rx.h`), with
+  level 8 reproducing the measured pair.
 * A hit on each lane: full verification, correct audio source, pause/resume.
 * PTT while scanning, and stop restoring the RX VFO/transceiver/audio.
 
