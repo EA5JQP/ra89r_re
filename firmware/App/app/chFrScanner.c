@@ -9,6 +9,7 @@
 #include "driver/bk4815.h"
 #include "driver/pa.h"
 #include "driver/rx.h"
+#include "driver/uart.h"
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 #include "driver/systick.h"
 #endif
@@ -845,6 +846,10 @@ static scan_fast_result_t ScanRangeFastPrecheckListen(void)
     RADIO_ApplyOffset(gRxVfo);
 
     if (hit) {
+        uart_printf("\nLISTEN hit %u.%05u MHz on the %s lane\n",
+                    (unsigned)(scanListenCursor / 100000u),
+                    (unsigned)(scanListenCursor % 100000u),
+                    listen4815 ? "BK4829" : "BK4815");
         gRxVfo->freq_config_RX.Frequency = scanListenCursor;
         RADIO_ApplyOffset(gRxVfo);
         return SCAN_FAST_CANDIDATE;
@@ -1672,6 +1677,18 @@ static void NextFreqChannel(void)
         }
         else if (ScanListenEnabled())
         {
+            /* Priority for the listener: while its squelch is open, do not
+             * touch the other chip at all.  Its LO stepping through the shared
+             * front end perturbs the listener -- measured 2026-10-22, a
+             * steady -20 dBm carrier on 446.00625 swung 0x67 between 269 and
+             * 86 as the BK4815 swept 445.5-446.5 -- so a sweep during a
+             * reception is audible as chopping.  The sweep resumes when the
+             * listen lane goes quiet. */
+            if (rx_squelch_open()) {
+                gScanPauseDelayIn_10ms = 1;
+                return;
+            }
+
             const scan_fast_result_t listenResult = ScanRangeFastPrecheckListen();
 
             if (listenResult == SCAN_FAST_QUIET_BATCH)
