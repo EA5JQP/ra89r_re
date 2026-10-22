@@ -161,11 +161,23 @@ int main(void)
                   RX_FLOOR_PRIOR_4829_FM_VHF,
               "the floor starts at the prior even with a carrier reading");
 
-        /* A signal is not noise: it never teaches the floor upward. */
-        for (i = 0; i < 20u; i++)
-            (void)rx_floor_step(&f, false, 0xFFFFu, 199u, true);
-        check(f.floor == RX_FLOOR_PRIOR_4829_FM_VHF,
-              "a strong reading does not raise the floor");
+        /* The floor climbs to a higher noise floor, slowly (+1 every
+         * RX_FLOOR_RISE_DIV closed polls), so a brief signal cannot move it. */
+        {
+            const uint16_t start = f.floor;
+
+            for (i = 0; i < RX_FLOOR_RISE_DIV * 10u; i++)
+                (void)rx_floor_step(&f, false, 0xFFFFu, 120u, true);
+            check(f.floor == (uint16_t)(start + 10u),
+                  "a higher noise floor is followed at 1 count per RISE_DIV polls");
+
+            rx_floor_reset(&f);
+            (void)rx_floor_step(&f, false, 63u, 63u, true);
+            for (i = 0; i < RX_FLOOR_RISE_DIV - 1u; i++)
+                (void)rx_floor_step(&f, false, 63u, 63u, true);
+            check(f.floor == 63u,
+                  "a brief spike does not move the floor");
+        }
 
         /* A quieter channel is followed, but only after consecutive samples. */
         rx_floor_reset(&f);

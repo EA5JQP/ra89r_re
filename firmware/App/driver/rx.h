@@ -173,7 +173,13 @@ static inline uint16_t rx_squelch_close_mark(bool use_4815, bool uhf, uint8_t le
 #define RX_FLOOR_MAX_4815     60u
 #define RX_FLOOR_MAX_DROP      8u   /* an immediate one-sample fall */
 #define RX_FLOOR_DROP_SAMPLES  4u   /* consecutive samples for a larger fall */
-#define RX_FLOOR_RISE_BAND     6u   /* above this it is a signal */
+/* The floor may climb to a genuinely higher noise floor (an antenna raises it
+ * far above the bench prior: 36-38 at 118-120 with the tinySA, ~90 at 120.1
+ * with an antenna) but only by one count every RISE_DIV closed polls, i.e.
+ * ~12 counts/s at the 100 Hz poll rate.  A short signal cannot move it much; a
+ * persistent carrier, which is above the mark and opens the gate first, does
+ * not need to be tracked at all. */
+#define RX_FLOOR_RISE_DIV      8u
 /* Priors.  The floor is *not* learned from the first samples any more: with a
  * carrier present at boot those samples are the carrier, the mark lands above
  * it and the gate never opens until the signal drops and returns (radio
@@ -193,14 +199,16 @@ static inline uint16_t rx_squelch_close_mark(bool use_4815, bool uhf, uint8_t le
 typedef struct {
     uint16_t floor;
     uint8_t  low_cnt;
+    uint8_t  rise_cnt;
     bool     valid;
 } rx_floor_t;
 
 static inline void rx_floor_reset(rx_floor_t *f)
 {
-    f->floor   = 0u;
-    f->low_cnt = 0u;
-    f->valid   = false;
+    f->floor    = 0u;
+    f->low_cnt  = 0u;
+    f->rise_cnt = 0u;
+    f->valid    = false;
 }
 
 static inline uint16_t rx_floor_clamp(uint16_t v, bool use_4815)
@@ -239,8 +247,11 @@ static inline uint16_t rx_floor_step(rx_floor_t *f, bool use_4815, uint16_t prio
         }
     } else {
         f->low_cnt = 0u;
-        if (rssi <= (uint16_t)(f->floor + RX_FLOOR_RISE_BAND))
-            f->floor = (uint16_t)(f->floor + ((rssi - f->floor) >> 4));
+
+        if (rssi > f->floor && ++f->rise_cnt >= RX_FLOOR_RISE_DIV) {
+            f->rise_cnt = 0u;
+            f->floor++;
+        }
     }
 
     f->floor = rx_floor_clamp(f->floor, use_4815);
