@@ -74,6 +74,22 @@ mode to use there.
 * No TX on an airband channel.
 * `FAST BOTH` across 108-137 behaves as documented above.
 
+## The gate in AM, and the noise during a scan (2026-10-22)
+
+Two gate defects showed up only here, both because the airband carrier is strong
+(0x67 = 194) and its noise floor is the VHF one (96-103):
+
+* the (BK4829, VHF) floor was seeded *from the carrier* and clamped to 170,
+  giving a mark of 200 -- above the signal -- so the gate closed, the floor then
+  fell, and the state flapped (0x47 alternating 6042/6142).  The seed ceilings
+  are now just above the measured noise (4829 UHF 80, VHF 120; 4815 30), so a
+  carrier present at first learn cannot produce a mark above itself;
+* during a scan the audio turned to noise: a 0x67 read that collides with a
+  probe transaction on the shared bit-banged bus returns 0, the gate took that
+  as "closed", the LISTEN pause then started a probe batch, and the probes
+  collided with the poller -- self-sustaining.  Zero reads are now ignored and
+  the LISTEN sweep resumes only after 5 consecutive clean closed polls.
+
 ## Open
 
 * The AM sensitivity and the squelch ladder in AM are unmeasured (the RSSI gate
