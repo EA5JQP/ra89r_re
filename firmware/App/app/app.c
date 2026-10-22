@@ -1970,7 +1970,13 @@ void APP_TimeSlice500ms(void)
         gUpdateStatus = true;
     }
 
+    /* Port adaptation: a running scan is activity.  The K1 only suspends the
+     * sleep countdown for RX and TX, and a scan runs in FUNCTION_FOREGROUND, so
+     * a sweep longer than the auto-off time put the radio to sleep mid-scan --
+     * backlight and panel off, and the red LED blinking the "asleep" pattern
+     * (radio 2026-10-22). */
     if(gCurrentFunction != FUNCTION_TRANSMIT && !FUNCTION_IsRx()
+        && gScanStateDir == SCAN_OFF
     #ifdef ENABLE_AIRCOPY
         && gScreenToDisplay != DISPLAY_AIRCOPY
     #endif
