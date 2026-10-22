@@ -1,6 +1,10 @@
 # Airband reception (AM, 108.0-137.0 MHz)
 
-**Status: implemented, receive-only, radio validation pending.**  The port
+**Status: VALIDATED on the radio (branch `airband`, 2026-10-22), receive-only.**
+An FM-modulated... no: an **AM** carrier at 118.000 MHz gives a clean tone at
+boot with no generator toggle, the demod registers read `0x31=0001`,
+`0x42=6F5C`, `0x2A=7434`, and a range scan over 108-137 stops on the carrier
+(119.900 MHz, the 1 kHz-step shoulder of 120.000) with the tone audible.  The port
 demodulates the civil airband in **AM** and a range scan over it hits AM
 channels; the band is the K1's own `BAND2_108MHz`, so nothing about the
 tuning range changes.
@@ -90,9 +94,33 @@ Two gate defects showed up only here, both because the airband carrier is strong
   collided with the poller -- self-sustaining.  Zero reads are now ignored and
   the LISTEN sweep resumes only after 5 consecutive clean closed polls.
 
+## What the radio run exposed and fixed
+
+* **The demod was never programmed.**  `RADIO_ConfigureChannel` sets
+  `VFO_Info_t::Modulation` after the receive setup, so the VFO field said AM
+  while the chip still held the boot values (`0x31=0`, `0x42=6B5A`,
+  `0x2A=6600`).  `RADIO_ApplyBandModulation()` now calls
+  `RADIO_SetModulation()` itself when it changes the modulation.
+* **No tone at boot, tone after toggling the generator.**  With a carrier
+  present at boot the floor was seeded from the first samples -- the carrier --
+  so the mark sat above the signal and the gate only opened once the carrier
+  dropped (floor fell) and returned.  The floor now starts from a measured
+  **prior per (lane, band, modulation)**: BK4829 FM 55 UHF / 100 VHF, **AM 63
+  VHF** (the AM AGC profile changes the RSSI scale), BK4815 15.
+* **Noise during a scan.**  A `0x67` read colliding with a probe on the shared
+  bus returns 0; the gate took that as "closed", the LISTEN pause then started a
+  probe batch and the collisions became self-sustaining -- heard as noise.  Zero
+  reads are ignored and the LISTEN sweep resumes only after 5 clean closed polls.
+
 ## Open
 
-* The AM sensitivity and the squelch ladder in AM are unmeasured (the RSSI gate
-  is shared, but the AM demodulator's noise floor differs from FM's).
+* The AM sensitivity curve and the AM squelch ladder are only characterised
+  roughly: at -10 dBm the carrier reads 0x67 = 234 at 120.000 and ~120 at
+  118.000 (the AM AGC profile), and SQL 4's 30-count margin rejects a -30 dBm
+  carrier that is only 9 dB above the noise.  Weak-signal AM wants SQL 1-2.
+* The AM noise floor varies with frequency inside the band (36-38 at 118-120,
+  74-77 at 125-127.6, generator off), so the coarse prior takes a few polls to
+  settle after a large retune and a sweep can stop just above it; a per-channel
+  floor cache is the natural follow-up.
 * No stock airband behaviour to compare against: the image has no AM UI string
   and no airband routine, so this is a port feature.
