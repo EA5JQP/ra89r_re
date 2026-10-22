@@ -20,12 +20,20 @@
 /* The FT-817 command byte, as Look4Sat's Ft817CatProtocol defines it. */
 typedef enum {
     CAT_CMD_SET_FREQ   = 0x01,
+    CAT_CMD_SM         = 0x02,   /* read S-meter (FT-817) */
     CAT_CMD_READ       = 0x03,
     CAT_CMD_SET_MODE   = 0x07,
     CAT_CMD_PTT_ON     = 0x08,
     CAT_CMD_PTT_OFF    = 0x88,
     CAT_CMD_CTCSS_MODE = 0x0A,
-    CAT_CMD_CTCSS_TONE = 0x0B
+    CAT_CMD_CTCSS_TONE = 0x0B,
+    CAT_CMD_VS         = 0x81,   /* VFO select A/B (FT-817) */
+    /* Port extension, not in the FT-817 set: the receive state the FT-817 has
+     * no read for.  Reply (5 bytes): status, rssi_lo, rssi_hi, sql_level,
+     * CAT_CMD_STATUS; status bit 0 = squelch open, bit 1 = the audio lane is
+     * the BK4815, bits 7:2 = the scan mode.  The RSSI is the lane's raw value
+     * (9-bit on 0x67, 7-bit on 0x44). */
+    CAT_CMD_STATUS     = 0xE1
 } cat_cmd_t;
 
 typedef struct {

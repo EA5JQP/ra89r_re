@@ -33,10 +33,14 @@ bool cat_frame_valid_bytes(const uint8_t *w)
     switch (w[4]) {
     case CAT_CMD_SET_FREQ:
         return bcd_ok(w, 4);
+    case CAT_CMD_SM:
+    case CAT_CMD_STATUS:
     case CAT_CMD_READ:
     case CAT_CMD_PTT_ON:
     case CAT_CMD_PTT_OFF:
         return (uint8_t)(w[0] | w[1] | w[2] | w[3]) == 0u;
+    case CAT_CMD_VS:
+        return w[0] <= 1u && w[1] == 0u && w[2] == 0u && w[3] == 0u;
     case CAT_CMD_SET_MODE:
         return w[1] == 0u && w[2] == 0u && w[3] == 0u && w[0] <= 0x0Cu;
     case CAT_CMD_CTCSS_MODE:

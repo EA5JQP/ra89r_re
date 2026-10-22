@@ -322,7 +322,7 @@ static void print_help(void)
     uart_puts("\nthe K1 GUI owns the panel; these are console diagnostics\n"
               "          h help   i diagnostics   d dump screen as ASCII\n"
               "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
-              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40)   y toggle PA1   z toggle 0x33 pin 2 (0x10)\n"
+              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40)   y toggle PA1   z toggle 0x33 pin 2 (0x10)\n          o cycle SetScn   7 cycle SQL   8 switch VFO A/B   9/I cycle TrVfoA/B\n          N arm a +/-500 kHz range   E start/stop the scan (automation)\n"
               "          D step the RF bus delay (find what still gives audio)\n"
               "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
@@ -2046,6 +2046,89 @@ int main(void)
                 rx_force_bk4815_af(!rx_force_bk4815_af_on());
                 uart_printf("\nBK4815 AF forced %s\n",
                             rx_force_bk4815_af_on() ? "ON (squelch bypassed)" : "off");
+                break;
+            case 'o': {
+                /* Automation: cycle SetScn NORMAL -> FAST -> FAST BOTH -> LISTEN. */
+                static const uint8_t next[4] = { 1u, 2u, 3u, 0u };
+
+                gSetting_set_scn = next[gSetting_set_scn & 3u];
+                uart_printf("\nSetScn = %u (%s)\n", (unsigned)gSetting_set_scn,
+                            gSetting_set_scn == 1u ? "FAST" :
+                            gSetting_set_scn == 2u ? "FAST BOTH" :
+                            gSetting_set_scn == 3u ? "LISTEN" : "NORMAL");
+                break;
+            }
+            case '7':
+                /* Automation: cycle the squelch level 0..9. */
+                gEeprom.SQUELCH_LEVEL = (uint8_t)((gEeprom.SQUELCH_LEVEL + 1u) % 10u);
+                uart_printf("\nSQL level %u   marks now open %u close %u\n",
+                            (unsigned)gEeprom.SQUELCH_LEVEL,
+                            (unsigned)rx_squelch_open_mark_now(),
+                            (unsigned)rx_squelch_close_mark_now());
+                break;
+            case '8': {
+                /* Automation: switch the selected VFO (what EXIT does). */
+                const uint8_t vfo = (uint8_t)(gEeprom.RX_VFO ? 0u : 1u);
+
+                gEeprom.RX_VFO = vfo;
+                gEeprom.TX_VFO = vfo;
+                RADIO_ConfigureChannel(vfo, VFO_CONFIGURE_RELOAD);
+                gUpdateDisplay = true;
+                gUpdateStatus  = true;
+                uart_printf("\nVFO %c selected\n", vfo ? 'B' : 'A');
+                break;
+            }
+            case '9': {
+                /* Automation: cycle TrVfoA between the two transceivers. */
+                const rf_xcvr_t x = (SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4815)
+                                        ? RF_XCVR_BK4829 : RF_XCVR_BK4815;
+
+                SETTINGS_SetVfoTransceiver(0u, x);
+                rf_dual_reapply();
+                uart_printf("\nTrVfoA = %s\n", x == RF_XCVR_BK4815 ? "4815" : "4829");
+                break;
+            }
+            case 'I': {
+                const rf_xcvr_t x = (SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815)
+                                        ? RF_XCVR_BK4829 : RF_XCVR_BK4815;
+
+                SETTINGS_SetVfoTransceiver(1u, x);
+                rf_dual_reapply();
+                uart_printf("\nTrVfoB = %s\n", x == RF_XCVR_BK4815 ? "4815" : "4829");
+                break;
+            }
+            case 'N': {
+                /* Automation: arm a +/-500 kHz range around the current RX
+                 * frequency, in frequency mode (what F+5 does by hand). */
+                const uint32_t f  = gRxVfo->freq_config_RX.Frequency;
+                const uint8_t  rx = gEeprom.RX_VFO;
+
+                gRxVfo->Band              = (uint16_t)FREQUENCY_GetBand(f);
+                gEeprom.ScreenChannel[rx] = (uint16_t)(FREQ_CHANNEL_FIRST + gRxVfo->Band);
+                gEeprom.FreqChannel[rx]   = gEeprom.ScreenChannel[rx];
+                gRxVfo->CHANNEL_SAVE      = gEeprom.ScreenChannel[rx];
+                gScanRangeStart           = (f > 500000u) ? f - 500000u : 0u;
+                gScanRangeStop            = f + 500000u;
+                uart_printf("\nrange armed %u.%05u .. %u.%05u MHz\n",
+                            (unsigned)(gScanRangeStart / 100000u),
+                            (unsigned)(gScanRangeStart % 100000u),
+                            (unsigned)(gScanRangeStop / 100000u),
+                            (unsigned)(gScanRangeStop % 100000u));
+                break;
+            }
+            case 'E':
+                /* Automation: start/stop the scan on the armed range. */
+                if (gScanStateDir == SCAN_OFF) {
+                    if (!gScanRangeStart) {
+                        uart_puts("\nno range armed -- press N first\n");
+                        break;
+                    }
+                    CHFRSCANNER_Start(true, SCAN_FWD);
+                    uart_puts("\nscan started\n");
+                } else {
+                    CHFRSCANNER_Stop();
+                    uart_puts("\nscan stopped\n");
+                }
                 break;
             case 'y':
                 /* PA1: the stock's receive entry drives it low, the port high. */
