@@ -98,8 +98,12 @@ static inline uint16_t rx_squelch_open_mark_from_floor(bool use_4815, bool uhf,
 static inline uint16_t rx_squelch_close_mark_from_floor(bool use_4815, bool uhf,
                                                         uint8_t level, uint16_t floor)
 {
-    const uint16_t open = rx_squelch_open_mark_from_floor(use_4815, uhf, level, floor);
-    const uint16_t hyst = use_4815 ? RX_SQUELCH_HYST_4815 : RX_SQUELCH_HYST_4829;
+    const uint16_t open   = rx_squelch_open_mark_from_floor(use_4815, uhf, level, floor);
+    /* The hysteresis must sit *below* the margin, or at SQL 1 (margin 12) the
+     * close mark lands exactly on the floor and a reading at the noise level
+     * never closes the gate -- radio 2026-10-22: floor 83, open 95, close 83,
+     * 0x67 = 83, squelch open for as long as the level held. */
+    const uint16_t hyst   = (uint16_t)(rx_squelch_margin(use_4815, level) / 2u);
 
     return (uint16_t)((open > hyst) ? (uint16_t)(open - hyst) : 0u);
 }
