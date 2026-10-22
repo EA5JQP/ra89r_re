@@ -278,3 +278,24 @@ external flash `0x3710` (4-byte groups, mostly `17 23 1A 25`), with 28 of 336
 bytes different -- i.e. a different unit's values, same table.  It carries no
 copy of the `0x3860` RSSI page.  Useful as a second sample of the *layout*, not
 as this radio's calibration, and it does not decode the table's fields.
+
+## Closed out (2026-10-22)
+
+All three items are validated on the radio and merged into `develop`:
+
+* **Sensitivity**: floor-relative marks on both lanes (0x67 scale 6+6*level,
+  0x44 2+2*level, hysteresis 12/4, level 0 = open), per-(lane, band) floors
+  kept across tunes and VFO switches, seed clamped so a carrier cannot become
+  the floor.  Measured: 4829 opens at -20/-38 dBm and closes when the carrier
+  goes; both lanes open on a switch with a carrier present and close without.
+* **Scan throughput**: FAST 401/s, FAST BOTH 671/s = 1.67x in both bands
+  (4x the branch's starting Both throughput), paired pipelined probes, a
+  48-candidate batch, and a display refresh throttled to every 4th quiet batch.
+* **LISTEN**: tone continuous while the other chip is paused (0 probes in
+  9.5 s), resume at 180-436 probes/s when the listener goes quiet, VFO
+  preserved, false hits confirmed away.  Details in `docs/ra89r_scan.md`.
+* **BK4815**: receives (10 -> 39 at 446.00625 with `0x75` low-side and pin 0
+  cleared); its sensitivity curve is still open for lack of a calibrated
+  generator level.
+* **Automation** (so this is repeatable): CAT `SM`/`VS`/`STATUS` and the
+  console `o`/`7`/`8`/`9`/`I`/`N`/`E`/`H` commands.

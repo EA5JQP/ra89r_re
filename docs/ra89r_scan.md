@@ -156,6 +156,41 @@ BK4815 lane's squelch, so the scanner and the audio agree on what a signal is;
 This is code-level and unvalidated on the radio: the gate is a hit on each lane
 at the measured carrier levels (see the plan's gates).
 
+## LISTEN, validated on the radio (2026-10-22)
+
+Automated with CAT `STATUS`/`SM` plus the console's `o`/`N`/`E` keys, an
+FM-modulated carrier on the listen channel:
+
+| check | result |
+|---|---|
+| audio during the scan | **tone, continuous** (heard on the radio) |
+| sweep while the listen squelch is open | **0 probes in 9.5 s** — the sweep yields |
+| sweep after the carrier goes | 1716 probes / 9.5 s = **180 probes/s**; 436/s over a shorter run |
+| listen VFO during the scan | unchanged (the sweep cursor is internal) |
+| after stop | back on the channel, squelch state intact |
+
+Three defects had to be fixed to get there, all found by that run:
+
+1. **The walk moved the listen VFO.**  `ScanRangeFastPrecheckListen()` used
+   `gRxVfo` as its cursor and never restored it; after one scan the receiver sat
+   75 kHz off its channel (carrier lost).  The cursor now lives in
+   `scanListenCursor` and the listen record is restored after every quiet batch;
+   a *hit* is left in place for the full tune.
+2. **A false hit parked the scan.**  One noisy sample on the scan lane moved the
+   receiver onto a non-signal and the sweep never resumed ("446.29375, no tone,
+   no resume").  LISTEN now re-probes a candidate once before accepting it
+   (`ScanListenProbe()`), like the FAST BOTH path already did.
+3. **The amplifier was left off.**  `RADIO_SetupRegisters()` begins with
+   `AUDIO_AudioPathOff()` (PC13) and runs on every scan start/reconfiguration,
+   while `rx_poll()` re-enabled the audio only on a squelch *transition*: with a
+   carrier already open, the receiver stayed silent for the whole scan.  Both
+   `0x47` and the audio path are now driven every poll on both lanes.
+
+And the sweep has to yield, not just coexist: with a carrier present, the
+stepping chip's LO perturbed the listener's `0x67` between 269 and 86 through
+the shared front end, which is audible as chopping.  Pausing while the listen
+squelch is open is therefore the correct behaviour, not a workaround.
+
 ## The RX scan-source override
 
 A paused hit may have been found by the BK4815 while the selected VFO is normally
