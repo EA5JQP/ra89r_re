@@ -16,6 +16,9 @@
 
 static bool s_ready;
 static bool s_squelch_open;
+/* Consecutive polls with the gate closed.  The LISTEN sweep waits for a few
+ * before probing: one corrupted reading used to be enough to start it. */
+static uint8_t s_closed_polls;
 static bool s_fm_active;        /* the FM feature owns the audio; see rx_set_fm_active() */
 static uint16_t s_rssi;
 static uint32_t s_freq_10hz;    /* what the BK4829 was last tuned to */
@@ -91,27 +94,37 @@ static bool s_audio_4815;
 static uint32_t s_4815_freq;    /* the tune last applied to the BK4815 (for its squelch marks) */
 static bool s_force_4815_af;    /* console 'A' diagnostic */
 
-/* Noise-floor tracker per (lane, band): the BK4829's floor is 49-57 at UHF and
- * 96-103 at VHF, the BK4815's 10-18, so one number would be wrong somewhere.
- * Keeping one per combination also means a tune or a VFO switch does NOT throw
- * the learned value away -- re-seeding on a switch is what locked the gate shut
- * on a live channel (radio 2026-10-22).  Index [lane][uhf]. */
-static rx_floor_t s_floor[2][2];
+/* Noise-floor tracker per (lane, band, modulation): the BK4829's floor is
+ * 49-57 at UHF, 96-103 at VHF in FM and 63 at VHF in AM (the AM AGC profile
+ * changes the scale), the BK4815's 10-18, so one number would be wrong
+ * somewhere.  Keeping one per combination also means a tune or a VFO switch
+ * does NOT throw the learned value away.  Index [lane][uhf | am << 1]. */
+static rx_floor_t s_floor[2][4];
 
-static uint16_t rx_floor_seed_max(uint8_t lane, bool uhf)
+static uint16_t rx_floor_prior(uint8_t lane, bool uhf, bool am)
 {
     if (lane == 1u)
-        return uhf ? RX_FLOOR_SEED_MAX_4815_UHF : RX_FLOOR_SEED_MAX_4815_VHF;
-    return uhf ? RX_FLOOR_SEED_MAX_4829_UHF : RX_FLOOR_SEED_MAX_4829_VHF;
+        return RX_FLOOR_PRIOR_4815;
+    if (uhf)
+        return am ? RX_FLOOR_PRIOR_4829_AM_UHF : RX_FLOOR_PRIOR_4829_FM_UHF;
+    return am ? RX_FLOOR_PRIOR_4829_AM_VHF : RX_FLOOR_PRIOR_4829_FM_VHF;
+}
+
+static bool rx_lane_am(void)
+{
+    return gRxVfo->Modulation == MODULATION_AM;
 }
 
 static uint16_t rx_floor_update(uint8_t lane, bool uhf, uint16_t rssi, bool closed)
 {
+    const bool am = rx_lane_am();
+    const uint8_t slot = (uint8_t)((uhf ? 1u : 0u) | (am ? 2u : 0u));
+
     if (lane > 1u)
         lane = 0u;
 
-    return rx_floor_step(&s_floor[lane][uhf ? 1u : 0u], lane == 1u,
-                         rx_floor_seed_max(lane, uhf), rssi, closed);
+    return rx_floor_step(&s_floor[lane][slot], lane == 1u,
+                         rx_floor_prior(lane, uhf, am), rssi, closed);
 }
 
 /* True when the active lane is tuned above the 280 MHz band split. */
@@ -126,9 +139,10 @@ static uint16_t rx_active_floor(void)
 {
     const uint8_t lane = s_audio_4815 ? 1u : 0u;
 
-    const bool uhf = rx_lane_uhf();
+    const bool    uhf  = rx_lane_uhf();
+    const uint8_t slot = (uint8_t)((uhf ? 1u : 0u) | (rx_lane_am() ? 2u : 0u));
 
-    return s_floor[lane][uhf ? 1u : 0u].valid ? s_floor[lane][uhf ? 1u : 0u].floor : 0u;
+    return s_floor[lane][slot].valid ? s_floor[lane][slot].floor : 0u;
 }
 
 uint16_t rx_squelch_floor(void)
@@ -153,7 +167,7 @@ static void rx_floor_invalidate(void)
     unsigned lane, band;
 
     for (lane = 0; lane < 2u; lane++)
-        for (band = 0; band < 2u; band++)
+        for (band = 0; band < 4u; band++)
             rx_floor_reset(&s_floor[lane][band]);
 }
 
@@ -217,7 +231,8 @@ static void rx_set_audio_source(bool use_4815)
     if (use_4815 == s_audio_4815)
         return;
 
-    s_audio_4815 = use_4815;
+    s_audio_4815  = use_4815;
+    s_closed_polls = 0u;
     /* Mute both and let the squelch open the selected one.  The BK4815's audio
      * shares the BK4829's AF node (measured: it is only audible while the
      * BK4829's AF is open, e.g. with the K1 squelch at 0), so the BK4815 source
@@ -272,6 +287,11 @@ void rx_poll(void)
         if (s_squelch_open && !was_open)
             BK4819_RX_TurnOn();
 
+        if (s_squelch_open)
+            s_closed_polls = 0u;
+        else if (s_closed_polls < 255u)
+            s_closed_polls++;
+
         /* Drive the three gates every poll, not only on a transition.  The K1's
          * own receive setup (RADIO_SetupRegisters -> RADIO_SetModulation, and
          * AUDIO_AudioPathOff) writes the shared AF node and the amplifier behind
@@ -295,7 +315,18 @@ void rx_poll(void)
         return;
     }
 
-    s_rssi = BK4819_GetRSSI();
+    /* A reading below the lane's plausible floor is a bus artefact, not a
+     * signal: the scanner drives the same bit-banged bus, so a poll that
+     * collides with a probe transaction returns 0 or garbage.  Classifying that
+     * as "squelch closed" let the LISTEN sweep start, which collided further and
+     * turned the audio into noise (radio 2026-10-22).  Hold the previous value
+     * and the gate state instead. */
+    {
+        const uint16_t raw = BK4819_GetRSSI();
+
+        if (raw != 0u)
+            s_rssi = raw;
+    }
 
     {
         const bool     squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
@@ -311,6 +342,11 @@ void rx_poll(void)
                 s_squelch_open = true;
             else if (s_squelch_open && !squelch_off && s_rssi < close_mark)
                 s_squelch_open = false;
+
+            if (s_squelch_open)
+                s_closed_polls = 0u;
+            else if (s_closed_polls < 255u)
+                s_closed_polls++;
 
             /* Drive the AF and the amplifier every poll, not only on a
              * transition.  The app's own receive setup runs on every scan start,
@@ -330,6 +366,11 @@ void rx_poll(void)
 bool rx_squelch_open(void)
 {
     return s_squelch_open;
+}
+
+bool rx_squelch_quiet(uint8_t polls)
+{
+    return !s_squelch_open && s_closed_polls >= polls;
 }
 
 bool rx_audio_is_4815(void)

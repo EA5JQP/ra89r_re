@@ -153,9 +153,10 @@ static inline uint16_t rx_squelch_close_mark(bool use_4815, bool uhf, uint8_t le
  * be *noise* and nothing else.  Its rules, each one learned the hard way on the
  * radio (2026-10-21/22):
  *
- *  - seed from the minimum of RX_FLOOR_SEED_SAMPLES samples, because the first
- *    sample after a retune can be a transient (a 193 seed sat above every
- *    signal and the gate never opened again);
+ *  - start from the measured prior for the lane/band/modulation, never from
+ *    the first samples: with a carrier present those are the carrier, and the
+ *    mark then sat above it (radio 2026-10-22: "no tone at boot, toggling the
+ *    generator brings it back");
  *  - a single sample far *below* the floor is a transient too (a mid-retune
  *    read of 1 held the gate open on noise), but a genuinely quieter channel
  *    must be followed: a small fall is immediate, a large one after
@@ -163,8 +164,8 @@ static inline uint16_t rx_squelch_close_mark(bool use_4815, bool uhf, uint8_t le
  *  - readings more than RX_FLOOR_RISE_BAND above the floor are signals: the
  *    floor never learns them (a -20 dBm carrier walked the floor from 49 to
  *    268), and while the squelch is open it is frozen anyway;
- *  - per-lane bounds from the measured baselines, applied at seed and after
- *    every step.
+ *  - per-lane bounds from the measured baselines, applied to the prior and
+ *    after every step.
  */
 #define RX_FLOOR_MIN_4829     40u   /* measured 54-61 UHF, 96-103 VHF */
 #define RX_FLOOR_MIN_4815      8u   /* measured 11-18 */
@@ -173,31 +174,33 @@ static inline uint16_t rx_squelch_close_mark(bool use_4815, bool uhf, uint8_t le
 #define RX_FLOOR_MAX_DROP      8u   /* an immediate one-sample fall */
 #define RX_FLOOR_DROP_SAMPLES  4u   /* consecutive samples for a larger fall */
 #define RX_FLOOR_RISE_BAND     6u   /* above this it is a signal */
-#define RX_FLOOR_SEED_SAMPLES  3u
-/* Seed ceilings, so a carrier present when a (lane, band) is first learned
- * cannot push the mark above itself -- radio 2026-10-22: switching to a VFO
- * with a -20 dBm carrier seeded the BK4829's floor at 199 and the mark at 229,
- * so the gate stayed closed on a 204 reading. */
-#define RX_FLOOR_SEED_MAX_4829_UHF 130u
-#define RX_FLOOR_SEED_MAX_4829_VHF 170u
-#define RX_FLOOR_SEED_MAX_4815_UHF  45u
-#define RX_FLOOR_SEED_MAX_4815_VHF  35u
+/* Priors.  The floor is *not* learned from the first samples any more: with a
+ * carrier present at boot those samples are the carrier, the mark lands above
+ * it and the gate never opens until the signal drops and returns (radio
+ * 2026-10-22: "no tone at start, but toggling the generator output brings it
+ * back").  The measured noise floors on this board are stable enough to start
+ * from, and the tracker then follows the real one:
+ *
+ *   BK4829  FM: 49-61 UHF, 96-103 VHF     AM (the AM AGC profile): 63 VHF
+ *   BK4815:      10-18
+ */
+#define RX_FLOOR_PRIOR_4829_FM_UHF  55u
+#define RX_FLOOR_PRIOR_4829_FM_VHF 100u
+#define RX_FLOOR_PRIOR_4829_AM_UHF  55u
+#define RX_FLOOR_PRIOR_4829_AM_VHF  63u
+#define RX_FLOOR_PRIOR_4815         15u
 
 typedef struct {
     uint16_t floor;
-    uint16_t seed_min;
-    uint8_t  seed_n;
     uint8_t  low_cnt;
     bool     valid;
 } rx_floor_t;
 
 static inline void rx_floor_reset(rx_floor_t *f)
 {
-    f->floor    = 0u;
-    f->seed_min = 0xFFFFu;
-    f->seed_n   = 0u;
-    f->low_cnt  = 0u;
-    f->valid    = false;
+    f->floor   = 0u;
+    f->low_cnt = 0u;
+    f->valid   = false;
 }
 
 static inline uint16_t rx_floor_clamp(uint16_t v, bool use_4815)
@@ -213,20 +216,14 @@ static inline uint16_t rx_floor_clamp(uint16_t v, bool use_4815)
 }
 
 /* One poll: `rssi` is the reading, `closed` the gate state before this poll.
- * Returns the floor in force (0 while still seeding). */
-static inline uint16_t rx_floor_step(rx_floor_t *f, bool use_4815, uint16_t seed_max,
+ * Returns the floor in force. */
+static inline uint16_t rx_floor_step(rx_floor_t *f, bool use_4815, uint16_t prior,
                                      uint16_t rssi, bool closed)
 {
     if (!f->valid) {
-        if (f->seed_min == 0xFFFFu || rssi < f->seed_min)
-            f->seed_min = rssi;
-        if (++f->seed_n >= RX_FLOOR_SEED_SAMPLES) {
-            const uint16_t seed = (f->seed_min > seed_max) ? seed_max : f->seed_min;
-
-            f->floor = rx_floor_clamp(seed, use_4815);
-            f->valid = true;
-        }
-        return f->valid ? f->floor : 0u;
+        f->floor = rx_floor_clamp(prior, use_4815);
+        f->valid = true;
+        return f->floor;
     }
 
     if (!closed)
@@ -265,6 +262,12 @@ bool rx_ready(void);
 void rx_poll(void);
 
 bool rx_squelch_open(void);
+
+/* The gate has been closed for at least `polls` consecutive polls.  The LISTEN
+ * sweep waits for this (docs/ra89r_scan.md): a single corrupted 0x67 read used
+ * to be enough to start a probe batch, which then collided with the poller and
+ * turned the audio into noise. */
+bool rx_squelch_quiet(uint8_t polls);
 uint16_t rx_rssi(void);
 
 /* The marks actually in force right now: the active lane's learned floor plus

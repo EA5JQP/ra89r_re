@@ -1697,7 +1697,7 @@ static void NextFreqChannel(void)
              * 86 as the BK4815 swept 445.5-446.5 -- so a sweep during a
              * reception is audible as chopping.  The sweep resumes when the
              * listen lane goes quiet. */
-            if (rx_squelch_open()) {
+            if (!rx_squelch_quiet(5u)) {
                 gScanPauseDelayIn_10ms = 1;
                 return;
             }

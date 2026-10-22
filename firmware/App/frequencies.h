@@ -18,6 +18,7 @@
 #define FREQUENCIES_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #define _1GHz_in_KHz 100000000
 #define DEFAULT_FREQ 43450000 // Use for Reset and Aircopy
@@ -43,6 +44,17 @@ typedef enum  {
 } FREQUENCY_Band_t;
 
 extern const freq_band_table_t frequencyBandTable[];
+
+/* The civil airband: the K1's BAND2_108MHz entry, 108.000-137.000 MHz in the
+ * codec's 10 Hz units.  It is AM by nature and is the only AM band this radio
+ * has, so the receive demodulation is chosen by band there (see radio.c). */
+#define FREQ_AIRBAND_LO 10800000u
+#define FREQ_AIRBAND_HI 13700000u
+
+static inline bool FREQUENCY_IsAirband(uint32_t freq_10hz)
+{
+    return freq_10hz >= FREQ_AIRBAND_LO && freq_10hz < FREQ_AIRBAND_HI;
+}
 
 typedef enum {
 // standard steps
