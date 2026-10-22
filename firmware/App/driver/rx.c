@@ -54,6 +54,7 @@ void rx_init(uint32_t freq_10hz)
 
     BK4819_SetAF(BK4819_AF_MUTE);       /* start quiet; rx_poll() opens it */
 
+    rx_floor_invalidate();      /* fresh estimates on every boot */
     s_ready = true;
     s_squelch_open = false;
 }
@@ -63,7 +64,6 @@ void rx_set_frequency(uint32_t freq_10hz)
     BK4819_SetFrequency(freq_10hz);
     s_freq_10hz = freq_10hz;
     pa_select_band(freq_10hz);
-    rx_floor_invalidate();      /* a different channel has a different floor */
 }
 
 bool rx_ready(void)
@@ -91,16 +91,27 @@ static bool s_audio_4815;
 static uint32_t s_4815_freq;    /* the tune last applied to the BK4815 (for its squelch marks) */
 static bool s_force_4815_af;    /* console 'A' diagnostic */
 
-/* Noise-floor tracker per lane (its rules and bounds live in rx.h, where they
- * are host-tested).  Index 0 = BK4829, 1 = BK4815. */
-static rx_floor_t s_floor[2];
+/* Noise-floor tracker per (lane, band): the BK4829's floor is 49-57 at UHF and
+ * 96-103 at VHF, the BK4815's 10-18, so one number would be wrong somewhere.
+ * Keeping one per combination also means a tune or a VFO switch does NOT throw
+ * the learned value away -- re-seeding on a switch is what locked the gate shut
+ * on a live channel (radio 2026-10-22).  Index [lane][uhf]. */
+static rx_floor_t s_floor[2][2];
 
-static uint16_t rx_floor_update(uint8_t lane, uint16_t rssi, bool closed)
+static uint16_t rx_floor_seed_max(uint8_t lane, bool uhf)
+{
+    if (lane == 1u)
+        return uhf ? RX_FLOOR_SEED_MAX_4815_UHF : RX_FLOOR_SEED_MAX_4815_VHF;
+    return uhf ? RX_FLOOR_SEED_MAX_4829_UHF : RX_FLOOR_SEED_MAX_4829_VHF;
+}
+
+static uint16_t rx_floor_update(uint8_t lane, bool uhf, uint16_t rssi, bool closed)
 {
     if (lane > 1u)
         lane = 0u;
 
-    return rx_floor_step(&s_floor[lane], lane == 1u, rssi, closed);
+    return rx_floor_step(&s_floor[lane][uhf ? 1u : 0u], lane == 1u,
+                         rx_floor_seed_max(lane, uhf), rssi, closed);
 }
 
 /* True when the active lane is tuned above the 280 MHz band split. */
@@ -115,7 +126,9 @@ static uint16_t rx_active_floor(void)
 {
     const uint8_t lane = s_audio_4815 ? 1u : 0u;
 
-    return s_floor[lane].valid ? s_floor[lane].floor : 0u;
+    const bool uhf = rx_lane_uhf();
+
+    return s_floor[lane][uhf ? 1u : 0u].valid ? s_floor[lane][uhf ? 1u : 0u].floor : 0u;
 }
 
 uint16_t rx_squelch_floor(void)
@@ -137,8 +150,11 @@ uint16_t rx_squelch_close_mark_now(void)
 
 static void rx_floor_invalidate(void)
 {
-    rx_floor_reset(&s_floor[0]);
-    rx_floor_reset(&s_floor[1]);
+    unsigned lane, band;
+
+    for (lane = 0; lane < 2u; lane++)
+        for (band = 0; band < 2u; band++)
+            rx_floor_reset(&s_floor[lane][band]);
 }
 
 /* A temporary scan-hit receive route (see rx.h).  DEFAULT follows the selected
@@ -171,7 +187,6 @@ void rx_clear_scan_source_override(void)
     s_scan_source = RX_SCAN_SOURCE_DEFAULT;
     /* A scan writes the chips under the poller, so after one stops the floor
      * learned before it may not describe this channel: start over. */
-    rx_floor_invalidate();
     rf_dual_reapply();      /* see rx_set_scan_source_override() */
 }
 
@@ -203,7 +218,6 @@ static void rx_set_audio_source(bool use_4815)
         return;
 
     s_audio_4815 = use_4815;
-    rx_floor_invalidate();          /* a new lane (and band) has its own floor */
     /* Mute both and let the squelch open the selected one.  The BK4815's audio
      * shares the BK4829's AF node (measured: it is only audible while the
      * BK4829's AF is open, e.g. with the K1 squelch at 0), so the BK4815 source
@@ -234,7 +248,7 @@ void rx_poll(void)
          * samples it reads there dragged the floor to its minimum and left the
          * gate unable to open on a real signal (radio 2026-10-21). */
         if (gScanStateDir == SCAN_OFF)
-            (void)rx_floor_update(1u, s_rssi, !s_squelch_open);
+            (void)rx_floor_update(1u, rx_lane_uhf(), s_rssi, !s_squelch_open);
 
         {
             const uint16_t open_mark  = rx_squelch_open_mark_now();
@@ -287,7 +301,7 @@ void rx_poll(void)
         const bool     squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
 
         if (gScanStateDir == SCAN_OFF)
-            (void)rx_floor_update(0u, s_rssi, !s_squelch_open);
+            (void)rx_floor_update(0u, rx_lane_uhf(), s_rssi, !s_squelch_open);
 
         {
             const uint16_t open_mark  = rx_squelch_open_mark_now();
@@ -506,7 +520,6 @@ void rf_dual_refresh(void)
         if (roles.bk4815_vfo >= 0)
             bk4815_receive_entry(gEeprom.VfoInfo[roles.bk4815_vfo].CHANNEL_BANDWIDTH
                                  == BANDWIDTH_WIDE);
-        rx_floor_invalidate();          /* retuned: learn the new floor */
         s_dual_sec   = roles.bk4815_vfo;
         s_dual_sec_f = f4815;
     }

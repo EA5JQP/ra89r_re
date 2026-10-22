@@ -174,6 +174,14 @@ static inline uint16_t rx_squelch_close_mark(bool use_4815, bool uhf, uint8_t le
 #define RX_FLOOR_DROP_SAMPLES  4u   /* consecutive samples for a larger fall */
 #define RX_FLOOR_RISE_BAND     6u   /* above this it is a signal */
 #define RX_FLOOR_SEED_SAMPLES  3u
+/* Seed ceilings, so a carrier present when a (lane, band) is first learned
+ * cannot push the mark above itself -- radio 2026-10-22: switching to a VFO
+ * with a -20 dBm carrier seeded the BK4829's floor at 199 and the mark at 229,
+ * so the gate stayed closed on a 204 reading. */
+#define RX_FLOOR_SEED_MAX_4829_UHF 130u
+#define RX_FLOOR_SEED_MAX_4829_VHF 170u
+#define RX_FLOOR_SEED_MAX_4815_UHF  45u
+#define RX_FLOOR_SEED_MAX_4815_VHF  35u
 
 typedef struct {
     uint16_t floor;
@@ -206,13 +214,16 @@ static inline uint16_t rx_floor_clamp(uint16_t v, bool use_4815)
 
 /* One poll: `rssi` is the reading, `closed` the gate state before this poll.
  * Returns the floor in force (0 while still seeding). */
-static inline uint16_t rx_floor_step(rx_floor_t *f, bool use_4815, uint16_t rssi, bool closed)
+static inline uint16_t rx_floor_step(rx_floor_t *f, bool use_4815, uint16_t seed_max,
+                                     uint16_t rssi, bool closed)
 {
     if (!f->valid) {
         if (f->seed_min == 0xFFFFu || rssi < f->seed_min)
             f->seed_min = rssi;
         if (++f->seed_n >= RX_FLOOR_SEED_SAMPLES) {
-            f->floor = rx_floor_clamp(f->seed_min, use_4815);
+            const uint16_t seed = (f->seed_min > seed_max) ? seed_max : f->seed_min;
+
+            f->floor = rx_floor_clamp(seed, use_4815);
             f->valid = true;
         }
         return f->valid ? f->floor : 0u;

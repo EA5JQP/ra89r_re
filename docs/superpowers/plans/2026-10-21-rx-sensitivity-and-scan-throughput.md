@@ -207,7 +207,10 @@ The saturation at 199 is the AGC table's lowest-gain entry, not a
 sensitivity limit.  Rough 10 dB quieting point: **−31 dBm** (with this
 coupling).
 
-BK4815, same antenna and a correct tune (`0x71/0x72 = 0x893b91b9` = 446.00625,
+BK4815 (measured on the 2026-10-22 build: **it does receive** -- a carrier
+moves `0x44` from 10 to 39 at 446.00625 -- see the correction below; the
+"deaf" paragraph here is the earlier, withdrawn reading): the same antenna and
+a correct tune (`0x71/0x72 = 0x893b91b9` = 446.00625,
 `0x75 = 0x0A`, `0x0C = 0x0A03`): **no response at all**, in either band, over
 28 dB of generator level.  Swept with every receive-path combination the port
 can drive -- `0x33` pin 0 set/cleared, pin 2 (`0x10`) set/cleared, pin 4 set,
