@@ -330,6 +330,20 @@ clearing it gave 232 -- about 16 dB at the chip's 0.5 dB/step.  So a BK4815 VFO
 merely existing while the BK4829 is being listened to used to cost the BK4829
 that much; that is what the lane rule fixes.
 
+**Pin 0 (`0x40`) is the other half of the lane rule.**  The K1 calls it
+`GPIO0_PIN28_RX_ENABLE` and sets it on every receive setup, but the stock's
+receive entry *clears* pins 0/1 (`FUN_080093EC` -> `FUN_080137D4(3, 0)`), and
+`FUN_0801BDE8` sets the same bit as the VHF TX band path.  So on a BK4815 lane
+the port now clears pin 0 and sets pin 4 (`0x33` = `0x9004`); a BK4829 lane
+keeps the K1's pin 0 and clears pin 4 (`0x9040`).  Console `g` toggles pin 0,
+`y` PA1 and `z` `0x33` pin 2 (the other two lines the stock's receive entry
+drives and the port does not) for bench work.
+
+This did **not** make the BK4815 receive: a tinySA sweep at 145.5 and 446.00625
+moved its `0x44` by nothing over 28 dB in every combination of those lines
+(`docs/ra89r_bk4815.md`).  The BK4829 on the same antenna heard the carrier in
+both bands.
+
 ### The MCU pins
 
 `FUN_08013A70(mode)` / `FUN_08013B12(mode)`:

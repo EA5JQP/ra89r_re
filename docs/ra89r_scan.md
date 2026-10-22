@@ -206,6 +206,20 @@ probe design should be revisited or `FAST BOTH` removed.
 | 1 | 300 probes / 3083 ms = 97/s | 516 / 3070 ms = 168/s | 1.73x |
 | 2 | 300 / 3083 = 97/s | 516 / 3070 = 168/s | 1.72x |
 
+Measured again after the 2026-10-21/22 changes, on the radio, both bands,
+quiet range, SQL 4:
+
+| band | FAST | FAST BOTH | ratio | in-batch | gap |
+|---|---|---|---|---|---|
+| 446.00625..447.00625 | 401/s | **671/s** | **1.67x** | 53.2 ms | 0.7 ms |
+| 145.50000..146.50000 | 401/s | 671/s | **1.67x** | 53.2 ms | 0.7 ms |
+
+The earlier VHF run measured 1.08x with a 53 ms/batch gap: the BK4815 lane's
+own jitter read as a hit every batch and each one bought a full re-tune.  The
+confirmation probe and the 12-count 4815 margin fixed that, and the gap is now
+noise.  Note the ratio only means anything on a quiet range: with a carrier
+inside the range both lanes hit it and the benchmark reads below 1.
+
 That was the **12-candidate** FAST BOTH batch.  The batch is now 24 candidates
 with the paired probe (`SCAN_BOTH_PRECHECK_PAIRS`), so the earlier figure is the
 baseline to beat; the same `J` run has to show it.  Note that `FAST BOTH` also

@@ -244,7 +244,21 @@ as a hit every batch and each one bought a full re-tune.  The confirmation
 probe and the 12-count 4815 margin in this change target exactly that; the
 number is still to be measured.
 
-### Squelch gate
+### Squelch gate, final run (2026-10-22, UHF, SQL 4)
+
+| generator | `0x67` | gate | floor |
+|---|---|---|---|
+| off | -- | **closed** | 49 |
+| -20 dBm | 101 | **OPEN** | 52 (stable) |
+| -38 dBm (stage minimum) | 156 | OPEN | 51 |
+| off | 58 | **closed** | 51 |
+
+The high output stage cannot go below -38 dBm, so a below-threshold carrier
+could not be produced at UHF; that side is covered by the host tests and by the
+off measurement either side of it.  Floor tracking survived a retune with a
+carrier present (the seed path) and a 40 dB level change without moving.
+
+### Squelch gate (earlier notes)
 
 With the fixed marks the 4815 lane sat permanently open at 145.5 (mark 12
 against a floor of 13.8) and imported 100+ counts above the floor on the 4829.
