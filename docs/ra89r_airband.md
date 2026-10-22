@@ -53,12 +53,14 @@ per-(lane, band) noise floor and the SQL ladder work unchanged in AM.
 
 * Menu: the VFO's `Modulation` can still be set by hand; outside the airband it
   is what the radio uses.
-* `U` on the console (automation): sets the step to 25 kHz, tunes 118.000 MHz,
-  gives the VFO its frequency channel and arms the range **108.000-136.975 MHz**
-  (`gScanRangeStart/Stop`).  Start the scan with `E`.
+* `U` on the console (automation): sets the step to **8.33 kHz** (Europe's
+  airband channel grid; the K1's `STEP_8_33kHz`, 833 in 10 Hz units), tunes
+  118.000 MHz, gives the VFO its frequency channel and arms the range
+  **108.000-136.975 MHz** (`gScanRangeStart/Stop`; 136.975 is the last 8.33 kHz
+  channel below 137.000).  Start the scan with `E`.
 
-8.33 kHz spacing is available in the K1's step table (`STEP_8_33kHz`) but is not
-forced; 25 kHz is the default the console command uses.
+25 kHz spacing is still available through the menu for the legacy grid; the
+console command uses 8.33 kHz because that is the real airband spacing.
 
 ## The transceiver
 
@@ -119,8 +121,13 @@ Two gate defects showed up only here, both because the airband carrier is strong
   118.000 (the AM AGC profile), and SQL 4's 30-count margin rejects a -30 dBm
   carrier that is only 9 dB above the noise.  Weak-signal AM wants SQL 1-2.
 * The AM noise floor varies with frequency inside the band (36-38 at 118-120,
-  74-77 at 125-127.6, generator off), so the coarse prior takes a few polls to
-  settle after a large retune and a sweep can stop just above it; a per-channel
-  floor cache is the natural follow-up.
+  74-77 at 125-127.6 with the generator off, ~90 with an antenna at 120.1), so
+  the coarse prior takes a second or two to settle after a large retune.  The
+  floor now climbs one count every 8 closed polls (~12 counts/s) so it does
+  reach an antenna's higher floor; a per-channel floor cache is still the
+  natural follow-up.
+* With an antenna, 40 s of sweeping 108-136.975 at SQL 4 found nothing and
+  60 s at SQL 1 was interrupted, so real off-air activity is still unverified;
+  SQL 1-2 is the setting for weak AM.
 * No stock airband behaviour to compare against: the image has no AM UI string
   and no airband routine, so this is a port feature.

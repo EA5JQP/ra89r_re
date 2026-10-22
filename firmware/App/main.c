@@ -322,7 +322,7 @@ static void print_help(void)
     uart_puts("\nthe K1 GUI owns the panel; these are console diagnostics\n"
               "          h help   i diagnostics   d dump screen as ASCII\n"
               "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
-              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40)   y toggle PA1   z toggle 0x33 pin 2 (0x10)\n          H audio chain (regs 0x30/0x47/0x48/0x50, PC13, squelch, lane)\n          o cycle SetScn   7 cycle SQL   8 switch VFO A/B   9/I cycle TrVfoA/B\n          N arm a +/-500 kHz range   E start/stop the scan   U arm the airband (108-137, 25 kHz)\n"
+              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40)   y toggle PA1   z toggle 0x33 pin 2 (0x10)\n          H audio chain (regs 0x30/0x47/0x48/0x50, PC13, squelch, lane)\n          o cycle SetScn   7 cycle SQL   8 switch VFO A/B   9/I cycle TrVfoA/B\n          N arm a +/-500 kHz range   E start/stop the scan   U arm the airband (108-136.975, 8.33 kHz)\n"
               "          D step the RF bus delay (find what still gives audio)\n"
               "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
@@ -2117,13 +2117,14 @@ int main(void)
                 break;
             }
             case 'U': {
-                /* Automation: arm the civil airband, 108.000-137.000 MHz, on a
-                 * 25 kHz step and tune 118.000 (the AM rule in radio.c then
-                 * makes the demod AM).  Start the scan with E. */
+                /* Automation: arm the civil airband, 108.000-136.975 MHz, on the
+                 * 8.33 kHz channel spacing (Europe's airband grid) and tune
+                 * 118.000; the AM rule in radio.c then makes the demod AM.
+                 * Start the scan with E. */
                 const uint8_t rx = gEeprom.RX_VFO;
 
-                gRxVfo->STEP_SETTING = STEP_25kHz;
-                gRxVfo->StepFrequency = gStepFrequencyTable[STEP_25kHz];
+                gRxVfo->STEP_SETTING = STEP_8_33kHz;
+                gRxVfo->StepFrequency = gStepFrequencyTable[STEP_8_33kHz];
                 gRxVfo->Band = (uint16_t)FREQUENCY_GetBand(11800000u);
                 gEeprom.ScreenChannel[rx] = (uint16_t)(FREQ_CHANNEL_FIRST + gRxVfo->Band);
                 gEeprom.FreqChannel[rx]   = gEeprom.ScreenChannel[rx];
@@ -2131,11 +2132,12 @@ int main(void)
                 gRxVfo->freq_config_RX.Frequency = 11800000u;
                 gRxVfo->freq_config_TX.Frequency = 11800000u;
                 gScanRangeStart = FREQ_AIRBAND_LO;
-                gScanRangeStop  = FREQ_AIRBAND_HI - gRxVfo->StepFrequency;
+                /* 136.975 is the last 8.33 kHz channel below 137.000. */
+                gScanRangeStop  = 13697500u;
                 RADIO_ApplyOffset(gRxVfo);
                 gVfoConfigureMode = VFO_CONFIGURE_RELOAD;
                 gUpdateDisplay    = true;
-                uart_printf("\nairband: 108.000-137.000 MHz, step 25 kHz, tuned 118.000, "
+                uart_printf("\nairband: 108.000-136.975 MHz, step 8.33 kHz, tuned 118.000, "
                             "modulation %s (scan with E)\n",
                             FREQUENCY_IsAirband(gRxVfo->pRX->Frequency) ? "AM" : "as the VFO says");
                 break;
