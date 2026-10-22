@@ -307,13 +307,22 @@ void rx_poll(void)
             const uint16_t open_mark  = rx_squelch_open_mark_now();
             const uint16_t close_mark = rx_squelch_close_mark_now();
 
-            if (!s_squelch_open && (squelch_off || s_rssi >= open_mark)) {
+            if (!s_squelch_open && (squelch_off || s_rssi >= open_mark))
                 s_squelch_open = true;
-                BK4819_SetAF(BK4819_AF_FM);
-            } else if (s_squelch_open && !squelch_off && s_rssi < close_mark) {
+            else if (s_squelch_open && !squelch_off && s_rssi < close_mark)
                 s_squelch_open = false;
-                BK4819_SetAF(BK4819_AF_MUTE);
-            }
+
+            /* Drive the AF and the amplifier every poll, not only on a
+             * transition.  The app's own receive setup runs on every scan start,
+             * VFO reconfiguration and scan hit and begins with
+             * AUDIO_AudioPathOff() (the K1's AUDIO_AudioPathOff ->
+             * GPIO_DisableAudioPath -> PC13), so a transition-only drive left
+             * the audio shut whenever the gate was already open: radio
+             * 2026-10-22, LISTEN with a -20 dBm carrier, squelch OPEN, RSSI 204,
+             * and no tone at all.  The BK4815 branch already drove its gates
+             * every poll for the same reason. */
+            BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
+            audio_path_drive(s_squelch_open);
         }
     }
 }
