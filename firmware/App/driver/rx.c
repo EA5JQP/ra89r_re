@@ -269,9 +269,8 @@ void rx_poll(void)
          * signal is further above and keeps the floor where it is. */
         {
             const uint16_t open_now  = rx_squelch_open_mark_now();
-            const uint16_t close_now = rx_squelch_close_mark_now();
             const bool     weak_open = s_squelch_open &&
-                s_rssi < (uint16_t)(open_now + (uint16_t)(open_now - close_now));
+                s_rssi < (uint16_t)(open_now + rx_squelch_margin(true, gEeprom.SQUELCH_LEVEL));
 
             if (gScanStateDir == SCAN_OFF && (!s_squelch_open || weak_open))
                 (void)rx_floor_update(1u, rx_lane_uhf(), s_rssi, true);
@@ -345,12 +344,11 @@ void rx_poll(void)
 
         {
             const uint16_t open_now  = rx_squelch_open_mark_now();
-            const uint16_t close_now = rx_squelch_close_mark_now();
             const bool     weak_open = s_squelch_open &&
-                s_rssi < (uint16_t)(open_now + (uint16_t)(open_now - close_now));
+                s_rssi < (uint16_t)(open_now + rx_squelch_margin(false, gEeprom.SQUELCH_LEVEL));
 
-            /* See the BK4815 branch: a weak open level is noise and is learned,
-             * a real signal is not. */
+            /* See the BK4815 branch: a weak open level (within two margins of
+             * the floor) is noise and is learned, a real signal is not. */
             if (gScanStateDir == SCAN_OFF && (!s_squelch_open || weak_open))
                 (void)rx_floor_update(0u, rx_lane_uhf(), s_rssi, true);
         }
