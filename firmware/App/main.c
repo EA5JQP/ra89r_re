@@ -322,7 +322,7 @@ static void print_help(void)
     uart_puts("\nthe K1 GUI owns the panel; these are console diagnostics\n"
               "          h help   i diagnostics   d dump screen as ASCII\n"
               "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
-              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40)   y toggle PA1   z toggle 0x33 pin 2 (0x10)\n          o cycle SetScn   7 cycle SQL   8 switch VFO A/B   9/I cycle TrVfoA/B\n          N arm a +/-500 kHz range   E start/stop the scan (automation)\n"
+              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40)   y toggle PA1   z toggle 0x33 pin 2 (0x10)\n          H audio chain (regs 0x30/0x47/0x48/0x50, PC13, squelch, lane)\n          o cycle SetScn   7 cycle SQL   8 switch VFO A/B   9/I cycle TrVfoA/B\n          N arm a +/-500 kHz range   E start/stop the scan (automation)\n"
               "          D step the RF bus delay (find what still gives audio)\n"
               "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
@@ -2130,6 +2130,30 @@ int main(void)
                     uart_puts("\nscan stopped\n");
                 }
                 break;
+            case 'H': {
+                /* Read-only: the whole audio chain as it stands.  Plain receive
+                 * and scanning differ here (radio 2026-10-22: a tone in plain
+                 * receive, silence while a LISTEN scan ran). */
+                uart_printf("\naudio chain: 0x30=%04X (bit9 = AF DAC) 0x37=%04X "
+                            "0x47=%04X (bits 11:8 = AF select) 0x48=%04X 0x50=%04X "
+                            "0x67=%04X\n",
+                            (unsigned)BK4819_ReadRegister(0x30),
+                            (unsigned)BK4819_ReadRegister(0x37),
+                            (unsigned)BK4819_ReadRegister(0x47),
+                            (unsigned)BK4819_ReadRegister(0x48),
+                            (unsigned)BK4819_ReadRegister(0x50),
+                            (unsigned)BK4819_ReadRegister(0x67));
+                uart_printf("  PC13 %u (audio path helper says %s), speaker %u, "
+                            "squelch %s, lane %s, function %u, scan dir %d\n",
+                            (unsigned)(gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN) ? 1u : 0u),
+                            audio_path_is_on() ? "on" : "off",
+                            (unsigned)gEnableSpeaker,
+                            rx_squelch_open() ? "open" : "closed",
+                            rx_audio_is_4815() ? "4815" : "4829",
+                            (unsigned)gCurrentFunction,
+                            (int)gScanStateDir);
+                break;
+            }
             case 'y':
                 /* PA1: the stock's receive entry drives it low, the port high. */
                 {
