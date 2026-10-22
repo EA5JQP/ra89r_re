@@ -311,11 +311,38 @@ flag `0` (BK4815, > 134 MHz) runs `FUN_08016CEC` -> `FUN_080137D4(0x10, 0x10)`
 leaves pin 4 **clear**, and pin 4 is set only when the BK4815 is the receive
 branch.
 
-The port uses the **BK4829** above 134 MHz (its own choice — see the open
-question below), so it must clear pin 4.  Measured on the radio with console
-`F`: pin 4 set gave `0x67` = 199 at 145.500, clearing it gave 232 — about 16 dB
-at the chip's 0.5 dB/step.  `pa_apply_chip_path()`'s AUTO and the port's
-`BK4819_PickRXFilterPathBasedOnFrequency()` both clear both LNA pins now.
+The port uses the **BK4829** above 134 MHz (its own choice -- the port's VFO
+transceiver setting decides per VFO, and the stock's frequency split is not
+applied automatically).  Pin 4 must therefore be **tied to the lane being
+listened to**, not to a VFO's assignment:
+
+* `rx_set_audio_source()` -> `pa_set_rx_lane()` sets pin 4 when the selected RX
+  VFO is on the BK4815 and clears it when it is on the BK4829, and
+  `pa_apply_chip_path()` re-asserts that choice on every receive re-entry.
+* The K1 hook `BK4819_PickRXFilterPathBasedOnFrequency()` **no longer writes the
+  LNA pins at all**: the application calls it on every receive setup, and its
+  old "clear both" would undo the lane's choice.  (An earlier port version
+  cleared both pins there, which was right only while the BK4829 was always the
+  lane.)
+
+Measured on the radio with console `F`: pin 4 set gave `0x67` = 199 at 145.500,
+clearing it gave 232 -- about 16 dB at the chip's 0.5 dB/step.  So a BK4815 VFO
+merely existing while the BK4829 is being listened to used to cost the BK4829
+that much; that is what the lane rule fixes.
+
+**Pin 0 (`0x40`) is the other half of the lane rule.**  The K1 calls it
+`GPIO0_PIN28_RX_ENABLE` and sets it on every receive setup, but the stock's
+receive entry *clears* pins 0/1 (`FUN_080093EC` -> `FUN_080137D4(3, 0)`), and
+`FUN_0801BDE8` sets the same bit as the VHF TX band path.  So on a BK4815 lane
+the port now clears pin 0 and sets pin 4 (`0x33` = `0x9004`); a BK4829 lane
+keeps the K1's pin 0 and clears pin 4 (`0x9040`).  Console `g` toggles pin 0,
+`y` PA1 and `z` `0x33` pin 2 (the other two lines the stock's receive entry
+drives and the port does not) for bench work.
+
+This did **not** make the BK4815 receive: a tinySA sweep at 145.5 and 446.00625
+moved its `0x44` by nothing over 28 dB in every combination of those lines
+(`docs/ra89r_bk4815.md`).  The BK4829 on the same antenna heard the carrier in
+both bands.
 
 ### The MCU pins
 

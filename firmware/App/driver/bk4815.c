@@ -127,6 +127,56 @@ void bk4815_configure(void)
         bk4815_write_reg(bk4815_config[i].reg, bk4815_config[i].value);
 }
 
+void bk4815_set_band(uint16_t band)
+{
+    /* The stock's FUN_08013790 is a read-modify-write: `0x75 = (read & 0xFFC0)
+     * | value`, which preserves the register's own state.  Two of those bits
+     * must *not* be preserved here, though:
+     *
+     *   - bit 10 is the datasheet's LO injection side.  The stock's synthesizer
+     *     programs the IF in registers 0x7E/0x7F (its per-band "calibration"
+     *     word, which is really the RX IF), while this port -- like the stock's
+     *     own word -- tunes `Ndiv * fwanted` with no IF offset.  With bit 10
+     *     set (the part's reset state, 0x0400) the 4815 sees a constant
+     *     LO-leakage level (0x44 = 28 at 145-146 MHz, 21 at 174 MHz, unmoved by
+     *     a -30 dBm carrier -- radio 2026-10-21), i.e. high-side injection with
+     *     no matching IF.  Force it low-side: bit 10 = 0.
+     *   - the low six bits are the band code.
+     *
+     * Bits 15:11 and 9:6 (RX-audio source, tone-to-audio) are preserved. */
+    bk4815_write_reg(0x75u, (uint16_t)((bk4815_read_reg(0x75u) & 0xfbc0u) | (band & 0x3fu)));
+}
+
+/* --------------------------------------------------------- receive entry --- */
+
+/* The per-VFO receive entry the stock runs after the tune, FUN_08016CEC's
+ * writes in its own order.  The values are the stock's literals; the register
+ * meanings are the datasheet's (docs/ra89r_bk4815.md, "The per-VFO receive
+ * entry"):
+ *
+ *   0x01  common: channel spacing, bit 15 = 1 for 25 kHz, 0 for 12.5 kHz.
+ *         The stock sends 0x0044 (narrow) or 0x8044 (wide, its channel byte
+ *         0x91 == 2); the port picks by the VFO's CHANNEL_BANDWIDTH.
+ *   0x16  VOX module (the stock writes it on receive entry as well)
+ *   0x2B  RAMP: ramp up/down enable + speeds
+ *   0x6D  PA output power control, the receive value 0x6618
+ *   0x73  interrupt mask (0x81D0: link-loss, CTCSS and CDCSS-loss enables)
+ *   0x70  the receive restart pair, 0 then 0xA000
+ *
+ * It runs on a lane (re)configuration -- a VFO switch or a frequency change --
+ * and never from the scanner's probe loop, where seven extra writes per
+ * candidate would cost scan throughput. */
+void bk4815_receive_entry(bool wide)
+{
+    bk4815_write_reg(0x16u, 0xb200u);
+    bk4815_write_reg(0x2bu, 0x403fu);
+    bk4815_write_reg(0x6du, 0x6618u);
+    bk4815_write_reg(0x73u, 0x81d0u);
+    bk4815_write_reg(0x01u, wide ? 0x8044u : 0x0044u);
+    bk4815_write_reg(BK4815_REG_OPCTRL, 0x0000u);
+    bk4815_write_reg(BK4815_REG_OPCTRL, 0xa000u);
+}
+
 /* ------------------------------------------------------------- synthesizer */
 
 /* The stock's VCO-band thresholds (FUN_0800EC70), in the codeplug's 10 Hz

@@ -68,3 +68,30 @@ ACK (see `ra89r_carserial.md` for the transcript).
   pass `--baud` to the script if a controller needs another rate.
 - **Look4Sat** still needs a USB-serial `IRadioController` (Android USB-OTG +
   CH340) before it can use this directly; that is a separate phone-side change.
+
+## Automation additions (2026-10-22)
+
+The bench work needed three things the original command set did not have:
+
+| frame | direction | meaning |
+|---|---|---|
+| `00 00 00 00 02` (`SM`) | host -> radio, radio replies `00 00 00 <rssi> 02` | FT-817 S-meter read: the lane's raw RSSI clamped to 255 (9-bit `0x67` on the BK4829, 7-bit `0x44` on the BK4815) |
+| `00 00 00 00 81` / `01 00 00 00 81` (`VS`) | host -> radio, reply `00` | FT-817 VFO select: 0 = A, 1 = B; switches `RX_VFO`/`TX_VFO` and reconfigures the channel |
+| `00 00 00 00 E1` (`STATUS`, port extension) | host -> radio, radio replies `<status> <rssi_lo> <rssi_hi> <sql> E1` | the receive state the FT-817 has no read for: status bit 0 = squelch open, bit 1 = the audio lane is the BK4815, bits 7:2 = the scan mode; then the raw RSSI (16-bit, little-endian) and the squelch level (0-9) |
+
+`STATUS` is a vendor command, not an FT-817 one: inventing an FT-817 reply that
+a real client would misread is worse than a clearly separate opcode.
+
+The console (same port, single letters) gained the port-specific controls that
+have no FT-817 equivalent, so a host can drive a whole test matrix:
+
+| key | action |
+|---|---|
+| `o` | cycle `SetScn` NORMAL -> FAST -> FAST BOTH -> LISTEN |
+| `7` | cycle the squelch level 0..9 (prints the marks that result) |
+| `8` | switch the selected VFO A/B (what the physical EXIT does) |
+| `9` / `I` | cycle `TrVfoA` / `TrVfoB` between BK4829 and BK4815 |
+| `N` | arm a +/-500 kHz range around the current RX frequency (what F+5 does) |
+| `E` | start / stop the scan on the armed range |
+| `J` | the state + benchmark report (existing) |
+| `S` | 0x67 samples against the live marks (existing) |

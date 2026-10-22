@@ -21,8 +21,10 @@ port's own settings blob (not the read-only stock codeplug) as `scan_mode_t`
 | 0 | `NORMAL` | step scan, no fast precheck |
 | 1 | `FAST` | single-lane fast-RSSI precheck on the selected VFO's chip |
 | 2 | `FAST BOTH` | the candidate stream is split across the BK4829 and the BK4815 |
+| 3 | `LISTEN` | the selected VFO keeps receiving on its own chip; the **other** chip sweeps the range |
 
-`ScanFastEnabled()` is `!= NORMAL`; `ScanBothEnabled()` is `== FAST BOTH`.
+`ScanFastEnabled()` is `!= NORMAL`; `ScanBothEnabled()` is `== FAST BOTH`;
+`ScanListenEnabled()` is `== LISTEN`.
 
 The value is persisted, which the K1's `gSetting_set_scn` was not.  The extra blob
 is now version 4 and reuses the byte the old `ScTrMd` used.  Migration: a v3 blob
@@ -54,25 +56,32 @@ monotonically increasing `ordinal`.  The list cursor was factored out into
 * **Hit arbitration** (`scan_dual_choose_hit`): if both lanes hit in one batch the
   lower original ordinal wins, so scan order is preserved.
 
-## What the "FAST BOTH" path actually does (software, not yet radio-validated)
+## What the "FAST BOTH" path actually does
 
 `ScanBothFastPrecheck()` in `app/chFrScanner.c` runs when `SetScn = FAST BOTH`
 and the fast scan is enabled:
 
-1. pull a full fast batch per lane (`2 * SCAN_FAST_PRECHECK_STEPS` candidates)
-   from the shared cursor;
-2. probe each candidate on its assigned chip in ordinal order — the BK4829 lane
-   through the existing `ScanFastTune`/`ScanFastReadCandidateRssi`, the BK4815
-   lane through `bk4815_set_frequency` + `0x44`;
+1. pull up to `2 * SCAN_BOTH_PRECHECK_PAIRS` (24) candidates from the shared
+   cursor, in pairs;
+2. probe a pair of consecutive candidates on **different chips in the same
+   band** as a pipeline: tune both, then read both.  The second tune's bus time
+   (and, with a BK4815 in the pair, its fixed settle delay) covers the first
+   chip's settling, so a pair costs less than two independent probes; the
+   BK4815 is always tuned/read last.  Pairs in different bands fall back to one
+   probe at a time, because the shared front end would move the path under the
+   first chip before it was read (`ScanBothPairUsable`);
 3. update each lane's floor with `scan_dual_rssi_candidate`;
 4. on a hit, point `gRxVfo` at the winning candidate and set the RX scan-source
    override to the winning chip, then let the existing full single-candidate
    tune/verify path run.
 
 The RF path is **shared**: the band/path is switched before a lane's sample
-(`pa_select_band`), and the two parts share one bit-banged bus, so the lanes are
-time-multiplexed, not simultaneous.  No wall-clock speed-up is claimed until it
-is measured on the radio.
+(`pa_select_band`, only on a band change), and the two parts share one
+bit-banged bus, so the bus work is still serialized; what overlaps is the
+settling.  The batch size is the throughput lever the measurement pointed at:
+the K1 scanner runs one precheck batch per app pass, and the pass (display
+included) paced the measured 61 ms per 12-candidate batch, so 24 candidates per
+pass roughly doubles throughput until the probes themselves fill the pass.
 
 Both lanes feed the RSSI sparkline: the BK4829's 9-bit `0x67` value as-is and the
 BK4815's 7-bit `0x44` value scaled ×4 into the same range, so the graph works in
@@ -93,6 +102,94 @@ hardcoded to the BK4829, so with `TrVfoA/B = 4815` the single-lane precheck
 probes the BK4829 while the full verify path follows the BK4815 assignment.
 Making the precheck lane-aware is future work; `FAST BOTH` is the mode that uses
 both chips explicitly.
+
+## Listen while scanning (`LISTEN`)
+
+`SetScn = LISTEN` keeps the selected VFO receiving on its own transceiver while
+the other one sweeps the range.  Plan:
+`docs/superpowers/plans/2026-10-19-listen-while-scanning.md`.  The constraints
+come from the board, not from taste:
+
+- the two parts are independent receivers on a shared bus (bus traffic is
+  harmless to audio), but the **band path is shared** (PA0/PA1 and the
+  BK4829's `0x33` chip path), so a probe in the other band would move the front
+  end under the receiver -- `ScanRangeFastPrecheckListen()` therefore **skips
+  candidates outside the listen lane's band**;
+- the **AF node is shared**: the BK4815's audio reaches the amplifier while the
+  BK4829's AF **DAC** (`0x30` bit 9) is on, and independently of the 4829's AF
+  output select (`0x47`) -- measured in the duplex runs (2026-10-19).  The
+  LISTEN precheck therefore does **not** mute the AF DAC (the FAST/FAST BOTH
+  precheck does: that is what makes today's scan silent), and `rx_poll()` holds
+  `0x47 = 0x6040` while a scan runs on the 4829 so the stepped chip's audio
+  cannot ride the node;
+- the walk still uses `gRxVfo` as its cursor (that is how the K1's range scan
+  steps), so **`rx_service()` yields the coordinator while a scan is active**:
+  no retune, no unassigned-4829 mirror, no band/path repair -- those read the
+  chips and would fight the probes.  `CHFRSCANNER_Stop()` clears the override
+  and the coordinator re-applies both lanes.
+
+The scanner probes the scan lane only (`BK4819_SetFrequency` + the RSSI read for
+a BK4829 lane, `bk4815_set_frequency` + `0x44` scaled x4 for a BK4815 lane), so
+the listening lane's registers are never touched.  The listen VFO's **audio**
+follows the poller's squelch as usual.
+
+**Radio gates (unvalidated):** listen on the 4815 at 446.00625 while scanning
+446.005-447.005 on the 4829 with a carrier on 446.00625 -- the downlink must
+stay audible through the sweep; a hit pauses/opens as today; stopping restores
+the VFO; PTT during a LISTEN scan must not break either lane; NORMAL/FAST/
+FAST BOTH unchanged.
+
+## The scanner's squelch trigger (fixed 2026-10-21)
+
+The fast precheck's threshold used to be `gRxVfo->SquelchOpenRSSIThresh`, which
+the K1 computes from six bytes per squelch level of **its own** EEPROM
+calibration at `0x010060`.  This radio's external flash has nothing there (it
+reads `0xFF`), so the trigger was **247** on `0x67`'s 9-bit scale -- above any
+signal the part reports (a keyed carrier measured 236).  Both `FAST` and the
+BK4829 lane of `FAST BOTH` were nearly deaf as a result, while still counting
+every probe, so the throughput benchmark did not show it.
+
+`ScanFastReceiveMark()` now returns the same level-derived mark the receive gate
+uses (`rx_squelch_open_mark()` in `driver/rx.h`), for the scan lane and for the
+BK4815 lane's squelch, so the scanner and the audio agree on what a signal is;
+`ScanFastSquelchEnabled()` keeps the K1's "squelch off = no fast precheck" rule.
+This is code-level and unvalidated on the radio: the gate is a hit on each lane
+at the measured carrier levels (see the plan's gates).
+
+## LISTEN, validated on the radio (2026-10-22)
+
+Automated with CAT `STATUS`/`SM` plus the console's `o`/`N`/`E` keys, an
+FM-modulated carrier on the listen channel:
+
+| check | result |
+|---|---|
+| audio during the scan | **tone, continuous** (heard on the radio) |
+| sweep while the listen squelch is open | **0 probes in 9.5 s** — the sweep yields |
+| sweep after the carrier goes | 1716 probes / 9.5 s = **180 probes/s**; 436/s over a shorter run |
+| listen VFO during the scan | unchanged (the sweep cursor is internal) |
+| after stop | back on the channel, squelch state intact |
+
+Three defects had to be fixed to get there, all found by that run:
+
+1. **The walk moved the listen VFO.**  `ScanRangeFastPrecheckListen()` used
+   `gRxVfo` as its cursor and never restored it; after one scan the receiver sat
+   75 kHz off its channel (carrier lost).  The cursor now lives in
+   `scanListenCursor` and the listen record is restored after every quiet batch;
+   a *hit* is left in place for the full tune.
+2. **A false hit parked the scan.**  One noisy sample on the scan lane moved the
+   receiver onto a non-signal and the sweep never resumed ("446.29375, no tone,
+   no resume").  LISTEN now re-probes a candidate once before accepting it
+   (`ScanListenProbe()`), like the FAST BOTH path already did.
+3. **The amplifier was left off.**  `RADIO_SetupRegisters()` begins with
+   `AUDIO_AudioPathOff()` (PC13) and runs on every scan start/reconfiguration,
+   while `rx_poll()` re-enabled the audio only on a squelch *transition*: with a
+   carrier already open, the receiver stayed silent for the whole scan.  Both
+   `0x47` and the audio path are now driven every poll on both lanes.
+
+And the sweep has to yield, not just coexist: with a carrier present, the
+stepping chip's LO perturbed the listener's `0x67` between 269 and 86 through
+the shared front end, which is audible as chopping.  Pausing while the listen
+squelch is open is therefore the correct behaviour, not a workaround.
 
 ## The RX scan-source override
 
@@ -144,13 +241,26 @@ probe design should be revisited or `FAST BOTH` removed.
 | 1 | 300 probes / 3083 ms = 97/s | 516 / 3070 ms = 168/s | 1.73x |
 | 2 | 300 / 3083 = 97/s | 516 / 3070 = 168/s | 1.72x |
 
-So `FAST BOTH` is about **1.7x**, not 2x: the BK4829's per-candidate tune/settle
-is the expensive half (~10 ms each), and the BK4815 lane adds cheaper probes.  The
-sweep was above the 134 MHz split, so both lanes were used.  Note that `FAST BOTH`
-also probes one batch per lane per interval, so some of the gain is simply "more
-candidates per scheduler batch"; below 134 MHz all candidates stay on the BK4829
-and both lanes' batches still run, which should still be faster but is not yet
-measured.
+Measured again after the 2026-10-21/22 changes, on the radio, both bands,
+quiet range, SQL 4:
+
+| band | FAST | FAST BOTH | ratio | in-batch | gap |
+|---|---|---|---|---|---|
+| 446.00625..447.00625 | 401/s | **671/s** | **1.67x** | 53.2 ms | 0.7 ms |
+| 145.50000..146.50000 | 401/s | 671/s | **1.67x** | 53.2 ms | 0.7 ms |
+
+The earlier VHF run measured 1.08x with a 53 ms/batch gap: the BK4815 lane's
+own jitter read as a hit every batch and each one bought a full re-tune.  The
+confirmation probe and the 12-count 4815 margin fixed that, and the gap is now
+noise.  Note the ratio only means anything on a quiet range: with a carrier
+inside the range both lanes hit it and the benchmark reads below 1.
+
+That was the **12-candidate** FAST BOTH batch.  The batch is now 24 candidates
+with the paired probe (`SCAN_BOTH_PRECHECK_PAIRS`), so the earlier figure is the
+baseline to beat; the same `J` run has to show it.  Note that `FAST BOTH` also
+probes more candidates per scheduler interval, which is where most of the gain
+comes from, and that below 134 MHz all candidates stay on the BK4829 while both
+lanes' batches still run.
 
 ## Open / radio-validation gates
 
@@ -163,8 +273,9 @@ behaviour has run on the radio.
   and is not expected to speed up.
 * Whether the shared band/path switch lets a lane's RSSI reading be meaningful
   after the other lane moved the path (cross-band interleaving).
-* The BK4815 lane's squelch mark and margins (currently
-  `RX4815_SQUELCH_OPEN_MARK` and the shared `SCAN_FAST_*` margins).
+* The BK4815 lane's squelch margins (`SCAN_FAST4815_*`); its **opening mark**
+  now follows `SQUELCH_LEVEL` (`rx_squelch_open_mark()` in `driver/rx.h`), with
+  level 8 reproducing the measured pair.
 * A hit on each lane: full verification, correct audio source, pause/resume.
 * PTT while scanning, and stop restoring the RX VFO/transceiver/audio.
 

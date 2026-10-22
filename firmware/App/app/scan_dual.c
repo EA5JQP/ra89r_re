@@ -47,10 +47,13 @@ bool scan_dual_rssi_candidate(scan_lane_state_t *lane, uint16_t rssi,
         return false;
 
     if (lane->noise_floor == SCAN_LANE_FLOOR_UNSET) {
-        /* Seed the floor from the first reading.  The squelch mark decides
-         * whether that reading is already a candidate. */
+        /* Seed the floor from the first reading and do *not* call it a
+         * candidate: that sample is as likely to be noise as anything else, and
+         * treating it as a hit made the dual scan stop on the first probe of
+         * every pass (the BK4815 lane's RSSI sits just above its level mark).
+         * The next probe tests against the seeded floor. */
         lane->noise_floor = rssi;
-        return squelch_open > 0u && rssi >= squelch_open;
+        return false;
     }
 
     noise_trigger   = scan_dual_sat_add(lane->noise_floor, noise_margin);

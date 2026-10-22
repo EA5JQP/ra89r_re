@@ -322,7 +322,7 @@ static void print_help(void)
     uart_puts("\nthe K1 GUI owns the panel; these are console diagnostics\n"
               "          h help   i diagnostics   d dump screen as ASCII\n"
               "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
-              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n"
+              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40)   y toggle PA1   z toggle 0x33 pin 2 (0x10)\n          H audio chain (regs 0x30/0x47/0x48/0x50, PC13, squelch, lane)\n          o cycle SetScn   7 cycle SQL   8 switch VFO A/B   9/I cycle TrVfoA/B\n          N arm a +/-500 kHz range   E start/stop the scan (automation)\n"
               "          D step the RF bus delay (find what still gives audio)\n"
               "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
@@ -845,6 +845,7 @@ static const char *scan_mode_name(void)
     switch (gSetting_set_scn) {
         case SCAN_MODE_FAST_BOTH: return "FAST BOTH";
         case SCAN_MODE_FAST:      return "FAST";
+        case SCAN_MODE_LISTEN:    return "LISTEN";
         default:                  return "NORMAL";
     }
 }
@@ -950,6 +951,14 @@ static void dual_rf_diag(void)
     uart_printf("  audio source: %s   squelch %s   rssi 0x%03X\n",
                 rx_audio_is_4815() ? "BK4815" : "BK4829",
                 rx_squelch_open() ? "OPEN" : "closed", (unsigned)rx_rssi());
+    uart_printf("  SQL level %u (0 = off)  lane floor %u  live marks open %u close %u\n",
+                (unsigned)gEeprom.SQUELCH_LEVEL,
+                (unsigned)rx_squelch_floor(),
+                (unsigned)rx_squelch_open_mark_now(),
+                (unsigned)rx_squelch_close_mark_now());
+    uart_printf("  RX lane path: pin 4 (0x33 bit 0x04) %s  (lane is %s)\n",
+                pa_rx_lane_is_4815() ? "SET" : "clear",
+                pa_rx_lane_is_4815() ? "BK4815" : "BK4829");
     uart_printf("  VFO A %u.%05u MHz   VFO B %u.%05u MHz\n",
                 (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency / 100000u),
                 (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency % 100000u),
@@ -970,12 +979,44 @@ static void dual_rf_diag(void)
     uart_printf("          0x70=0x%04X 0x71=0x%04X 0x72=0x%04X 0x75=0x%04X\n",
                 (unsigned)bk4815_read_reg(0x70), (unsigned)bk4815_read_reg(0x71),
                 (unsigned)bk4815_read_reg(0x72), (unsigned)bk4815_read_reg(0x75));
-    uart_printf("          0x43(SNR)=0x%04X 0x44(RSSI)=0x%04X -> %u  (marks open 0x%02X close 0x%02X)\n",
+    uart_printf("          0x43(SNR)=0x%04X 0x44(RSSI)=0x%04X -> %u  "
+                "(this lane: floor %u open %u close %u)\n",
                 (unsigned)bk4815_read_reg(0x43), (unsigned)bk4815_read_reg(0x44),
                 (unsigned)(bk4815_read_reg(0x44) & 0x7fu),
-                (unsigned)RX4815_SQUELCH_OPEN_MARK, (unsigned)RX4815_SQUELCH_CLOSE_MARK);
+                (unsigned)rx_squelch_floor(),
+                (unsigned)rx_squelch_open_mark_from_floor(true,
+                                                          gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
+                                                          gEeprom.SQUELCH_LEVEL,
+                                                          (uint16_t)(bk4815_read_reg(0x44) & 0x7fu)),
+                (unsigned)rx_squelch_close_mark_from_floor(true,
+                                                           gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
+                                                           gEeprom.SQUELCH_LEVEL,
+                                                           (uint16_t)(bk4815_read_reg(0x44) & 0x7fu)));
 
     scan_rate_benchmark();
+
+    {
+        uint32_t us[5];
+        uint32_t batches = 0, probes = 0;
+
+        CHFRSCANNER_GetScanBothProfile(us, &batches, &probes);
+        if (batches != 0u) {
+            const uint32_t total = us[0] + us[1] + us[2];
+
+            uart_printf("  FAST BOTH profile: %u batches, %u probes, "
+                        "%u.%01u ms/batch in the batch, %u.%01u ms/batch wall\n",
+                        (unsigned)batches, (unsigned)probes,
+                        (unsigned)(total / batches / 1000u),
+                        (unsigned)((total / batches / 100u) % 10u),
+                        (unsigned)(us[3] / batches / 1000u),
+                        (unsigned)((us[3] / batches / 100u) % 10u));
+            uart_printf("    per batch: pull %u us  tune %u us  read %u us  "
+                        "precheck %u us  gap %u us\n",
+                        (unsigned)(us[0] / batches), (unsigned)(us[1] / batches),
+                        (unsigned)(us[2] / batches), (unsigned)(us[3] / batches),
+                        (unsigned)(us[4] / batches));
+        }
+    }
 
     uart_puts("  sampling 0x44 for ~5 s -- key a signal on the selected VFO now:\n");
 
@@ -1277,10 +1318,12 @@ static void rf_watch(void)
 {
     uint16_t min = 0xFFFFu, max = 0, last = 0;
     unsigned i;
+    const uint16_t open  = rx_squelch_open_mark_now();
+    const uint16_t close = rx_squelch_close_mark_now();
 
-    uart_printf("\nRF: BK4829 reg 0x67 every 200 ms for 4 s "
-                "(0xB4 / 0xCF are the stock's squelch marks)\n"
+    uart_printf("\nRF: reg 0x67 / 0x44 every 200 ms for 4 s (live marks open %u close %u)\n"
                 "  RX %u.%05u MHz, %s, %s (>134 MHz split)\n",
+                (unsigned)open, (unsigned)close,
                 (unsigned)(rx_rx_frequency() / 100000u),
                 (unsigned)(rx_rx_frequency() % 100000u),
                 pa_band_is_uhf() ? "UHF" : "VHF",
@@ -1290,6 +1333,9 @@ static void rf_watch(void)
                   "  in RX and these readings will not follow a carrier.\n");
 
     for (i = 0; i < 20u; i++) {
+        /* Read the part directly: the app loop (and so rx_poll) does not run
+         * while this handler blocks, and sampling the polled value showed the
+         * same number twenty times. */
         uint16_t v = BK4819_GetRSSI();
 
         if (v < min)
@@ -1299,7 +1345,8 @@ static void rf_watch(void)
         last = v;
 
         uart_printf("  %02u: 0x%03X%4u %s\n", i, (unsigned)v, (unsigned)v,
-                    v >= 0xCFu ? "open" : (v < 0xB4u ? "quiet" : "between"));
+                    v >= rx_squelch_open_mark_now() ? "open"
+                        : (v < rx_squelch_close_mark_now() ? "quiet" : "between"));
         systick_delay_ms(200);
     }
 
@@ -2000,6 +2047,141 @@ int main(void)
                 uart_printf("\nBK4815 AF forced %s\n",
                             rx_force_bk4815_af_on() ? "ON (squelch bypassed)" : "off");
                 break;
+            case 'o': {
+                /* Automation: cycle SetScn NORMAL -> FAST -> FAST BOTH -> LISTEN. */
+                static const uint8_t next[4] = { 1u, 2u, 3u, 0u };
+
+                gSetting_set_scn = next[gSetting_set_scn & 3u];
+                uart_printf("\nSetScn = %u (%s)\n", (unsigned)gSetting_set_scn,
+                            gSetting_set_scn == 1u ? "FAST" :
+                            gSetting_set_scn == 2u ? "FAST BOTH" :
+                            gSetting_set_scn == 3u ? "LISTEN" : "NORMAL");
+                break;
+            }
+            case '7':
+                /* Automation: cycle the squelch level 0..9. */
+                gEeprom.SQUELCH_LEVEL = (uint8_t)((gEeprom.SQUELCH_LEVEL + 1u) % 10u);
+                uart_printf("\nSQL level %u   marks now open %u close %u\n",
+                            (unsigned)gEeprom.SQUELCH_LEVEL,
+                            (unsigned)rx_squelch_open_mark_now(),
+                            (unsigned)rx_squelch_close_mark_now());
+                break;
+            case '8': {
+                /* Automation: switch the selected VFO (what EXIT does). */
+                const uint8_t vfo = (uint8_t)(gEeprom.RX_VFO ? 0u : 1u);
+
+                gEeprom.RX_VFO = vfo;
+                gEeprom.TX_VFO = vfo;
+                RADIO_ConfigureChannel(vfo, VFO_CONFIGURE_RELOAD);
+                gUpdateDisplay = true;
+                gUpdateStatus  = true;
+                uart_printf("\nVFO %c selected\n", vfo ? 'B' : 'A');
+                break;
+            }
+            case '9': {
+                /* Automation: cycle TrVfoA between the two transceivers. */
+                const rf_xcvr_t x = (SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4815)
+                                        ? RF_XCVR_BK4829 : RF_XCVR_BK4815;
+
+                SETTINGS_SetVfoTransceiver(0u, x);
+                rf_dual_reapply();
+                uart_printf("\nTrVfoA = %s\n", x == RF_XCVR_BK4815 ? "4815" : "4829");
+                break;
+            }
+            case 'I': {
+                const rf_xcvr_t x = (SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815)
+                                        ? RF_XCVR_BK4829 : RF_XCVR_BK4815;
+
+                SETTINGS_SetVfoTransceiver(1u, x);
+                rf_dual_reapply();
+                uart_printf("\nTrVfoB = %s\n", x == RF_XCVR_BK4815 ? "4815" : "4829");
+                break;
+            }
+            case 'N': {
+                /* Automation: arm a +/-500 kHz range around the current RX
+                 * frequency, in frequency mode (what F+5 does by hand). */
+                const uint32_t f  = gRxVfo->freq_config_RX.Frequency;
+                const uint8_t  rx = gEeprom.RX_VFO;
+
+                gRxVfo->Band              = (uint16_t)FREQUENCY_GetBand(f);
+                gEeprom.ScreenChannel[rx] = (uint16_t)(FREQ_CHANNEL_FIRST + gRxVfo->Band);
+                gEeprom.FreqChannel[rx]   = gEeprom.ScreenChannel[rx];
+                gRxVfo->CHANNEL_SAVE      = gEeprom.ScreenChannel[rx];
+                gScanRangeStart           = (f > 50000u) ? f - 50000u : 0u;
+                gScanRangeStop            = f + 50000u;
+                uart_printf("\nrange armed %u.%05u .. %u.%05u MHz\n",
+                            (unsigned)(gScanRangeStart / 100000u),
+                            (unsigned)(gScanRangeStart % 100000u),
+                            (unsigned)(gScanRangeStop / 100000u),
+                            (unsigned)(gScanRangeStop % 100000u));
+                break;
+            }
+            case 'E':
+                /* Automation: start/stop the scan on the armed range. */
+                if (gScanStateDir == SCAN_OFF) {
+                    if (!gScanRangeStart) {
+                        uart_puts("\nno range armed -- press N first\n");
+                        break;
+                    }
+                    CHFRSCANNER_Start(true, SCAN_FWD);
+                    uart_puts("\nscan started\n");
+                } else {
+                    CHFRSCANNER_Stop();
+                    uart_puts("\nscan stopped\n");
+                }
+                break;
+            case 'H': {
+                /* Read-only: the whole audio chain as it stands.  Plain receive
+                 * and scanning differ here (radio 2026-10-22: a tone in plain
+                 * receive, silence while a LISTEN scan ran). */
+                uart_printf("\naudio chain: 0x30=%04X (bit9 = AF DAC) 0x37=%04X "
+                            "0x47=%04X (bits 11:8 = AF select) 0x48=%04X 0x50=%04X "
+                            "0x67=%04X\n",
+                            (unsigned)BK4819_ReadRegister(0x30),
+                            (unsigned)BK4819_ReadRegister(0x37),
+                            (unsigned)BK4819_ReadRegister(0x47),
+                            (unsigned)BK4819_ReadRegister(0x48),
+                            (unsigned)BK4819_ReadRegister(0x50),
+                            (unsigned)BK4819_ReadRegister(0x67));
+                uart_printf("  PC13 %u (audio path helper says %s), speaker %u, "
+                            "squelch %s, lane %s, function %u, scan dir %d\n",
+                            (unsigned)(gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN) ? 1u : 0u),
+                            audio_path_is_on() ? "on" : "off",
+                            (unsigned)gEnableSpeaker,
+                            rx_squelch_open() ? "open" : "closed",
+                            rx_audio_is_4815() ? "4815" : "4829",
+                            (unsigned)gCurrentFunction,
+                            (int)gScanStateDir);
+                break;
+            }
+            case 'y':
+                /* PA1: the stock's receive entry drives it low, the port high. */
+                {
+                    static bool high = true;
+
+                    high = !high;
+                    pa_set_pa1(high);
+                    uart_printf("\nPA1 %s\n", high ? "high" : "low");
+                }
+                break;
+            case 'z':
+                pa_toggle_pin2();
+                uart_printf("\n0x33 pin 2 (0x10) toggled -> 0x%04X\n",
+                            (unsigned)BK4819_ReadRegister(BK4819_REG_33));
+                break;
+            case 'g': {
+                /* Receive-path bit 0 of 0x33 (0x40): the K1 calls it
+                 * RX_ENABLE and keeps it set, the stock's receive entry clears
+                 * it (`FUN_080093EC` -> `FUN_080137d4(3, 0)`).  Toggle it live so
+                 * the bench can tell which reading is right without a rebuild. */
+                const bool set = (BK4819_ReadRegister(BK4819_REG_33) & 0x40u) != 0u;
+
+                BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, !set);
+                uart_printf("\n0x33 bit 0 (0x40) %s -> 0x%04X\n",
+                            set ? "cleared" : "set",
+                            (unsigned)BK4819_ReadRegister(BK4819_REG_33));
+                break;
+            }
             case 'n':
                 bk4815_dump_registers();
                 bk4829_dump_registers();

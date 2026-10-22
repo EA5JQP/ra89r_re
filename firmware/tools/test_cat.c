@@ -74,6 +74,50 @@ static void test_other_frames(void)
 }
 
 /* Look4Sat's builder sends a leading mode/sub byte before the command. */
+/* SM (read S-meter), VS (VFO select) and the port's STATUS extension. */
+static void test_meter_and_vfo(void)
+{
+    cat_parser_t p;
+    uint8_t frame[CAT_FRAME_LEN];
+    bool got;
+
+    cat_parser_reset(&p);
+    const uint8_t sm[5] = { 0x00, 0x00, 0x00, 0x00, 0x02 };
+    got = false;
+    for (int i = 0; i < 5; i++)
+        got = cat_parser_feed(&p, sm[i], frame) || got;
+    check(got && cat_frame_cmd(frame) == CAT_CMD_SM, "SM frame detected");
+
+    cat_parser_reset(&p);
+    const uint8_t vs_a[5] = { 0x00, 0x00, 0x00, 0x00, 0x81 };
+    got = false;
+    for (int i = 0; i < 5; i++)
+        got = cat_parser_feed(&p, vs_a[i], frame) || got;
+    check(got && cat_frame_cmd(frame) == CAT_CMD_VS && frame[0] == 0x00,
+          "VS frame for VFO A detected");
+
+    cat_parser_reset(&p);
+    const uint8_t vs_b[5] = { 0x01, 0x00, 0x00, 0x00, 0x81 };
+    got = false;
+    for (int i = 0; i < 5; i++)
+        got = cat_parser_feed(&p, vs_b[i], frame) || got;
+    check(got && frame[0] == 0x01, "VS frame for VFO B detected");
+
+    cat_parser_reset(&p);
+    const uint8_t vs_bad[5] = { 0x02, 0x00, 0x00, 0x00, 0x81 };
+    got = false;
+    for (int i = 0; i < 5; i++)
+        got = cat_parser_feed(&p, vs_bad[i], frame) || got;
+    check(!got, "VS with an invalid VFO number is rejected");
+
+    cat_parser_reset(&p);
+    const uint8_t st[5] = { 0x00, 0x00, 0x00, 0x00, 0xE1 };
+    got = false;
+    for (int i = 0; i < 5; i++)
+        got = cat_parser_feed(&p, st[i], frame) || got;
+    check(got && cat_frame_cmd(frame) == CAT_CMD_STATUS, "STATUS frame detected");
+}
+
 static void test_mode_and_ctcss(void)
 {
     cat_parser_t p;
@@ -132,6 +176,7 @@ int main(void)
 {
     test_set_freq();
     test_other_frames();
+    test_meter_and_vfo();
     test_mode_and_ctcss();
     test_autodetect();
     test_reject();

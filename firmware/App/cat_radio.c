@@ -7,9 +7,11 @@
 #include "cat.h"
 
 #include "dcs.h"
+#include "driver/rx.h"
 #include "driver/tx.h"
 #include "driver/uart.h"
 #include "misc.h"
+#include "settings.h"
 #include "radio.h"
 
 static void cat_ack(void)
@@ -139,6 +141,50 @@ void cat_apply(const uint8_t frame[CAT_FRAME_LEN])
         cat_ack();
         break;
     }
+
+    case CAT_CMD_SM: {
+        /* FT-817 S-meter read: 4 payload bytes, the meter as a 0-255 value in
+         * the last byte (the first three are zero on a real FT-817).  The
+         * mapping is the lane's raw RSSI clamped to 255: the BK4829 reports a
+         * 9-bit value in 0x67, the BK4815 a 7-bit one in 0x44. */
+        uint8_t out[CAT_FRAME_LEN];
+
+        out[0] = 0u;
+        out[1] = 0u;
+        out[2] = 0u;
+        out[3] = (uint8_t)((rx_rssi() > 255u) ? 255u : rx_rssi());
+        out[4] = CAT_CMD_SM;
+        uart_write_raw((const char *)out, CAT_FRAME_LEN);
+        break;
+    }
+
+    case CAT_CMD_STATUS: {
+        /* The port's own receive state (see cat.h). */
+        uint8_t out[CAT_FRAME_LEN];
+        const uint8_t status = (uint8_t)((rx_squelch_open() ? 0x01u : 0u) |
+                                         (rx_audio_is_4815() ? 0x02u : 0u) |
+                                         (uint8_t)(gSetting_set_scn << 2));
+
+        out[0] = status;
+        out[1] = (uint8_t)(rx_rssi() & 0xFFu);
+        out[2] = (uint8_t)(rx_rssi() >> 8);
+        out[3] = gEeprom.SQUELCH_LEVEL;
+        out[4] = CAT_CMD_STATUS;
+        uart_write_raw((const char *)out, CAT_FRAME_LEN);
+        break;
+    }
+
+    case CAT_CMD_VS:
+        /* FT-817 VFO select: payload[0] 0 = A, 1 = B. */
+        if (frame[0] <= 1u) {
+            gEeprom.RX_VFO = frame[0];
+            gEeprom.TX_VFO = frame[0];
+            RADIO_ConfigureChannel(frame[0], VFO_CONFIGURE_RELOAD);
+            gUpdateDisplay = true;
+            gUpdateStatus  = true;
+        }
+        cat_ack();
+        break;
 
     default:
         break;

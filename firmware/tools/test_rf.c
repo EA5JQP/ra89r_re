@@ -506,26 +506,38 @@ static void test_pa_rx_path(void)
 {
     printf("pa receive path (reg 0x33)\n");
 
-    /* The BK4829's own receive state clears both LNA pins (the stock's BK4829
-     * branch, FUN_08016DE8 -> FUN_080137D4(0x10, 0)); pin 4 is the BK4815
-     * branch's.  The 0x9000 bits BK4819_Init() set must survive. */
+    /* The lane decides the receive path (stock: pin 4 for the BK4815 entry,
+     * pins 0/1 cleared for the BK4829's).  The K1's pin 0 ("RX_ENABLE") is kept
+     * for a BK4829 lane because that is the state the port receives with, and
+     * cleared for a BK4815 lane because the stock's receive entry clears it
+     * (FUN_080093EC -> FUN_080137D4(3, 0)).  The 0x9000 bits BK4819_Init() set
+     * must survive. */
+    pa_set_rx_lane(false);
     log_reset();
     BK4819_Init();
     log_reset();
     pa_select_band(14550000u);
-    check_hex(last_reg33(), 0x9000, "VHF receive clears both LNA pins, keeps 0x9000");
+    check_hex(last_reg33(), 0x9040, "BK4829 lane keeps the K1's pin 0 and clears pin 4");
 
     log_reset();
     BK4819_Init();
     log_reset();
     pa_select_band(44600625u);
-    check_hex(last_reg33(), 0x9000, "UHF receive clears both LNA pins, keeps 0x9000");
+    check_hex(last_reg33(), 0x9040, "BK4829 lane at UHF is the same path state");
 
+    pa_set_rx_lane(true);
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    pa_select_band(44600625u);
+    check_hex(last_reg33(), 0x9004, "BK4815 lane sets pin 4 and clears the BK4829's pin 0");
+
+    pa_set_rx_lane(false);
     log_reset();
     BK4819_Init();
     log_reset();
     pa_select_band(11800000u);      /* 118.0 MHz */
-    check_hex(last_reg33(), 0x9000, "118 MHz receive clears both LNA pins, keeps 0x9000");
+    check_hex(last_reg33(), 0x9040, "BK4829 lane at 118 MHz is the same path state");
 }
 
 /* The K1's power ladder reaches 0x36 (its SetupPowerAmplifier) and, with the

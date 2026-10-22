@@ -70,6 +70,13 @@ void bk4815_write_block(uint8_t reg, const uint8_t *bytes, unsigned len);
 /* Replay the stock's boot configuration (FUN_08006A0C) in its original order. */
 void bk4815_configure(void);
 
+/* The stock's per-VFO receive entry (FUN_08016CEC, see bk4815.h): the demod/
+ * baseband/AF block it writes after the tune, including the channel-spacing
+ * bit in register 0x01 (`wide` = 25 kHz, else 12.5 kHz) and the `0x70`
+ * receive restart pair.  Called on a lane (re)configuration, not per scan
+ * probe. */
+void bk4815_receive_entry(bool wide);
+
 /* Register writes the boot configuration consists of: 1 block plus the singles. */
 unsigned bk4815_config_writes(void);
 
@@ -127,6 +134,13 @@ void bk4815_set_frequency(uint32_t freq_10hz, bool tx);
 
 /* Write one SELCALL/tone frequency to register 0x22. */
 void bk4815_set_tone(uint32_t tone_hz);
+
+/* Set the band value in register 0x75 the way the stock's FUN_08013790 does:
+ * read-modify-write, `(read & 0xFFC0) | band`, so the register's own state
+ * (datasheet 117: bit 10 LO injection side, bit 9 tone-to-RX-audio, bits 8:6
+ * RX-audio source) survives.  `band` is the stock's low-six-bit code: 0x09/0x11
+ * the VHF values, 0x0A/0x12 the UHF ones. */
+void bk4815_set_band(uint16_t band);
 
 /* The chip's RSSI indicator: register 0x44, bits 6:0. */
 uint16_t bk4815_read_rssi(void);

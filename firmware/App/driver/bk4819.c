@@ -836,15 +836,15 @@ void BK4819_RX_TurnOn(void)
 void BK4819_PickRXFilterPathBasedOnFrequency(uint32_t Frequency)
 {
     /* Port adaptation (see NOTICE, docs/ra89r_rfpath.md): on this board the RX
-     * LNA pins belong to the BK4815 receive branch.  The BK4829's own receive
-     * state clears both (stock FUN_08016DE8 -> FUN_080137D4(0x10, 0)), and the
-     * radio confirms it -- the K1's pin-4 rule costs ~16 dB on the BK4829 at VHF
-     * (console 'F': pin 4 gave 0x67 = 199, cleared gave 232).  So this K1 rule
-     * is neutralised to the board's BK4829 state. */
+     * LNA pins belong to the receive **lane**, not to the frequency's band.
+     * The stock's BK4829 receive entry clears pin 4 (`FUN_08016DE8` ->
+     * `FUN_080137D4(0x10, 0)`) and its BK4815 entry sets it (`FUN_08016CEC`),
+     * and the radio confirms it -- the K1's pin-4 rule costs ~16 dB on the
+     * BK4829 at VHF (console 'F': pin 4 gave 0x67 = 199, cleared gave 232).
+     * `pa_set_rx_lane()` owns the pin now; this K1 hook must not touch it,
+     * because the app calls it on every receive re-entry and would undo the
+     * lane's choice. */
     (void)Frequency;
-
-    BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, false);
-    BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, false);
 }
 
 void BK4819_DisableScramble(void)

@@ -386,6 +386,7 @@ void      SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr);
 typedef enum {
     SCAN_MODE_NORMAL    = 0,   /* step scan, no fast precheck */
     SCAN_MODE_FAST      = 1,   /* single-lane fast RSSI precheck */
-    SCAN_MODE_FAST_BOTH = 2    /* both transceivers as interleaved scan lanes */
+    SCAN_MODE_FAST_BOTH = 2,   /* both transceivers as interleaved scan lanes */
+    SCAN_MODE_LISTEN    = 3    /* listen on the selected VFO's chip, scan the other */
 } scan_mode_t;
 #endif

@@ -11,12 +11,20 @@
 #include <string.h>
 
 #include "board_pins.h"
+#include "driver/bk4815.h"
 #include "driver/rf_dual.h"
 #include "driver/rf_bus.h"
+#include "driver/rx.h"
 
 /* ------------------------------------------------------------- bus stub --- */
 
 static unsigned writes;
+
+/* Recorded two-byte register writes, so the receive-entry sequence can be
+ * checked by register rather than only by count. */
+static uint8_t  rec_reg[64];
+static uint16_t rec_val[64];
+static unsigned rec_n;
 
 void rf_bus_init(void) { }
 void rf_bus_assert(uint32_t cs) { (void)cs; }
@@ -26,10 +34,27 @@ void rf_bus_bit_out(int bit) { (void)bit; }
 int  rf_bus_bit_in(void) { return 0; }
 void rf_bus_write(uint32_t cs, uint8_t addr, const uint8_t *data, unsigned len)
 {
-    (void)cs; (void)addr; (void)data; (void)len;
+    (void)cs;
     writes++;
+    if (len == 2u && rec_n < (unsigned)(sizeof rec_reg)) {
+        rec_reg[rec_n] = (uint8_t)(addr >> 1);
+        rec_val[rec_n] = (uint16_t)((data[0] << 8) | data[1]);
+        rec_n++;
+    }
 }
 uint16_t rf_bus_read(uint32_t cs, uint8_t addr) { (void)cs; (void)addr; return 0; }
+
+static void rec_reset(void) { rec_n = 0; }
+
+static int rec_has(uint8_t reg, uint16_t value)
+{
+    unsigned i;
+
+    for (i = 0; i < rec_n; i++)
+        if (rec_reg[i] == reg && rec_val[i] == value)
+            return 1;
+    return 0;
+}
 
 /* ---------------------------------------------------------------- checks --- */
 
@@ -44,6 +69,7 @@ static void check(int ok, const char *what)
 int main(void)
 {
     rf_dual_roles_t r;
+    unsigned        i;
 
     printf("rf dual\n");
 
@@ -80,6 +106,108 @@ int main(void)
     rf_dual_apply(&r, 0u);
     check(writes == 0 && !rf_dual_bk4815_active(),
           "no BK4815 role leaves it untouched");
+
+    /* The stock's per-VFO receive entry (FUN_08016CEC), checked by register. */
+    rec_reset();
+    bk4815_receive_entry(true);
+    check(rec_has(0x16, 0xb200) && rec_has(0x2b, 0x403f) &&
+          rec_has(0x6d, 0x6618) && rec_has(0x73, 0x81d0),
+          "BK4815 receive entry: the demod/AF block");
+    check(rec_has(0x01, 0x8044), "wide channel -> 0x01 = 0x8044 (25 kHz)");
+    check(rec_n >= 2u && rec_reg[rec_n - 2u] == 0x70 && rec_val[rec_n - 2u] == 0x0000 &&
+          rec_reg[rec_n - 1u] == 0x70 && rec_val[rec_n - 1u] == 0xa000,
+          "BK4815 receive entry ends with the 0x70 restart pair");
+
+    rec_reset();
+    bk4815_receive_entry(false);
+    check(rec_has(0x01, 0x0044), "narrow channel -> 0x01 = 0x0044 (12.5 kHz)");
+
+    /* The live gate: a lane's marks are its learned floor plus a level-derived
+     * margin, so a fixed pair cannot hide weak signals (radio 2026-10-21: the
+     * 4829 floors were 96-103 VHF / 76-79 UHF, the stock pair is 207/180). */
+    check(rx_squelch_open_mark_from_floor(false, false, 4u, 80u) ==
+              (uint16_t)(80u + rx_squelch_margin(false, 4u)),
+          "BK4829 floor 80 at SQL 4 opens 80 + margin");
+    check(rx_squelch_open_mark_from_floor(false, false, 8u, 80u) >
+              rx_squelch_open_mark_from_floor(false, false, 4u, 80u),
+          "a higher SQL level opens later above the same floor");
+    check(rx_squelch_margin(false, 0u) < rx_squelch_margin(false, 4u) &&
+              rx_squelch_margin(false, 4u) < rx_squelch_margin(false, 9u),
+          "the BK4829 margin is monotone in the level");
+    check(rx_squelch_margin(true, 4u) < rx_squelch_margin(false, 4u),
+          "the BK4815's 7-bit scale keeps its margins smaller");
+    check(rx_squelch_open_mark_from_floor(false, false, 4u, 0u) == 0xCFu,
+          "an unknown floor falls back to the stock pair");
+
+    /* The floor tracker itself (its bugs were found on the radio). */
+    {
+        rx_floor_t f;
+
+        rx_floor_reset(&f);
+        /* The seed is the minimum of the first samples: a transient spike must
+         * not become the floor (radio: a 193 seed above every signal). */
+        rx_floor_step(&f, false, 0xFFFFu, 60u, true);
+        rx_floor_step(&f, false, 0xFFFFu, 193u, true);
+        check(rx_floor_step(&f, false, 0xFFFFu, 58u, true) == 58u, "seed = min of the first samples");
+
+        /* A signal is not noise: it never teaches the floor upward. */
+        for (i = 0; i < 20u; i++)
+            (void)rx_floor_step(&f, false, 0xFFFFu, 199u, true);
+        check(f.floor == 58u, "a strong reading does not raise the floor");
+
+        /* A quieter channel is followed, but only after consecutive samples. */
+        rx_floor_step(&f, false, 0xFFFFu, 50u, true);
+        check(f.floor == 50u, "a small fall is immediate");
+        rx_floor_reset(&f);
+        rx_floor_step(&f, false, 0xFFFFu, 96u, true);
+        rx_floor_step(&f, false, 0xFFFFu, 96u, true);
+        rx_floor_step(&f, false, 0xFFFFu, 96u, true);   /* seed = 96 */
+        rx_floor_step(&f, false, 0xFFFFu, 40u, true);
+        check(f.floor == 96u, "one large low sample is a transient");
+        for (i = 0; i < RX_FLOOR_DROP_SAMPLES; i++)
+            (void)rx_floor_step(&f, false, 0xFFFFu, 40u, true);
+        check(f.floor == 40u, "consecutive low samples move the floor");
+
+        /* No learning while the gate is open. */
+        rx_floor_step(&f, false, 0xFFFFu, 40u, true);
+        (void)rx_floor_step(&f, false, 0xFFFFu, 200u, false);
+        check(f.floor == 40u, "the floor is frozen while open");
+
+        /* A carrier present when a (lane, band) is first learned must not
+         * become the floor: the seed is clamped (radio: a switch to a VFO with
+         * a -20 dBm carrier seeded 199 and the gate stayed shut on 204). */
+        rx_floor_reset(&f);
+        for (i = 0; i < RX_FLOOR_SEED_SAMPLES; i++)
+            (void)rx_floor_step(&f, false, RX_FLOOR_SEED_MAX_4829_UHF, 199u, true);
+        check(f.floor == RX_FLOOR_SEED_MAX_4829_UHF,
+              "a carrier does not seed the floor past the clamp");
+
+        /* The per-lane bounds hold. */
+        check(rx_floor_clamp(1u, true) == RX_FLOOR_MIN_4815 &&
+              rx_floor_clamp(600u, false) == RX_FLOOR_MAX_4829,
+              "the per-lane floor bounds hold");
+    }
+
+    /* The level-only anchors (used when no floor is known): unchanged. */
+    check(rx_squelch_open_mark(false, false, 8u) == 0xCFu &&
+          rx_squelch_close_mark(false, false, 8u) == 0xB4u,
+          "BK4829 level 8 = the measured pair 0xCF/0xB4");
+    check(rx_squelch_open_mark(true, true, 8u) == 30u &&
+          rx_squelch_close_mark(true, true, 8u) == 24u,
+          "BK4815 UHF level 8 = the measured pair 30/24");
+    check(rx_squelch_open_mark(true, false, 8u) == 20u &&
+          rx_squelch_close_mark(true, false, 8u) == 14u,
+          "BK4815 VHF level 8 = the measured pair 20/14");
+    for (i = 2u; i <= 9u; i++) {
+        const uint16_t prev = rx_squelch_open_mark(false, false, (uint8_t)(i - 1u));
+        const uint16_t now  = rx_squelch_open_mark(false, false, (uint8_t)i);
+        check(now > prev, "BK4829 opening mark rises with the squelch level");
+        check(rx_squelch_close_mark(false, false, (uint8_t)i) < now,
+              "BK4829 closing mark stays below the opening mark");
+    }
+    check(rx_squelch_open_mark(true, false, 1u) > 0u &&
+          rx_squelch_open_mark(true, false, 1u) < rx_squelch_open_mark(true, false, 8u),
+          "BK4815 VHF level 1 opens earlier than level 8");
 
     printf("\n%d failed\n", fails);
     return fails ? 1 : 0;

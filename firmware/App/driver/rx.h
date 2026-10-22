@@ -46,6 +46,210 @@
 #define RX4815_SQUELCH_OPEN_MARK_VHF   0x14u   /* 20, VHF */
 #define RX4815_SQUELCH_CLOSE_MARK_VHF  0x0Eu   /* 14, VHF */
 
+/* The BK4815's RSSI floor moves between sessions and bands (17 at 446 MHz on
+ * 2026-10-21, 0-13 at 145.5 on 2026-10-19), so the level mark alone can sit
+ * *below* the noise: at SQL 1 the VHF mark was 6 while the floor was 17, and
+ * the lane was permanently open (and the dual scan stopped on noise every
+ * batch).  The gate therefore keeps a slow floor estimate and never opens
+ * inside `FLOOR_MARGIN` of it; the level mark still decides where the floor
+ * allows it to matter. */
+#define RX4815_FLOOR_MARGIN  4u
+
+/* The marks scale with the user's squelch setting and with the lane's *own*
+ * noise floor, because a fixed mark cannot work on this board: on 2026-10-21
+ * the BK4829's floor measured 96-103 at 145.5 and 76-79 at 446, while the
+ * BK4815's sat at 10-18, and the stock-like fixed pairs (0xCF/0xB4) then hid
+ * every signal below full strength.  The stock itself compares against a
+ * threshold just above its floor (its squelch page values are 23-37, on a
+ * lower-noise AGC setting), so a floor + margin rule is the faithful shape.
+ *
+ * `level` is gEeprom.SQUELCH_LEVEL (0 = off, handled by the caller):
+ * margin = base + step * level, hysteresis below the opening mark. */
+#define RX_SQUELCH_MARGIN_BASE_4829   6u
+#define RX_SQUELCH_MARGIN_STEP_4829   6u
+#define RX_SQUELCH_MARGIN_BASE_4815   2u
+#define RX_SQUELCH_MARGIN_STEP_4815   2u
+#define RX_SQUELCH_HYST_4829          12u
+#define RX_SQUELCH_HYST_4815          4u
+
+/* The margin above the learned floor, monotone in the squelch level. */
+static inline uint16_t rx_squelch_margin(bool use_4815, uint8_t level)
+{
+    const uint8_t lv = (level > 9u) ? 9u : level;
+
+    return (uint16_t)(use_4815
+                          ? (RX_SQUELCH_MARGIN_BASE_4815 + RX_SQUELCH_MARGIN_STEP_4815 * lv)
+                          : (RX_SQUELCH_MARGIN_BASE_4829 + RX_SQUELCH_MARGIN_STEP_4829 * lv));
+}
+
+/* The opening mark for a lane whose floor is `floor`.  The old fixed pairs are
+ * used as a *lower* bound only when the floor is not known yet (floor 0).
+ */
+static inline uint16_t rx_squelch_open_mark_from_floor(bool use_4815, bool uhf,
+                                                       uint8_t level, uint16_t floor)
+{
+    if (floor == 0u)
+        return use_4815 ? (uhf ? RX4815_SQUELCH_OPEN_MARK : RX4815_SQUELCH_OPEN_MARK_VHF)
+                        : RX_SQUELCH_OPEN_MARK;
+
+    return (uint16_t)(floor + rx_squelch_margin(use_4815, level));
+}
+
+static inline uint16_t rx_squelch_close_mark_from_floor(bool use_4815, bool uhf,
+                                                        uint8_t level, uint16_t floor)
+{
+    const uint16_t open = rx_squelch_open_mark_from_floor(use_4815, uhf, level, floor);
+    const uint16_t hyst = use_4815 ? RX_SQUELCH_HYST_4815 : RX_SQUELCH_HYST_4829;
+
+    return (uint16_t)((open > hyst) ? (uint16_t)(open - hyst) : 0u);
+}
+
+/* Backwards-compatible wrappers for callers that only know the level (the
+ * scanner's 4815 lane, tests): the fixed level-8 anchor plus the level steps.
+ */
+#define RX_SQUELCH_STEP_4829   6u    /* per level on the 9-bit 0x67 scale */
+#define RX_SQUELCH_STEP_4815   2u    /* per level on the 7-bit 0x44 scale */
+#define RX_SQUELCH_HYST_4829_FIXED   27u   /* the stock pair's hysteresis */
+#define RX_SQUELCH_HYST_4815_FIXED   6u
+
+/* Signed level offset from the level-8 anchor: -7 at level 1, 0 at 8, +1 at 9. */
+static inline int rx_squelch_level_offset(uint8_t level)
+{
+    const uint8_t lv = (level > 9u) ? 9u : level;
+
+    return (int)lv - 8;
+}
+
+/* The opening / closing mark for a lane.  `use_4815` picks the chip's scale,
+ * `uhf` its band split (the BK4815's RSSI reads lower on VHF), and `level` is
+ * gEeprom.SQUELCH_LEVEL.  A return of 0 for the open mark means "always open"
+ * and is the caller's level-0 case. */
+static inline uint16_t rx_squelch_open_mark(bool use_4815, bool uhf, uint8_t level)
+{
+    const int off = rx_squelch_level_offset(level);
+
+    if (use_4815) {
+        const int base = (int)(uhf ? RX4815_SQUELCH_OPEN_MARK : RX4815_SQUELCH_OPEN_MARK_VHF);
+        const int v    = base + off * (int)RX_SQUELCH_STEP_4815;
+
+        return (uint16_t)((v > 1) ? v : 1);
+    }
+
+    return (uint16_t)((int)RX_SQUELCH_OPEN_MARK + off * (int)RX_SQUELCH_STEP_4829);
+}
+
+static inline uint16_t rx_squelch_close_mark(bool use_4815, bool uhf, uint8_t level)
+{
+    const uint16_t open = rx_squelch_open_mark(use_4815, uhf, level);
+    const uint16_t hyst = use_4815 ? RX_SQUELCH_HYST_4815_FIXED
+                                  : RX_SQUELCH_HYST_4829_FIXED;
+
+    return (uint16_t)((open > hyst) ? (uint16_t)(open - hyst) : 0u);
+}
+
+/* ---- the noise-floor tracker (pure, host-tested) --------------------------
+ *
+ * The gate's threshold is this floor plus the level margin, so the floor has to
+ * be *noise* and nothing else.  Its rules, each one learned the hard way on the
+ * radio (2026-10-21/22):
+ *
+ *  - seed from the minimum of RX_FLOOR_SEED_SAMPLES samples, because the first
+ *    sample after a retune can be a transient (a 193 seed sat above every
+ *    signal and the gate never opened again);
+ *  - a single sample far *below* the floor is a transient too (a mid-retune
+ *    read of 1 held the gate open on noise), but a genuinely quieter channel
+ *    must be followed: a small fall is immediate, a large one after
+ *    RX_FLOOR_DROP_SAMPLES consecutive samples;
+ *  - readings more than RX_FLOOR_RISE_BAND above the floor are signals: the
+ *    floor never learns them (a -20 dBm carrier walked the floor from 49 to
+ *    268), and while the squelch is open it is frozen anyway;
+ *  - per-lane bounds from the measured baselines, applied at seed and after
+ *    every step.
+ */
+#define RX_FLOOR_MIN_4829     40u   /* measured 54-61 UHF, 96-103 VHF */
+#define RX_FLOOR_MIN_4815      8u   /* measured 11-18 */
+#define RX_FLOOR_MAX_4829    200u
+#define RX_FLOOR_MAX_4815     60u
+#define RX_FLOOR_MAX_DROP      8u   /* an immediate one-sample fall */
+#define RX_FLOOR_DROP_SAMPLES  4u   /* consecutive samples for a larger fall */
+#define RX_FLOOR_RISE_BAND     6u   /* above this it is a signal */
+#define RX_FLOOR_SEED_SAMPLES  3u
+/* Seed ceilings, so a carrier present when a (lane, band) is first learned
+ * cannot push the mark above itself -- radio 2026-10-22: switching to a VFO
+ * with a -20 dBm carrier seeded the BK4829's floor at 199 and the mark at 229,
+ * so the gate stayed closed on a 204 reading. */
+#define RX_FLOOR_SEED_MAX_4829_UHF 130u
+#define RX_FLOOR_SEED_MAX_4829_VHF 170u
+#define RX_FLOOR_SEED_MAX_4815_UHF  45u
+#define RX_FLOOR_SEED_MAX_4815_VHF  35u
+
+typedef struct {
+    uint16_t floor;
+    uint16_t seed_min;
+    uint8_t  seed_n;
+    uint8_t  low_cnt;
+    bool     valid;
+} rx_floor_t;
+
+static inline void rx_floor_reset(rx_floor_t *f)
+{
+    f->floor    = 0u;
+    f->seed_min = 0xFFFFu;
+    f->seed_n   = 0u;
+    f->low_cnt  = 0u;
+    f->valid    = false;
+}
+
+static inline uint16_t rx_floor_clamp(uint16_t v, bool use_4815)
+{
+    const uint16_t min = use_4815 ? RX_FLOOR_MIN_4815 : RX_FLOOR_MIN_4829;
+    const uint16_t max = use_4815 ? RX_FLOOR_MAX_4815 : RX_FLOOR_MAX_4829;
+
+    if (v < min)
+        return min;
+    if (v > max)
+        return max;
+    return v;
+}
+
+/* One poll: `rssi` is the reading, `closed` the gate state before this poll.
+ * Returns the floor in force (0 while still seeding). */
+static inline uint16_t rx_floor_step(rx_floor_t *f, bool use_4815, uint16_t seed_max,
+                                     uint16_t rssi, bool closed)
+{
+    if (!f->valid) {
+        if (f->seed_min == 0xFFFFu || rssi < f->seed_min)
+            f->seed_min = rssi;
+        if (++f->seed_n >= RX_FLOOR_SEED_SAMPLES) {
+            const uint16_t seed = (f->seed_min > seed_max) ? seed_max : f->seed_min;
+
+            f->floor = rx_floor_clamp(seed, use_4815);
+            f->valid = true;
+        }
+        return f->valid ? f->floor : 0u;
+    }
+
+    if (!closed)
+        return f->floor;
+
+    if (rssi < f->floor) {
+        if ((uint16_t)(f->floor - rssi) <= RX_FLOOR_MAX_DROP) {
+            f->floor   = rssi;
+            f->low_cnt = 0u;
+        } else if (++f->low_cnt >= RX_FLOOR_DROP_SAMPLES) {
+            f->floor   = rssi;
+            f->low_cnt = 0u;
+        }
+    } else {
+        f->low_cnt = 0u;
+        if (rssi <= (uint16_t)(f->floor + RX_FLOOR_RISE_BAND))
+            f->floor = (uint16_t)(f->floor + ((rssi - f->floor) >> 4));
+    }
+
+    f->floor = rx_floor_clamp(f->floor, use_4815);
+    return f->floor;
+}
+
 /* Bring the RF up and start receiving on `freq_10hz` (10 Hz units, the same
  * convention as the codeplug).  Idempotent enough to be called again to retune. */
 void rx_init(uint32_t freq_10hz);
@@ -62,6 +266,15 @@ void rx_poll(void);
 
 bool rx_squelch_open(void);
 uint16_t rx_rssi(void);
+
+/* The marks actually in force right now: the active lane's learned floor plus
+ * the level-derived margin (rx_squelch_open_mark_from_floor above).  The
+ * scanner uses the opening mark so the sweep and the audio agree. */
+uint16_t rx_squelch_open_mark_now(void);
+uint16_t rx_squelch_close_mark_now(void);
+
+/* The active lane's floor estimate (0 while it is still unknown). */
+uint16_t rx_squelch_floor(void);
 
 /* True when the receive audio is currently taken from the BK4815 (the selected
  * RX VFO's transceiver), for the console diagnostic. */
