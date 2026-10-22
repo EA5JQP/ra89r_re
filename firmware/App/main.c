@@ -2107,8 +2107,8 @@ int main(void)
                 gEeprom.ScreenChannel[rx] = (uint16_t)(FREQ_CHANNEL_FIRST + gRxVfo->Band);
                 gEeprom.FreqChannel[rx]   = gEeprom.ScreenChannel[rx];
                 gRxVfo->CHANNEL_SAVE      = gEeprom.ScreenChannel[rx];
-                gScanRangeStart           = (f > 500000u) ? f - 500000u : 0u;
-                gScanRangeStop            = f + 500000u;
+                gScanRangeStart           = (f > 50000u) ? f - 50000u : 0u;
+                gScanRangeStop            = f + 50000u;
                 uart_printf("\nrange armed %u.%05u .. %u.%05u MHz\n",
                             (unsigned)(gScanRangeStart / 100000u),
                             (unsigned)(gScanRangeStart % 100000u),

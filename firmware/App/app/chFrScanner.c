@@ -328,6 +328,12 @@ typedef enum {
 static uint16_t scanFastReg30;
 static uint16_t scanFastNoiseFloor   = SCAN_FAST_RSSI_MAX;
 static uint32_t scanFastPrevFrequency;
+/* The LISTEN sweep's cursor.  The walk advances gRxVfo's frequency, but gRxVfo
+ * is the *listen* VFO there, so the cursor is carried here instead and the
+ * listen record is restored after every batch (radio 2026-10-22: without this
+ * the receiver ended a scan 75 kHz off its channel). 0 = start from the listen
+ * frequency. */
+static uint32_t scanListenCursor;
 static bool     scanFastLastFullTuneCandidate;
 static VFO_Info_t scanFastDisplayVfo;
 static bool       scanFastDisplayVfoValid;
@@ -400,6 +406,7 @@ static void ScanFastResetState(void)
     // stale calibration into a later sweep.
     scanFastNoiseFloor            = SCAN_FAST_RSSI_MAX;
     scanFastPrevFrequency         = 0;
+    scanListenCursor              = 0;
     scanFastLastFullTuneCandidate = false;
     scanFastDisplayVfoValid       = false;
     ScanBothReset();
@@ -755,6 +762,23 @@ static scan_fast_result_t ScanRangeFastPrecheckListen(void)
     if (!ScanFastSquelchEnabled())
         return SCAN_FAST_DISABLED;
 
+    /* The walk below uses gRxVfo as its cursor, and gRxVfo *is* the listen
+     * lane's VFO, so every quiet batch would leave the receiver tuned to the
+     * last probe: radio 2026-10-22 measured the listen VFO 75 kHz off its
+     * channel after one scan, carrier lost (0x67 269 -> 95, squelch closed).
+     * Save the record and put it back when the batch finds nothing; a hit is
+     * left in place for the caller's full tune. */
+    const FREQ_Config_t saved_rx = gRxVfo->freq_config_RX;
+    bool hit = false;
+
+    /* Give the walk the saved cursor (0 = the listen frequency, via the record
+     * just saved) and let it advance gRxVfo; the listen record is put back at
+     * the end. */
+    if (scanListenCursor != 0u) {
+        gRxVfo->freq_config_RX.Frequency = scanListenCursor;
+        RADIO_ApplyOffset(gRxVfo);
+    }
+
     for (uint8_t i = 0; i < SCAN_FAST_PRECHECK_STEPS; ++i)
     {
         gRxVfo->freq_config_RX.Frequency = ScanRangeNextFrequency();
@@ -776,22 +800,30 @@ static scan_fast_result_t ScanRangeFastPrecheckListen(void)
             continue;
 
         uint16_t rssi;
+        bool     is_hit;
 
         if (listen4815)
         {
-            /* Scan lane: the BK4829.  No 0x30 toggle (that is the sweep's own
-             * audio mute) and no path change: the probes stay in-band. */
+            /* Scan lane: the BK4829, whose scale the live mark belongs to. */
             BK4819_SetFrequency(freq);
-            rssi = ScanFastReadCandidateRssi();
+            rssi   = ScanFastReadCandidateRssi();
+            is_hit = ScanFastIsCandidate(rssi);
         }
         else
         {
-            /* Scan lane: the BK4815. */
+            /* Scan lane: the BK4815.  Its own 7-bit scale and mark -- NOT the
+             * listen lane's live mark, which is the BK4815's here and would
+             * make every 4829 noise sample a candidate. */
+            uint16_t raw;
+
             bk4815_set_frequency(freq, false);
             bk4815_set_band(listen_uhf ? 0x0Au : 0x11u);
             SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
             bk4815_read_rssi();                       /* discard the stale read */
-            rssi = (uint16_t)((bk4815_read_rssi() & 0x7fu) * SCAN_FAST4815_RSSI_SCALE);
+            raw  = (uint16_t)(bk4815_read_rssi() & 0x7fu);
+            rssi   = (uint16_t)(raw * SCAN_FAST4815_RSSI_SCALE);
+            is_hit = raw >= rx_squelch_open_mark_from_floor(true, listen_uhf,
+                                                            gEeprom.SQUELCH_LEVEL, 0u);
         }
 
         scan_candidate_rate_add(&scanCandidateRate, 1u);
@@ -799,8 +831,23 @@ static scan_fast_result_t ScanRangeFastPrecheckListen(void)
         ScanRssiSparklinePush(rssi);
 #endif
 
-        if (ScanFastIsCandidate(rssi))
-            return SCAN_FAST_CANDIDATE;
+        if (is_hit) {
+            hit = true;
+            break;
+        }
+    }
+
+    /* Where the walk got to becomes the next batch's start; the listen VFO goes
+     * back to its own channel either way (a hit leaves it for the caller's full
+     * tune below, which re-applies the hit frequency itself). */
+    scanListenCursor = gRxVfo->freq_config_RX.Frequency;
+    gRxVfo->freq_config_RX = saved_rx;
+    RADIO_ApplyOffset(gRxVfo);
+
+    if (hit) {
+        gRxVfo->freq_config_RX.Frequency = scanListenCursor;
+        RADIO_ApplyOffset(gRxVfo);
+        return SCAN_FAST_CANDIDATE;
     }
 
     return SCAN_FAST_QUIET_BATCH;
