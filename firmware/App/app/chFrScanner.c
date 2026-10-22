@@ -751,6 +751,27 @@ static scan_fast_result_t ScanRangeFastPrecheck(void)
  * steps), which is why rx_service() must not re-tune the lanes while a scan is
  * running -- it yields, see rx.c.  See
  * docs/superpowers/plans/2026-10-19-listen-while-scanning.md. */
+/* One LISTEN probe of the scan lane, returning its raw RSSI (9-bit on the
+ * BK4829, 7-bit on the BK4815).  The candidate decision is made by the caller,
+ * which also re-probes before accepting a hit: a single noise sample used to
+ * move the listen VFO onto a non-signal and the scan then sat there ("the
+ * sweep does not resume", radio 2026-10-22). */
+static uint16_t ScanListenProbe(uint32_t freq, bool listen4815, bool listen_uhf)
+{
+    if (listen4815) {
+        /* Scan lane: the BK4829. */
+        BK4819_SetFrequency(freq);
+        return ScanFastReadRssi();
+    }
+
+    /* Scan lane: the BK4815. */
+    bk4815_set_frequency(freq, false);
+    bk4815_set_band(listen_uhf ? 0x0Au : 0x11u);
+    SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
+    bk4815_read_rssi();                       /* discard the stale read */
+    return (uint16_t)(bk4815_read_rssi() & 0x7fu);
+}
+
 static scan_fast_result_t ScanRangeFastPrecheckListen(void)
 {
     const bool     listen4815 = (SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815);
@@ -800,31 +821,23 @@ static scan_fast_result_t ScanRangeFastPrecheckListen(void)
         if ((freq >= PA_BAND_SPLIT) != listen_uhf)
             continue;
 
-        uint16_t rssi;
-        bool     is_hit;
+        uint16_t       rssi;
+        bool           is_hit;
+        const uint16_t mark4815 = rx_squelch_open_mark_from_floor(true, listen_uhf,
+                                                                 gEeprom.SQUELCH_LEVEL, 0u);
 
-        if (listen4815)
         {
-            /* Scan lane: the BK4829, whose scale the live mark belongs to. */
-            BK4819_SetFrequency(freq);
-            rssi   = ScanFastReadCandidateRssi();
-            is_hit = ScanFastIsCandidate(rssi);
-        }
-        else
-        {
-            /* Scan lane: the BK4815.  Its own 7-bit scale and mark -- NOT the
-             * listen lane's live mark, which is the BK4815's here and would
-             * make every 4829 noise sample a candidate. */
-            uint16_t raw;
+            const uint16_t raw = ScanListenProbe(freq, listen4815, listen_uhf);
 
-            bk4815_set_frequency(freq, false);
-            bk4815_set_band(listen_uhf ? 0x0Au : 0x11u);
-            SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
-            bk4815_read_rssi();                       /* discard the stale read */
-            raw  = (uint16_t)(bk4815_read_rssi() & 0x7fu);
-            rssi   = (uint16_t)(raw * SCAN_FAST4815_RSSI_SCALE);
-            is_hit = raw >= rx_squelch_open_mark_from_floor(true, listen_uhf,
-                                                            gEeprom.SQUELCH_LEVEL, 0u);
+            rssi   = listen4815 ? raw : (uint16_t)(raw * SCAN_FAST4815_RSSI_SCALE);
+            is_hit = listen4815 ? ScanFastIsCandidate(raw) : (raw >= mark4815);
+
+            if (is_hit) {
+                /* Confirm on a second probe before moving the receiver. */
+                const uint16_t again = ScanListenProbe(freq, listen4815, listen_uhf);
+
+                is_hit = listen4815 ? ScanFastIsCandidate(again) : (again >= mark4815);
+            }
         }
 
         scan_candidate_rate_add(&scanCandidateRate, 1u);
