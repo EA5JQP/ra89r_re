@@ -93,16 +93,18 @@ static bool s_force_4815_af;    /* console 'A' diagnostic */
 
 /* Slow noise-floor estimate per lane.  The chip RSSI baselines are not stable
  * (see rx.h), so the gate needs its own floor to avoid opening on noise.  Fast
- * down, slow up, frozen while the squelch is open (a carrier must not become
- * the floor).  Index 0 = BK4829, 1 = BK4815.
- *
- * Two guards matter, both from the radio (2026-10-21): a sample taken while the
- * part is being retuned reads near zero and used to drag the floor to 1, which
- * left the squelch permanently open on the 13-15 noise; and no real floor on
- * this board is below the per-lane minimum measured there. */
+ * down, slow up, and **only learns upward within RISE_BAND of the floor** --
+ * otherwise a carrier that arrives while the gate is still closed becomes the
+ * floor: on the radio 2026-10-21 a -20 dBm carrier walked the BK4829's floor
+ * from 49 to 268, above the signal, and the gate never opened.  Frozen while
+ * the squelch is open, and never learned while a scan runs.  Index 0 = BK4829,
+ * 1 = BK4815. */
 #define RX_FLOOR_MIN_4829   40u   /* measured 54-61 UHF, 96-103 VHF */
 #define RX_FLOOR_MIN_4815    8u   /* measured 11-18 */
+#define RX_FLOOR_MAX_4829  200u
+#define RX_FLOOR_MAX_4815   60u
 #define RX_FLOOR_MAX_DROP    8u   /* a plausible one-sample fall */
+#define RX_FLOOR_RISE_BAND   6u   /* readings above this are signals, not noise */
 
 static uint16_t s_floor[2];
 static bool     s_floor_valid[2];
@@ -110,20 +112,24 @@ static bool     s_floor_valid[2];
 static uint16_t rx_floor_update(uint8_t lane, uint16_t rssi, bool closed)
 {
     const uint16_t min = (lane == 1u) ? RX_FLOOR_MIN_4815 : RX_FLOOR_MIN_4829;
+    const uint16_t max = (lane == 1u) ? RX_FLOOR_MAX_4815 : RX_FLOOR_MAX_4829;
 
     if (lane > 1u)
         lane = 0u;
 
     if (!s_floor_valid[lane]) {
-        s_floor[lane]       = (rssi < min) ? min : rssi;
+        s_floor[lane]       = (rssi < min) ? min : ((rssi > max) ? max : rssi);
         s_floor_valid[lane] = true;
     } else if (closed) {
         if (rssi < s_floor[lane]) {
             if ((uint16_t)(s_floor[lane] - rssi) <= RX_FLOOR_MAX_DROP)
                 s_floor[lane] = (rssi < min) ? min : rssi;
-        } else {
+        } else if (rssi <= (uint16_t)(s_floor[lane] + RX_FLOOR_RISE_BAND)) {
             s_floor[lane] = (uint16_t)(s_floor[lane] + ((rssi - s_floor[lane]) >> 4));
         }
+
+        if (s_floor[lane] > max)
+            s_floor[lane] = max;
     }
 
     return s_floor[lane];
