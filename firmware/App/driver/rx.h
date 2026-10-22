@@ -147,6 +147,98 @@ static inline uint16_t rx_squelch_close_mark(bool use_4815, bool uhf, uint8_t le
     return (uint16_t)((open > hyst) ? (uint16_t)(open - hyst) : 0u);
 }
 
+/* ---- the noise-floor tracker (pure, host-tested) --------------------------
+ *
+ * The gate's threshold is this floor plus the level margin, so the floor has to
+ * be *noise* and nothing else.  Its rules, each one learned the hard way on the
+ * radio (2026-10-21/22):
+ *
+ *  - seed from the minimum of RX_FLOOR_SEED_SAMPLES samples, because the first
+ *    sample after a retune can be a transient (a 193 seed sat above every
+ *    signal and the gate never opened again);
+ *  - a single sample far *below* the floor is a transient too (a mid-retune
+ *    read of 1 held the gate open on noise), but a genuinely quieter channel
+ *    must be followed: a small fall is immediate, a large one after
+ *    RX_FLOOR_DROP_SAMPLES consecutive samples;
+ *  - readings more than RX_FLOOR_RISE_BAND above the floor are signals: the
+ *    floor never learns them (a -20 dBm carrier walked the floor from 49 to
+ *    268), and while the squelch is open it is frozen anyway;
+ *  - per-lane bounds from the measured baselines, applied at seed and after
+ *    every step.
+ */
+#define RX_FLOOR_MIN_4829     40u   /* measured 54-61 UHF, 96-103 VHF */
+#define RX_FLOOR_MIN_4815      8u   /* measured 11-18 */
+#define RX_FLOOR_MAX_4829    200u
+#define RX_FLOOR_MAX_4815     60u
+#define RX_FLOOR_MAX_DROP      8u   /* an immediate one-sample fall */
+#define RX_FLOOR_DROP_SAMPLES  4u   /* consecutive samples for a larger fall */
+#define RX_FLOOR_RISE_BAND     6u   /* above this it is a signal */
+#define RX_FLOOR_SEED_SAMPLES  3u
+
+typedef struct {
+    uint16_t floor;
+    uint16_t seed_min;
+    uint8_t  seed_n;
+    uint8_t  low_cnt;
+    bool     valid;
+} rx_floor_t;
+
+static inline void rx_floor_reset(rx_floor_t *f)
+{
+    f->floor    = 0u;
+    f->seed_min = 0xFFFFu;
+    f->seed_n   = 0u;
+    f->low_cnt  = 0u;
+    f->valid    = false;
+}
+
+static inline uint16_t rx_floor_clamp(uint16_t v, bool use_4815)
+{
+    const uint16_t min = use_4815 ? RX_FLOOR_MIN_4815 : RX_FLOOR_MIN_4829;
+    const uint16_t max = use_4815 ? RX_FLOOR_MAX_4815 : RX_FLOOR_MAX_4829;
+
+    if (v < min)
+        return min;
+    if (v > max)
+        return max;
+    return v;
+}
+
+/* One poll: `rssi` is the reading, `closed` the gate state before this poll.
+ * Returns the floor in force (0 while still seeding). */
+static inline uint16_t rx_floor_step(rx_floor_t *f, bool use_4815, uint16_t rssi, bool closed)
+{
+    if (!f->valid) {
+        if (f->seed_min == 0xFFFFu || rssi < f->seed_min)
+            f->seed_min = rssi;
+        if (++f->seed_n >= RX_FLOOR_SEED_SAMPLES) {
+            f->floor = rx_floor_clamp(f->seed_min, use_4815);
+            f->valid = true;
+        }
+        return f->valid ? f->floor : 0u;
+    }
+
+    if (!closed)
+        return f->floor;
+
+    if (rssi < f->floor) {
+        if ((uint16_t)(f->floor - rssi) <= RX_FLOOR_MAX_DROP) {
+            f->floor   = rssi;
+            f->low_cnt = 0u;
+        } else if (++f->low_cnt >= RX_FLOOR_DROP_SAMPLES) {
+            f->floor   = rssi;
+            f->low_cnt = 0u;
+        }
+    } else {
+        f->low_cnt = 0u;
+        if (rssi <= (uint16_t)(f->floor + RX_FLOOR_RISE_BAND))
+            f->floor = (uint16_t)(f->floor + ((rssi - f->floor) >> 4));
+    }
+
+    f->floor = rx_floor_clamp(f->floor, use_4815);
+    return f->floor;
+}
+
 /* Bring the RF up and start receiving on `freq_10hz` (10 Hz units, the same
  * convention as the codeplug).  Idempotent enough to be called again to retune. */
 void rx_init(uint32_t freq_10hz);

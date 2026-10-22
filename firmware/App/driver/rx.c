@@ -91,48 +91,16 @@ static bool s_audio_4815;
 static uint32_t s_4815_freq;    /* the tune last applied to the BK4815 (for its squelch marks) */
 static bool s_force_4815_af;    /* console 'A' diagnostic */
 
-/* Slow noise-floor estimate per lane.  The chip RSSI baselines are not stable
- * (see rx.h), so the gate needs its own floor to avoid opening on noise.  Fast
- * down, slow up, and **only learns upward within RISE_BAND of the floor** --
- * otherwise a carrier that arrives while the gate is still closed becomes the
- * floor: on the radio 2026-10-21 a -20 dBm carrier walked the BK4829's floor
- * from 49 to 268, above the signal, and the gate never opened.  Frozen while
- * the squelch is open, and never learned while a scan runs.  Index 0 = BK4829,
- * 1 = BK4815. */
-#define RX_FLOOR_MIN_4829   40u   /* measured 54-61 UHF, 96-103 VHF */
-#define RX_FLOOR_MIN_4815    8u   /* measured 11-18 */
-#define RX_FLOOR_MAX_4829  200u
-#define RX_FLOOR_MAX_4815   60u
-#define RX_FLOOR_MAX_DROP    8u   /* a plausible one-sample fall */
-#define RX_FLOOR_RISE_BAND   6u   /* readings above this are signals, not noise */
-
-static uint16_t s_floor[2];
-static bool     s_floor_valid[2];
+/* Noise-floor tracker per lane (its rules and bounds live in rx.h, where they
+ * are host-tested).  Index 0 = BK4829, 1 = BK4815. */
+static rx_floor_t s_floor[2];
 
 static uint16_t rx_floor_update(uint8_t lane, uint16_t rssi, bool closed)
 {
-    const uint16_t min = (lane == 1u) ? RX_FLOOR_MIN_4815 : RX_FLOOR_MIN_4829;
-    const uint16_t max = (lane == 1u) ? RX_FLOOR_MAX_4815 : RX_FLOOR_MAX_4829;
-
     if (lane > 1u)
         lane = 0u;
 
-    if (!s_floor_valid[lane]) {
-        s_floor[lane]       = (rssi < min) ? min : ((rssi > max) ? max : rssi);
-        s_floor_valid[lane] = true;
-    } else if (closed) {
-        if (rssi < s_floor[lane]) {
-            if ((uint16_t)(s_floor[lane] - rssi) <= RX_FLOOR_MAX_DROP)
-                s_floor[lane] = (rssi < min) ? min : rssi;
-        } else if (rssi <= (uint16_t)(s_floor[lane] + RX_FLOOR_RISE_BAND)) {
-            s_floor[lane] = (uint16_t)(s_floor[lane] + ((rssi - s_floor[lane]) >> 4));
-        }
-
-        if (s_floor[lane] > max)
-            s_floor[lane] = max;
-    }
-
-    return s_floor[lane];
+    return rx_floor_step(&s_floor[lane], lane == 1u, rssi, closed);
 }
 
 /* True when the active lane is tuned above the 280 MHz band split. */
@@ -147,7 +115,7 @@ static uint16_t rx_active_floor(void)
 {
     const uint8_t lane = s_audio_4815 ? 1u : 0u;
 
-    return s_floor_valid[lane] ? s_floor[lane] : 0u;
+    return s_floor[lane].valid ? s_floor[lane].floor : 0u;
 }
 
 uint16_t rx_squelch_floor(void)
@@ -169,8 +137,8 @@ uint16_t rx_squelch_close_mark_now(void)
 
 static void rx_floor_invalidate(void)
 {
-    s_floor_valid[0] = false;
-    s_floor_valid[1] = false;
+    rx_floor_reset(&s_floor[0]);
+    rx_floor_reset(&s_floor[1]);
 }
 
 /* A temporary scan-hit receive route (see rx.h).  DEFAULT follows the selected

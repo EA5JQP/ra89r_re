@@ -139,6 +139,46 @@ int main(void)
     check(rx_squelch_open_mark_from_floor(false, false, 4u, 0u) == 0xCFu,
           "an unknown floor falls back to the stock pair");
 
+    /* The floor tracker itself (its bugs were found on the radio). */
+    {
+        rx_floor_t f;
+
+        rx_floor_reset(&f);
+        /* The seed is the minimum of the first samples: a transient spike must
+         * not become the floor (radio: a 193 seed above every signal). */
+        rx_floor_step(&f, false, 60u, true);
+        rx_floor_step(&f, false, 193u, true);
+        check(rx_floor_step(&f, false, 58u, true) == 58u, "seed = min of the first samples");
+
+        /* A signal is not noise: it never teaches the floor upward. */
+        for (i = 0; i < 20u; i++)
+            (void)rx_floor_step(&f, false, 199u, true);
+        check(f.floor == 58u, "a strong reading does not raise the floor");
+
+        /* A quieter channel is followed, but only after consecutive samples. */
+        rx_floor_step(&f, false, 50u, true);
+        check(f.floor == 50u, "a small fall is immediate");
+        rx_floor_reset(&f);
+        rx_floor_step(&f, false, 96u, true);
+        rx_floor_step(&f, false, 96u, true);
+        rx_floor_step(&f, false, 96u, true);   /* seed = 96 */
+        rx_floor_step(&f, false, 40u, true);
+        check(f.floor == 96u, "one large low sample is a transient");
+        for (i = 0; i < RX_FLOOR_DROP_SAMPLES; i++)
+            (void)rx_floor_step(&f, false, 40u, true);
+        check(f.floor == 40u, "consecutive low samples move the floor");
+
+        /* No learning while the gate is open. */
+        rx_floor_step(&f, false, 40u, true);
+        (void)rx_floor_step(&f, false, 200u, false);
+        check(f.floor == 40u, "the floor is frozen while open");
+
+        /* The per-lane bounds hold. */
+        check(rx_floor_clamp(1u, true) == RX_FLOOR_MIN_4815 &&
+              rx_floor_clamp(600u, false) == RX_FLOOR_MAX_4829,
+              "the per-lane floor bounds hold");
+    }
+
     /* The level-only anchors (used when no floor is known): unchanged. */
     check(rx_squelch_open_mark(false, false, 8u) == 0xCFu &&
           rx_squelch_close_mark(false, false, 8u) == 0xB4u,
