@@ -265,6 +265,12 @@ bool rx_ready(void);
 void rx_poll(void);
 
 bool rx_squelch_open(void);
+
+/* The gate has been closed for at least `polls` consecutive polls.  The LISTEN
+ * sweep waits for this (docs/ra89r_scan.md): a single corrupted 0x67 read used
+ * to be enough to start a probe batch, which then collided with the poller and
+ * turned the audio into noise. */
+bool rx_squelch_quiet(uint8_t polls);
 uint16_t rx_rssi(void);
 
 /* The marks actually in force right now: the active lane's learned floor plus
