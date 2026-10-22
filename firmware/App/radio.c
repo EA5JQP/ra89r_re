@@ -445,6 +445,11 @@ void RADIO_ConfigureChannel(const unsigned int VFO, const unsigned int configure
 
     pVfo->Compander = att->compander;
 
+    /* The channel record carries FM for a frequency channel (settings.c), and
+     * every consumer below reads VFO_Info_t::Modulation, so normalise it here
+     * too -- the airband is AM whether or not a demod write follows. */
+    RADIO_ApplyBandModulation(pVfo);
+
     #ifdef ENABLE_FEAT_F4HWN_RESCUE_OPS
     if(gRemoveOffset)
     {
@@ -719,22 +724,23 @@ BK4819_FilterBandwidth_t RADIO_GetAMFilterBandwidth(const VFO_Info_t *pVfo)
  * modulation, so an airband channel cannot key the PA. */
 static bool s_airband_rule_active;
 
-void RADIO_ApplyBandModulation(void)
+void RADIO_ApplyBandModulation(VFO_Info_t *vfo)
 {
-    const bool air = FREQUENCY_IsAirband(gRxVfo->pRX->Frequency);
+    const bool air = FREQUENCY_IsAirband(vfo->pRX->Frequency);
 
-    if (air && gRxVfo->Modulation != MODULATION_AM) {
-        gRxVfo->Modulation = MODULATION_AM;
-        gUpdateDisplay     = true;
-        gUpdateStatus      = true;
-    } else if (!air && gRxVfo->Modulation == MODULATION_AM && s_airband_rule_active) {
+    if (air && vfo->Modulation != MODULATION_AM) {
+        vfo->Modulation = MODULATION_AM;
+        gUpdateDisplay  = true;
+        gUpdateStatus   = true;
+    } else if (!air && vfo->Modulation == MODULATION_AM && s_airband_rule_active) {
         /* Only undo the rule's own choice, not a menu setting. */
-        gRxVfo->Modulation = MODULATION_FM;
-        gUpdateDisplay     = true;
-        gUpdateStatus      = true;
+        vfo->Modulation = MODULATION_FM;
+        gUpdateDisplay  = true;
+        gUpdateStatus   = true;
     }
 
-    s_airband_rule_active = air;
+    if (vfo == gRxVfo)
+        s_airband_rule_active = air;
 }
 
 void RADIO_SetupRegisters(bool switchToForeground)
@@ -817,7 +823,7 @@ void RADIO_SetupRegisters(bool switchToForeground)
     }
 
     // Keep the demodulator in sync when retuning without entering RX audio.
-    RADIO_ApplyBandModulation();
+    RADIO_ApplyBandModulation(gRxVfo);
     RADIO_SetModulation(gRxVfo->Modulation);
 
     BK4819_SetupSquelch(
@@ -1044,6 +1050,13 @@ void RADIO_SetTxParameters(void)
 
 void RADIO_SetModulation(ModulationMode_t modulation)
 {
+    /* The airband is AM by nature, and the demod is programmed from several
+     * callers (receive setup, the app's incoming handler, the menu).  Enforce
+     * the band here so none of them can put the receiver back on FM while it
+     * is tuned inside 108.0-137.0 MHz. */
+    if (FREQUENCY_IsAirband(gRxVfo->pRX->Frequency))
+        modulation = MODULATION_AM;
+
     #ifdef ENABLE_BYP_RAW_DEMODULATORS
     if (modulation == MODULATION_BYP || modulation == MODULATION_RAW) {
         uint16_t reg_3d_val = 0x0000;
