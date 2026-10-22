@@ -2167,6 +2167,15 @@ int main(void)
                             (unsigned)BK4819_ReadRegister(0x48),
                             (unsigned)BK4819_ReadRegister(0x50),
                             (unsigned)BK4819_ReadRegister(0x67));
+                uart_printf("  demod: 0x31=%04X (bit0 AM) 0x42=%04X 0x2A=%04X 0x3D=%04X  "
+                            "VFO mod %u (%s) airband %d\n",
+                            (unsigned)BK4819_ReadRegister(0x31),
+                            (unsigned)BK4819_ReadRegister(0x42),
+                            (unsigned)BK4819_ReadRegister(0x2A),
+                            (unsigned)BK4819_ReadRegister(0x3D),
+                            (unsigned)gRxVfo->Modulation,
+                            gModulationStr[gRxVfo->Modulation],
+                            (int)FREQUENCY_IsAirband(gRxVfo->pRX->Frequency));
                 uart_printf("  PC13 %u (audio path helper says %s), speaker %u, "
                             "squelch %s, lane %s, function %u, scan dir %d\n",
                             (unsigned)(gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN) ? 1u : 0u),
