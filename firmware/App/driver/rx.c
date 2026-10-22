@@ -94,27 +94,37 @@ static bool s_audio_4815;
 static uint32_t s_4815_freq;    /* the tune last applied to the BK4815 (for its squelch marks) */
 static bool s_force_4815_af;    /* console 'A' diagnostic */
 
-/* Noise-floor tracker per (lane, band): the BK4829's floor is 49-57 at UHF and
- * 96-103 at VHF, the BK4815's 10-18, so one number would be wrong somewhere.
- * Keeping one per combination also means a tune or a VFO switch does NOT throw
- * the learned value away -- re-seeding on a switch is what locked the gate shut
- * on a live channel (radio 2026-10-22).  Index [lane][uhf]. */
-static rx_floor_t s_floor[2][2];
+/* Noise-floor tracker per (lane, band, modulation): the BK4829's floor is
+ * 49-57 at UHF, 96-103 at VHF in FM and 63 at VHF in AM (the AM AGC profile
+ * changes the scale), the BK4815's 10-18, so one number would be wrong
+ * somewhere.  Keeping one per combination also means a tune or a VFO switch
+ * does NOT throw the learned value away.  Index [lane][uhf | am << 1]. */
+static rx_floor_t s_floor[2][4];
 
-static uint16_t rx_floor_seed_max(uint8_t lane, bool uhf)
+static uint16_t rx_floor_prior(uint8_t lane, bool uhf, bool am)
 {
     if (lane == 1u)
-        return uhf ? RX_FLOOR_SEED_MAX_4815_UHF : RX_FLOOR_SEED_MAX_4815_VHF;
-    return uhf ? RX_FLOOR_SEED_MAX_4829_UHF : RX_FLOOR_SEED_MAX_4829_VHF;
+        return RX_FLOOR_PRIOR_4815;
+    if (uhf)
+        return am ? RX_FLOOR_PRIOR_4829_AM_UHF : RX_FLOOR_PRIOR_4829_FM_UHF;
+    return am ? RX_FLOOR_PRIOR_4829_AM_VHF : RX_FLOOR_PRIOR_4829_FM_VHF;
+}
+
+static bool rx_lane_am(void)
+{
+    return gRxVfo->Modulation == MODULATION_AM;
 }
 
 static uint16_t rx_floor_update(uint8_t lane, bool uhf, uint16_t rssi, bool closed)
 {
+    const bool am = rx_lane_am();
+    const uint8_t slot = (uint8_t)((uhf ? 1u : 0u) | (am ? 2u : 0u));
+
     if (lane > 1u)
         lane = 0u;
 
-    return rx_floor_step(&s_floor[lane][uhf ? 1u : 0u], lane == 1u,
-                         rx_floor_seed_max(lane, uhf), rssi, closed);
+    return rx_floor_step(&s_floor[lane][slot], lane == 1u,
+                         rx_floor_prior(lane, uhf, am), rssi, closed);
 }
 
 /* True when the active lane is tuned above the 280 MHz band split. */
@@ -129,9 +139,10 @@ static uint16_t rx_active_floor(void)
 {
     const uint8_t lane = s_audio_4815 ? 1u : 0u;
 
-    const bool uhf = rx_lane_uhf();
+    const bool    uhf  = rx_lane_uhf();
+    const uint8_t slot = (uint8_t)((uhf ? 1u : 0u) | (rx_lane_am() ? 2u : 0u));
 
-    return s_floor[lane][uhf ? 1u : 0u].valid ? s_floor[lane][uhf ? 1u : 0u].floor : 0u;
+    return s_floor[lane][slot].valid ? s_floor[lane][slot].floor : 0u;
 }
 
 uint16_t rx_squelch_floor(void)
@@ -156,7 +167,7 @@ static void rx_floor_invalidate(void)
     unsigned lane, band;
 
     for (lane = 0; lane < 2u; lane++)
-        for (band = 0; band < 2u; band++)
+        for (band = 0; band < 4u; band++)
             rx_floor_reset(&s_floor[lane][band]);
 }
 

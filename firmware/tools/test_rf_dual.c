@@ -154,43 +154,36 @@ int main(void)
         rx_floor_t f;
 
         rx_floor_reset(&f);
-        /* The seed is the minimum of the first samples: a transient spike must
-         * not become the floor (radio: a 193 seed above every signal). */
-        rx_floor_step(&f, false, 0xFFFFu, 60u, true);
-        rx_floor_step(&f, false, 0xFFFFu, 193u, true);
-        check(rx_floor_step(&f, false, 0xFFFFu, 58u, true) == 58u, "seed = min of the first samples");
+        /* The floor starts from the measured prior, never from the samples:
+         * with a carrier present at boot those samples are the carrier. */
+        rx_floor_reset(&f);
+        check(rx_floor_step(&f, false, RX_FLOOR_PRIOR_4829_FM_VHF, 194u, true) ==
+                  RX_FLOOR_PRIOR_4829_FM_VHF,
+              "the floor starts at the prior even with a carrier reading");
 
         /* A signal is not noise: it never teaches the floor upward. */
         for (i = 0; i < 20u; i++)
             (void)rx_floor_step(&f, false, 0xFFFFu, 199u, true);
-        check(f.floor == 58u, "a strong reading does not raise the floor");
+        check(f.floor == RX_FLOOR_PRIOR_4829_FM_VHF,
+              "a strong reading does not raise the floor");
 
         /* A quieter channel is followed, but only after consecutive samples. */
-        rx_floor_step(&f, false, 0xFFFFu, 50u, true);
-        check(f.floor == 50u, "a small fall is immediate");
         rx_floor_reset(&f);
-        rx_floor_step(&f, false, 0xFFFFu, 96u, true);
-        rx_floor_step(&f, false, 0xFFFFu, 96u, true);
-        rx_floor_step(&f, false, 0xFFFFu, 96u, true);   /* seed = 96 */
-        rx_floor_step(&f, false, 0xFFFFu, 40u, true);
+        (void)rx_floor_step(&f, false, 96u, 96u, true);      /* prior 96 */
+        (void)rx_floor_step(&f, false, 96u, 90u, true);
+        check(f.floor == 90u, "a small fall is immediate");
+        rx_floor_reset(&f);
+        (void)rx_floor_step(&f, false, 96u, 96u, true);
+        (void)rx_floor_step(&f, false, 96u, 40u, true);
         check(f.floor == 96u, "one large low sample is a transient");
         for (i = 0; i < RX_FLOOR_DROP_SAMPLES; i++)
-            (void)rx_floor_step(&f, false, 0xFFFFu, 40u, true);
+            (void)rx_floor_step(&f, false, 96u, 40u, true);
         check(f.floor == 40u, "consecutive low samples move the floor");
 
         /* No learning while the gate is open. */
-        rx_floor_step(&f, false, 0xFFFFu, 40u, true);
-        (void)rx_floor_step(&f, false, 0xFFFFu, 200u, false);
+        rx_floor_step(&f, false, 96u, 40u, true);
+        (void)rx_floor_step(&f, false, 96u, 200u, false);
         check(f.floor == 40u, "the floor is frozen while open");
-
-        /* A carrier present when a (lane, band) is first learned must not
-         * become the floor: the seed is clamped (radio: a switch to a VFO with
-         * a -20 dBm carrier seeded 199 and the gate stayed shut on 204). */
-        rx_floor_reset(&f);
-        for (i = 0; i < RX_FLOOR_SEED_SAMPLES; i++)
-            (void)rx_floor_step(&f, false, RX_FLOOR_SEED_MAX_4829_UHF, 199u, true);
-        check(f.floor == RX_FLOOR_SEED_MAX_4829_UHF,
-              "a carrier does not seed the floor past the clamp");
 
         /* The per-lane bounds hold. */
         check(rx_floor_clamp(1u, true) == RX_FLOOR_MIN_4815 &&
