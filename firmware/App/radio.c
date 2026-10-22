@@ -708,6 +708,35 @@ BK4819_FilterBandwidth_t RADIO_GetAMFilterBandwidth(const VFO_Info_t *pVfo)
     return (pVfo->CHANNEL_BANDWIDTH == BANDWIDTH_WIDE) ? BK4819_FILTER_BW_WIDE : BK4819_FILTER_BW_AM;
 }
 
+/* The airband is AM by nature, and a range scan carries the VFO's modulation,
+ * so a scan of 108-137 MHz would demodulate FM (unintelligible) unless the menu
+ * had been set to AM first -- which would then also apply to 145 MHz.  The band
+ * therefore decides the receive demodulation inside 108.0-137.0 MHz; the menu's
+ * modulation choice applies outside it.  Called from RADIO_SetupRegisters(),
+ * which runs on every channel change, knob step and scan hit.
+ *
+ * Receive-only: the K1's RADIO_PrepareTX() already refuses TX for any non-FM
+ * modulation, so an airband channel cannot key the PA. */
+static bool s_airband_rule_active;
+
+void RADIO_ApplyBandModulation(void)
+{
+    const bool air = FREQUENCY_IsAirband(gRxVfo->pRX->Frequency);
+
+    if (air && gRxVfo->Modulation != MODULATION_AM) {
+        gRxVfo->Modulation = MODULATION_AM;
+        gUpdateDisplay     = true;
+        gUpdateStatus      = true;
+    } else if (!air && gRxVfo->Modulation == MODULATION_AM && s_airband_rule_active) {
+        /* Only undo the rule's own choice, not a menu setting. */
+        gRxVfo->Modulation = MODULATION_FM;
+        gUpdateDisplay     = true;
+        gUpdateStatus      = true;
+    }
+
+    s_airband_rule_active = air;
+}
+
 void RADIO_SetupRegisters(bool switchToForeground)
 {
     BK4819_FilterBandwidth_t Bandwidth = gRxVfo->CHANNEL_BANDWIDTH;
@@ -788,6 +817,7 @@ void RADIO_SetupRegisters(bool switchToForeground)
     }
 
     // Keep the demodulator in sync when retuning without entering RX audio.
+    RADIO_ApplyBandModulation();
     RADIO_SetModulation(gRxVfo->Modulation);
 
     BK4819_SetupSquelch(

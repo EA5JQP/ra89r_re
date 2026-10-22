@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "board_pins.h"
+#include "frequencies.h"
 #include "driver/bk4815.h"
 #include "driver/rf_dual.h"
 #include "driver/rf_bus.h"
@@ -121,6 +122,15 @@ int main(void)
     rec_reset();
     bk4815_receive_entry(false);
     check(rec_has(0x01, 0x0044), "narrow channel -> 0x01 = 0x0044 (12.5 kHz)");
+
+    /* The airband is a band, not a range to invent: 108.000-137.000 MHz, with
+     * 137.000 being the start of the next band (the K1's BAND3_137MHz). */
+    check(FREQUENCY_IsAirband(10800000u) && FREQUENCY_IsAirband(11800000u) &&
+          FREQUENCY_IsAirband(13699750u),
+          "108.0/118.0/136.9975 MHz are the airband");
+    check(!FREQUENCY_IsAirband(10799990u) && !FREQUENCY_IsAirband(13700000u) &&
+          !FREQUENCY_IsAirband(14550000u),
+          "107.9999/137.0/145.5 MHz are not");
 
     /* The live gate: a lane's marks are its learned floor plus a level-derived
      * margin, so a fixed pair cannot hide weak signals (radio 2026-10-21: the

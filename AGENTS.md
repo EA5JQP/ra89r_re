@@ -186,6 +186,7 @@ State (each has its own doc — read it before touching the feature):
 | scan (`app/scan_dual.c`) | merged; dual-transceiver `FAST BOTH` scan **and `LISTEN`**, validated on the radio (`docs/ra89r_scan.md`): 671/s FAST BOTH (1.67x FAST) in both bands, LISTEN pauses the sweep while the listener hears a signal and resumes at 180-436/s |
 | usbc / CAT (`App/cat.c`, `cat_radio.c`) | merged; FT-817 CAT on the USB-C serial port, validated (`docs/ra89r_cat.md`, `ra89r_carserial.md`); enabled by `ENABLE_CAT` in `k1_features.h`, console kept |
 | fm (`driver/bk1080.c`, `app/fm.c`) | merged but **unvalidated on the radio** (`docs/ra89r_bk1080.md`) |
+| airband | implemented on branch `airband`: the receive demodulation is chosen by band (108.0-137.0 MHz is AM), so an airband range scan demodulates AM (`docs/ra89r_airband.md`); radio validation pending |
 | battery | protocol decoded and implemented; the chip never answers (`docs/ra89r_battery.md`) |
 | eeprom (`py25q16.c`, `spi_flash.c`) | read + full dump validated; the write-validation test has not run (`docs/ra89r_eeprom.md`) |
 | port | merged; the K1 GUI boots on the radio (`docs/ra89r_port.md`) |
