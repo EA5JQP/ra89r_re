@@ -178,10 +178,10 @@ static inline uint16_t rx_squelch_close_mark(bool use_4815, bool uhf, uint8_t le
  * cannot push the mark above itself -- radio 2026-10-22: switching to a VFO
  * with a -20 dBm carrier seeded the BK4829's floor at 199 and the mark at 229,
  * so the gate stayed closed on a 204 reading. */
-#define RX_FLOOR_SEED_MAX_4829_UHF 130u
-#define RX_FLOOR_SEED_MAX_4829_VHF 170u
-#define RX_FLOOR_SEED_MAX_4815_UHF  45u
-#define RX_FLOOR_SEED_MAX_4815_VHF  35u
+#define RX_FLOOR_SEED_MAX_4829_UHF  80u   /* measured noise 49-61 */
+#define RX_FLOOR_SEED_MAX_4829_VHF 120u   /* measured noise 96-103 */
+#define RX_FLOOR_SEED_MAX_4815_UHF  30u   /* measured noise 10-18 */
+#define RX_FLOOR_SEED_MAX_4815_VHF  30u
 
 typedef struct {
     uint16_t floor;
