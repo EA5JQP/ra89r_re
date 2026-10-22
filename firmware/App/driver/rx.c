@@ -257,13 +257,25 @@ void rx_poll(void)
 
         s_rssi = bk4815_read_rssi();
 
-        /* Learn the lane's floor (frozen while open) and take the marks from
-         * it: a fixed mark cannot work on this board (see rx.h).  Not while a
-         * scan runs: it retunes this very chip under the poller, and the
-         * samples it reads there dragged the floor to its minimum and left the
-         * gate unable to open on a real signal (radio 2026-10-21). */
-        if (gScanStateDir == SCAN_OFF)
-            (void)rx_floor_update(1u, rx_lane_uhf(), s_rssi, !s_squelch_open);
+        /* Learn the lane's floor and take the marks from it: a fixed mark cannot
+         * work on this board (see rx.h).  Not while a scan runs: it retunes
+         * this very chip under the poller, and the samples it reads there
+         * dragged the floor to its minimum and left the gate unable to open on
+         * a real signal (radio 2026-10-21).
+         *
+         * While the gate is OPEN the floor is frozen *except* for a weak level
+         * (within two margins of it): that is noise that happened to trip the
+         * gate, and freezing on it would hold the squelch open forever.  A real
+         * signal is further above and keeps the floor where it is. */
+        {
+            const uint16_t open_now  = rx_squelch_open_mark_now();
+            const uint16_t close_now = rx_squelch_close_mark_now();
+            const bool     weak_open = s_squelch_open &&
+                s_rssi < (uint16_t)(open_now + (uint16_t)(open_now - close_now));
+
+            if (gScanStateDir == SCAN_OFF && (!s_squelch_open || weak_open))
+                (void)rx_floor_update(1u, rx_lane_uhf(), s_rssi, true);
+        }
 
         {
             const uint16_t open_mark  = rx_squelch_open_mark_now();
@@ -331,8 +343,17 @@ void rx_poll(void)
     {
         const bool     squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
 
-        if (gScanStateDir == SCAN_OFF)
-            (void)rx_floor_update(0u, rx_lane_uhf(), s_rssi, !s_squelch_open);
+        {
+            const uint16_t open_now  = rx_squelch_open_mark_now();
+            const uint16_t close_now = rx_squelch_close_mark_now();
+            const bool     weak_open = s_squelch_open &&
+                s_rssi < (uint16_t)(open_now + (uint16_t)(open_now - close_now));
+
+            /* See the BK4815 branch: a weak open level is noise and is learned,
+             * a real signal is not. */
+            if (gScanStateDir == SCAN_OFF && (!s_squelch_open || weak_open))
+                (void)rx_floor_update(0u, rx_lane_uhf(), s_rssi, true);
+        }
 
         {
             const uint16_t open_mark  = rx_squelch_open_mark_now();
