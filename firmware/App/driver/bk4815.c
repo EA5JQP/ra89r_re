@@ -18,13 +18,14 @@ static const uint8_t bk4815_block[] = {
 /* The stock's boot configuration: FUN_08006A0C, 33 single writes after the
  * block above.
  *
- * Three of them take their value from the stock's own RAM rather than from a
- * constant -- 0x4c, 0x55 and 0x62, read from 0x2000449a/0x2000449c/0x2000449e.
- * Those are calibration-shaped fields the stock loads earlier in its boot, and
- * this firmware has no source for them, so they go out as 0 and are flagged
- * here and by the console rather than passed off as the stock's values.  Do not
- * read this table as the full stock configuration until they have a source. */
-#define BK4815_RAM_SOURCED 0x0000u
+ * Three are loaded from the stock's RAM -- 0x4c, 0x55 and 0x62, from
+ * 0x2000449a/0x2000449c/0x2000449e.  Those words are filled by FUN_0800DCAC
+ * from the six big-endian words at external flash 0x3880+0x1a; on this radio
+ * all six read 0x03e8, so all three registers get 0x03e8.  They were sent as 0
+ * while the source was unknown.  The proper source is the external flash read
+ * at boot; this is the reference dump's value, used to measure the BK4815's
+ * image/spur response. */
+#define BK4815_RAM_SOURCED 0x03e8u
 
 static const uint8_t bk4815_ram_regs[] = { 0x4c, 0x55, 0x62 };
 
