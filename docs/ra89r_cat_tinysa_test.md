@@ -1,11 +1,11 @@
 # CAT + tinySA-MCP receive test
 
-**Status: the tool, its offline checks (`--sim`, `--mcp-selftest`) and a first
+**Status: the tool, its offline checks (`--sim`, `--mcp-selftest`) and the full
 bench run pass.**  On 2026-10-23 the radio (CH340, `/dev/ttyUSB0`) and a
 classic tinySA (CDC, `/dev/ttyACM1`) were connected through the tinySA's **low
-output**; 145.5000 MHz FM and 118.0000 MHz AM both showed a clean carrier
-off/on/off S-meter triplet.  The UHF case needs the **high output** connector
-and is still to be run.  The bench table is below.
+output** for 145.5000 MHz FM and 118.0000 MHz AM, then through the **high
+output** for 446.00625 MHz FM; all three showed a clean carrier off/on/off
+S-meter triplet.  The bench table is below.
 
 `tools/cat_rf_test.py` is the test; `tools/tinysa_mcp_sim.py` is the stdio MCP
 test double that lets the MCP client half run without hardware.
