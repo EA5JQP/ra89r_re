@@ -1,0 +1,49 @@
+PIN,TYT,RA89R
+1,VBAT,VBAT - supply
+2,SPK_POW,PC13 - speaker/audio-path enable (audio_path.c)
+3,FMCLK,PC14 - BK1080 FM I2C clock (i2c_bus.c)
+4,NR POWER,PC15 - NR power; module not fitted - held low
+5,NR ENABLE,PD0 - BT module power/enable (active high)
+6,TXD,PD1 - unused (input at reset); TYT soft UART
+7,NRST,NRST - reset
+8,GND,VSSA - analog ground
+9,VCC,VCCA - analog supply
+10,NR_LV1,PA1 - band/path select (pa.c)
+11,NR_LV0,PA0 - band/path select (pa.c)
+12,K1/K2K3AD,PA2 - keypad ADC ch2 (K1/K2/K3 + PTT1)
+13,KEYAD0,PA3 - keypad ADC ch3
+14,AUDIO,PA4 - beeper DAC_OUT1 (beeper.c)
+15,PWMLCD,PA5 - LCD backlight PWM (backlight.c)
+16,KEYAD1,PA6 - keypad ADC ch6
+17,KEYAD2,PA7 - keypad ADC ch7
+18,KEYAD3,PB0 - keypad ADC ch8
+19,V_DET,PB1 - battery/pack voltage sense ADC ch9 (battery.c)
+20,FMSDA,PB2 - BK1080 FM I2C data (i2c_bus.c)
+21,NR_VOX_DET,PB10 - USART3 TX - BT AT link
+22,5TC,PB11 - USART3 RX - BT AT link
+23,VSS,VSS_1 - ground
+24,VCC,VCC_1 - supply
+25,BKSDA,PB12 - RF bus data (rf_bus.c)
+26,BKSCN,PB13 - BK4815 chip select (rf_bus.c)
+27,PWMRF,PB14 - PA bias PWM TIM1_CH2N (pa.c)
+28,LCD_SDA,PB15 - LCD data (lcd_st7565.c)
+29,LCD_CLK,PA8 - LCD clock
+30,LCD_RST,PA9 - LCD reset
+31,LCD_RS,PA10 - LCD A0/DC
+32,LCD_CS,PA11 - LCD chip select
+33,BK?,PA12 - RF bus clock (rf_bus.c)
+34,TLED,PA13 - red LED (TX)
+35,GND,VSS_2 - ground
+36,VCAP,VCAP - core capacitor
+37,RLED,PA14 - green LED (RX)
+38,SPI_CS,PA15 - SPI NOR chip select (spi_flash.c)
+39,SPI_CLK,PB3 - SPI NOR clock
+40,SPI_DO,PB4 - SPI NOR MISO (flash DO)
+41,SPI_DI,PB5 - SPI NOR MOSI
+42,TXD,PB6 - USART1 TX - Kenwood jack (uart.c)
+43,RXD,PB7 - USART1 RX - Kenwood jack
+44,BOOT0,BOOT0 - boot strap
+45,BKSCN1,PB8 - BK4829 chip select (rf_bus.c)
+46,RXD,PB9 - PTT2 input / bootloader update gate
+47,VSS,VSS_3 - ground
+48,VCC,VCC_3 - supply

@@ -130,7 +130,7 @@ here are the port's todo list:
 | `eeprom.c`, `eeprom_compat.c`, `flash.c`, `mb_flash.c`, `py25q16.c`, `spi.c`, `i2c.c` | `gEeprom` (the whole settings model), firmware slots, the codeplug | the external SPI NOR driver is on the **unmerged** `driver/eeprom` branch (read + dump validated, **write test not run**), and there is no `EEPROM_Config_t gEeprom` layer at all -- this is the largest single gap |
 | `keyboard.c` | `KEYBOARD_*`, the app's key API | ours is `keypad.c` and already returns `KEY_Code_e`; needs an adapter or a rename, not new work |
 | `st7565.c` | `ST7565_*` + `gFrameBuffer[7][128]`/`gStatusLine[128]` | ours is `lcd_st7565.c`, bit-banged over a different pin set; the app draws into the K1's shadow buffers, so the port needs that buffer shape (or the app's UI calls re-pointed) |
-| `adc.c` | battery/S-meter sampling | **the RA89R has no battery ADC channel**: the gauge is a separate chip whose bus never answered (`ra89r_battery.md`).  Decision needed before the app's battery/saver logic can mean anything |
+| `adc.c` | battery/S-meter sampling | ours is `driver/battery.c`: the pack is ADC channel 9 (`PB1`, the `V_DET` line) inside the keypad's DMA scan, 2.438 mV/count, wired to `board.c`'s `BOARD_ADC_GetBatteryInfo()` (`ra89r_battery.md`).  The S-meter is the BK4829's `0x67`, read in `driver/bk4819.c` |
 | `system.c` | clock/power management | ours is `clock.c`/`early.c`; the APIs differ |
 | `crc.c`, `aes.c` | image validation, the codec's checks | port as-is (MCU-independent) |
 | `vcp.c`, `usb/` | USB serial | the RA89R's USB-C is unused by the stock; stub or disable |
