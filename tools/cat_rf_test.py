@@ -525,6 +525,9 @@ def main(argv=None):
                     help="no hardware: fake CAT + the bundled MCP test double")
     ap.add_argument("--mcp-selftest", action="store_true",
                     help="exercise the MCP client against the bundled test double")
+    ap.add_argument("--squelch-watch", type=float, metavar="SECONDS",
+                    help="poll CAT STATUS only and report squelch transitions / RSSI "
+                         "for that long (the Phase-1 squelch acceptance check)")
     ap.add_argument("--ports", action="store_true", help="list serial ports and exit")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan; touch no hardware")
@@ -546,6 +549,50 @@ def main(argv=None):
         except TestError as exc:
             print(f"FAIL: {exc}", file=sys.stderr)
             return 1
+
+    if args.squelch_watch is not None:
+        if not args.cat_port:
+            print("--cat-port is required for --squelch-watch", file=sys.stderr)
+            return 2
+        cat = CatLink(args.cat_port, args.cat_baud, log)
+        cat.open()
+        start = time.time()
+        last = None
+        transitions = 0
+        opens = 0
+        rssis = []
+        cases = []
+        try:
+            while time.time() - start < args.squelch_watch:
+                s = cat.status()
+                state = 1 if s["squelch_open"] else 0
+                rssis.append(s["rssi"])
+                opens += state
+                if last is not None and state != last:
+                    transitions += 1
+                    cases.append((time.time() - start, state, s["rssi"]))
+                last = state
+                time.sleep(0.1)
+        except TestError as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            cat.close()
+
+        if not rssis:
+            print("no STATUS replies", file=sys.stderr)
+            return 1
+        rssis.sort()
+        n = len(rssis)
+        print(f"\nsquelch watch: {args.squelch_watch:.0f}s, {n} samples "
+              f"({n / args.squelch_watch:.1f}/s)")
+        print(f"  RSSI min {rssis[0]}  median {rssis[n // 2]}  max {rssis[-1]}")
+        print(f"  gate transitions {transitions}; open samples {opens}/{n}")
+        for t, state, rssi in cases[:20]:
+            print(f"    {t:7.2f}s -> {'open' if state else 'closed'} (rssi {rssi})")
+        if len(cases) > 20:
+            print(f"    ... {len(cases) - 20} more")
+        return 0 if transitions <= 2 else 1
 
     # `all` is the two ham bands; 118 MHz (AM) is explicit because it is an
     # airband receive check, not a general one.
