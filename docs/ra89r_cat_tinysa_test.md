@@ -1,10 +1,11 @@
 # CAT + tinySA-MCP receive test
 
-**Status: the tool and its offline checks pass (`--sim`, `--mcp-selftest`); it
-has not been run on the radio yet.**  The bench run is the point of the tool:
-it is the first test that drives the radio through **CAT** and the signal
-source through the **tinySA MCP**, so both interfaces are exercised together
-instead of one at a time.
+**Status: the tool, its offline checks (`--sim`, `--mcp-selftest`) and a first
+bench run pass.**  On 2026-10-23 the radio (CH340, `/dev/ttyUSB0`) and a
+classic tinySA (CDC, `/dev/ttyACM1`) were connected through the tinySA's **low
+output**; 145.5000 MHz FM and 118.0000 MHz AM both showed a clean carrier
+off/on/off S-meter triplet.  The UHF case needs the **high output** connector
+and is still to be run.  The bench table is below.
 
 `tools/cat_rf_test.py` is the test; `tools/tinysa_mcp_sim.py` is the stdio MCP
 test double that lets the MCP client half run without hardware.
@@ -34,7 +35,13 @@ tinySA output  ->  ATTENUATOR  ->  radio antenna jack
 The radio must be running a build with `ENABLE_CAT` (`App/k1_features.h`,
 default on).  CAT and the console share USART1: the test sends 5-byte bursts
 with >= 150 ms gaps, which is the auto-detect's requirement, and it never sends
-a console character.
+a console character.  It restores the radio's original CAT frequency and mode
+and switches the generator off at the end (also on failure).
+
+The classic tinySA has **two output connectors**: the low output covers VHF and
+the airband (up to ~350 MHz), the high output starts at ~240 MHz and is what
+446 MHz needs.  The test picks the stage from the frequency and validates the
+level against it; the cable has to match.
 
 ### Safety
 
@@ -144,6 +151,25 @@ server does.
 | 145.5000 FM | | | | | | | |
 | 446.00625 FM | | | | | | | |
 | 118.0000 AM | | | | | | | |
+
+## On-radio result
+
+First bench run, 2026-10-23.  Radio on the USB-C CH340 port, tinySA on the
+**low output** (-30 dBm, no external pad, `--samples 7`).  The S-meter column is
+the CAT `SM` byte (raw RSSI clamped to 255); `STATUS` reported the unclamped
+9-bit RSSI (quiet ~101-103, carrier ~188-190 on VHF).
+
+| band | level | pad | quiet | on | after | delta | verdict |
+|---|---|---|---|---|---|---|---|
+| 145.5000 FM | -30 dBm | 0 | 103 | 190 | 103 | +87 | **PASS** |
+| 446.00625 FM | -38 dBm | 0 | — | — | — | — | not run: needs the high output |
+| 118.0000 AM | -30 dBm | 0 | 63 | 85 | 63 | +22 | **PASS** |
+
+`READ` returned the exact set frequency and the expected mode byte (0x08 FM,
+0x04 AM) every time.  The first VHF run had a lower post-carrier reading (102
+quiet, 188 on, 64 off) and still passed; a repeat gave the table above, so the
+delta is stable while the absolute level moves with the radio's AGC/noise
+floor -- which is why the test asserts deltas.
 
 ## Files
 

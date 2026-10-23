@@ -147,6 +147,9 @@ class CatLink:
             raise TestError("pyserial is required for a real run "
                             "(python3 -m pip install pyserial)")
         self.ser = serial.Serial(self.port, self.baud, timeout=CAT_TIMEOUT_S)
+        # Opening the CH340 can leave a byte or two of console/earlier traffic
+        # in flight; let the line settle and start from a clean buffer.
+        time.sleep(0.4)
         self.ser.reset_input_buffer()
 
     def close(self):
@@ -154,22 +157,34 @@ class CatLink:
             self.ser.close()
             self.ser = None
 
-    def _xfer(self, payload4, cmd, reply_len, expect_ack=False):
+    def _xfer(self, payload4, cmd, reply_len, expect_ack=False,
+              expect_tail=True):
         frame = bytes(payload4[:4]).ljust(4, b"\x00") + bytes([cmd])
+        self.ser.reset_input_buffer()
         self.ser.write(frame)
         self.ser.flush()
         time.sleep(CAT_FRAME_GAP_S)
-        reply = self.ser.read(reply_len)
         if expect_ack:
-            if reply != bytes([CAT_ACK]):
-                raise TestError(f"CAT 0x{cmd:02X}: expected ACK, got "
-                                f"{reply.hex() or '(nothing)'}")
-            return reply
+            # The console shares this port, so skip any console bytes that were
+            # still in flight and take the ACK (0x00) when it arrives.
+            got = b""
+            deadline = time.time() + CAT_TIMEOUT_S
+            while time.time() < deadline and len(got) < 16:
+                b = self.ser.read(1)
+                if not b:
+                    continue
+                got += b
+                if b == bytes([CAT_ACK]):
+                    return b
+            raise TestError(f"CAT 0x{cmd:02X}: expected ACK, got "
+                            f"{got.hex() or '(nothing)'}")
+        reply = self.ser.read(reply_len)
         if len(reply) != reply_len:
             raise TestError(f"CAT 0x{cmd:02X}: expected {reply_len} bytes, got "
                             f"{reply.hex() or '(nothing)'}")
-        if reply[-1] != cmd:
-            raise TestError(f"CAT 0x{cmd:02X}: reply ends with 0x{reply[-1]:02X}")
+        if expect_tail and reply[-1] != cmd:
+            raise TestError(f"CAT 0x{cmd:02X}: reply ends with 0x{reply[-1]:02X}"
+                            f" ({reply.hex()})")
         return reply
 
     def set_freq(self, freq_hz):
@@ -182,7 +197,8 @@ class CatLink:
         self._xfer(bytes([vfo & 1, 0, 0, 0]), CAT_VS, 1, expect_ack=True)
 
     def read_freq_mode(self):
-        reply = self._xfer(bytes(4), CAT_READ, 5)
+        # READ replies with 4 BCD bytes plus the *mode* byte, not the command.
+        reply = self._xfer(bytes(4), CAT_READ, 5, expect_tail=False)
         return decode_freq_bcd(reply[:4]), reply[4]
 
     def sm(self):
@@ -417,7 +433,11 @@ def run_case(cat, mcp, tinysa_port, key, case, level, pad_db,
     mcp.set_generator(tinysa_port, True, frequency_hz=freq, level_dbm=level,
                       high_output=high)
     state = mcp.generator_state(tinysa_port)
-    if not state.get("output"):
+    # The classic tinySA has no query for output/mode, so the real server keeps
+    # them in a `tracked` block; the test double reports them at the top level.
+    tracked = state.get("tracked") or {}
+    output_on = state.get("output", tracked.get("output_on"))
+    if not output_on:
         raise TestError(f"{key}: generator state says output is off: {state}")
     if hasattr(cat, "carrier"):
         cat.carrier = True
@@ -569,6 +589,11 @@ def main(argv=None):
         log(f"MCP: {' '.join(mcp_cmd)}")
         mcp.start()
         cat.open()
+        original = None
+        try:
+            original = cat.read_freq_mode()      # put the radio back afterwards
+        except TestError:
+            original = None
         try:
             for key in bands:
                 level = args.level if args.level is not None else DEFAULT_LEVELS[key]
@@ -581,6 +606,14 @@ def main(argv=None):
                     mcp.set_generator(tinysa_port, False)
             except TestError:
                 pass
+            if original is not None:
+                try:
+                    cat.set_freq(original[0])
+                    cat.set_mode(original[1])
+                    log(f"\nrestored the radio to {original[0]/1e6:.5f} MHz, "
+                        f"mode 0x{original[1]:02X}")
+                except TestError:
+                    pass
             cat.close()
     except TestError as exc:
         print(f"\nFAIL: {exc}", file=sys.stderr)
