@@ -476,6 +476,35 @@ here are the port's todo list:
   records the two regions it must never assume it owns -- the calibration window
   and the signature.
 
+## Receive gate: the retune burst (2026-10-23)
+
+**Finding (bench):** every frequency change produced an audible squelch
+"burp", even with the new channel quiet.
+
+**Cause.**  Two K1 paths open the audio behind the port's squelch gate:
+`RADIO_SetupRegisters()` unmutes the chip's AF through
+`RADIO_SetModulation()` (`BK4819_SetAF(BK4819_AF_FM)`), and
+`APP_StartListening()` opens the amplifier with
+`AUDIO_AudioPathOn()` + `gEnableSpeaker = true`.  The gate had no settling
+hold-off, so the first RSSI reads after a retune -- the AGC/PLL settling, not
+the new channel's level -- crossed the open mark and opened the audio for a
+poll or two.  The gate state itself was never reset on a retune.
+
+**Fix (branch `driver/rx-retune-squelch`).**
+
+* `rx_apply_audio_gate()` is the three-gate drive (BK4815 AF `0x49`, BK4829 AF
+  `0x47`, amplifier `PC13`) factored out of `rx_poll()`.  `RADIO_SetupRegisters()`
+  and `APP_StartListening()` call it right after the K1 opens the audio, so the
+  gate is authoritative immediately rather than on the next 10 ms poll.
+* `rx_gate_hold_closed()` closes the gate, mutes the three gates and ignores
+  the RSSI for `RX_SETTLE_POLLS` (5 x 10 ms = 50 ms) on an actual frequency
+  change -- `rx_set_frequency()`, the BK4815 retune in `rf_dual_refresh()`, and
+  a receive-lane switch.
+
+Target build and `check_all.sh` (Zig) pass.  **On-radio validation pending**:
+the radio stopped answering CAT/console after the bench run that found it, so
+the burp has not been re-listened to with the fix flashed.
+
 ## Suggested order
 
 1. **Fix A1, A2 (C/D)**, add the license, and wire the console behind a flag --

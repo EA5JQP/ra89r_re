@@ -276,6 +276,13 @@ bool rx_ready(void);
 /* One squelch step.  Paced by the caller. */
 void rx_poll(void);
 
+/* Drive the BK4815 AF, the BK4829 AF and the amplifier (PC13) from the current
+ * gate state.  rx_poll() calls it every step; the K1 receive paths that open the
+ * audio behind the gate's back (RADIO_SetupRegisters' RADIO_SetModulation and
+ * APP_StartListening's AUDIO_AudioPathOn) call it too, so a retune cannot leak
+ * a settling burst. */
+void rx_apply_audio_gate(void);
+
 bool rx_squelch_open(void);
 
 /* The gate has been closed for at least `polls` consecutive polls.  The LISTEN

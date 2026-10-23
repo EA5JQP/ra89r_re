@@ -97,6 +97,9 @@ bool     rx_squelch_quiet(uint8_t polls) { (void)polls; return true; }
 uint16_t rx_squelch_open_mark_now(void) { return 0u; }
 void     bk4815_set_band(uint16_t band) { (void)band; }
 
+/* driver/rx.c's gate driver: the preview stubs the receiver, so this is inert. */
+void     rx_apply_audio_gate(void) { }
+
 /* The preview's step() advances this counter by 10 ms, matching one
  * scheduler_tick_10ms().  The target links the real SysTick implementation. */
 static uint32_t s_host_millis;

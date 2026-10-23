@@ -27,6 +27,7 @@
 #include "audio.h"
 #include "dcs.h"
 #include "driver/bk4819.h"
+#include "driver/rx.h"
 #include "driver/py25q16.h"
 #include "driver/gpio.h"
 #include "driver/system.h"
@@ -948,6 +949,11 @@ void RADIO_SetupRegisters(bool switchToForeground)
 
     if (switchToForeground)
         FUNCTION_Select(FUNCTION_FOREGROUND);
+
+    /* The K1 setup above unmuted the chip AF (RADIO_SetModulation) and may
+     * have opened the amplifier: put the port's gate back immediately, so a
+     * retune does not leak the receiver's settling burst. */
+    rx_apply_audio_gate();
 }
 
 #ifdef ENABLE_NOAA
