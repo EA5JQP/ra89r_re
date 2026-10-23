@@ -51,6 +51,25 @@ instead of bench-fitted margins.
 transitions; carrier at the threshold in 1 dB steps -> one clean transition;
 fading carrier -> one open/close, no chatter; FAST BOTH / LISTEN still trigger.
 
+### Phase 1 radio result (2026-10-23)
+
+Flashed on the radio and measured with `tools/cat_rf_test.py --squelch-watch`
+(4 STATUS samples/s, gate transitions counted):
+
+| lane | channel | SQL | time | RSSI | transitions |
+|---|---|---|---|---|---|
+| BK4815 | 446.00625 FM | 1 | 90 s | 0-16, med 12 | 0 |
+| BK4815 | 446.00625 FM | 5 | 60 s | 0-15, med 12 | 0 |
+| BK4829 | 446.00625 FM | 1 | 60 s | 53-60, med 57 | 0 |
+| BK4829 | 120.100 AM | 1 | 60 s | 63-89, med 65 | 0 |
+
+The 89-count spike on the BK4829 VHF run is the counter working: one sample
+above the old single-shot mark, seven short of opening.  A -38 dBm carrier at
+446.00625 (the high output's floor) gave exactly one open/close per on/off
+cycle over three cycles, and a stray `rssi 0` while open did not close it;
+SQL 0 forces open and SQL 1 closes again.  FAST BOTH / LISTEN not re-run in this
+pass (the gate feeds `ScanFastReceiveMark()`, unchanged).
+
 ## Phase 2 -- the stock calibration marks
 
 * Decode calibration page `0x3710` (336 B, programmed, values 22..37) and
@@ -69,6 +88,23 @@ fading carrier -> one open/close, no chatter; FAST BOTH / LISTEN still trigger.
 **Acceptance:** calibrated marks land a few counts above the measured floor at
 145.5 / 446.00625 / 118 MHz; the counter keeps the quiet-channel result of
 Phase 1 with the new marks.
+
+### Phase 2 outcome (2026-10-23): the CPS page is not the runtime table
+
+The pass through the stock disproved the premise above.  The `0x3710`/`0x3860`
+addresses are referenced only by the CPS export (`FUN_0801ADC4`), never by the
+runtime squelch.  `FUN_080052B8` takes its thresholds from the **`0x3880` block
+bytes `0x11`-`0x14`** (45/8 narrow, 55/11 wide on this radio) and gates on the
+chip's `0x63` (glitch) and `0x65` (ex-noise) meters, with `0x67` only as a
+per-VFO secondary mark.  Measured at 446.00625, SQL 1, wide: quiet `0x63`=57,
+`0x65`=47 against the thresholds 67/27 -> the stock's verdict is **hold**, so
+its gate would not close on a quiet channel until the glitch crossed 67; a
+carrier gives 0/8/217 and increments.  That is the "stuck open" shape this work
+was meant to remove, so the port keeps Phase 1's floor + margin + counter.
+The `0x3710` mapping remains CPS-side documentation only
+(`docs/ra89r_calibration.md`).  Revisit the noise gate only as a separate
+experiment that also matches the stock's AGC ramp and per-VFO mark, validated on
+the radio.
 
 ## Phase 3 -- one owner
 

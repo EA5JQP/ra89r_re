@@ -59,9 +59,14 @@
  * noise floor, because a fixed mark cannot work on this board: on 2026-10-21
  * the BK4829's floor measured 96-103 at 145.5 and 76-79 at 446, while the
  * BK4815's sat at 10-18, and the stock-like fixed pairs (0xCF/0xB4) then hid
- * every signal below full strength.  The stock itself compares against a
- * threshold just above its floor (its squelch page values are 23-37, on a
- * lower-noise AGC setting), so a floor + margin rule is the faithful shape.
+ * every signal below full strength.  A floor + margin rule is therefore the
+ * port's shape.  The 0x3710 page the CPS labels "squelch" is not the runtime
+ * table: the stock never reads it (only the CPS export at FUN_0801ADC4 does).
+ * The stock's runtime gate compares the 0x63/0x65 meters against four
+ * thresholds from the 0x3880 block (0x2d/0x08 narrow, 0x37/0x0b wide, scaled
+ * by the level) and that path holds instead of closing at SQL 1 on a quiet
+ * channel (measured 2026-10-23: glitch 57/noise 47 against 67/27), so copying
+ * it would reintroduce the hang this gate exists to prevent.
  *
  * `level` is gEeprom.SQUELCH_LEVEL (0 = off, handled by the caller):
  * margin = base + step * level, hysteresis below the opening mark. */
