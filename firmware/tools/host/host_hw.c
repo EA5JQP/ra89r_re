@@ -88,6 +88,15 @@ void     bk1080_init(void) { }
  * has to satisfy the reference. */
 void     rx_set_fm_active(bool active) { (void)active; }
 
+/* app/chFrScanner.c's LISTEN confirmation uses this; the preview does not run
+ * the receiver gate, so report a quiet lane. */
+bool     rx_squelch_quiet(uint8_t polls) { (void)polls; return true; }
+
+/* The FAST BOTH scan path reads the live open mark and sets the BK4815 band;
+ * the preview does not execute a scan sweep, so these are inert. */
+uint16_t rx_squelch_open_mark_now(void) { return 0u; }
+void     bk4815_set_band(uint16_t band) { (void)band; }
+
 /* The preview's step() advances this counter by 10 ms, matching one
  * scheduler_tick_10ms().  The target links the real SysTick implementation. */
 static uint32_t s_host_millis;
@@ -95,6 +104,13 @@ static uint32_t s_host_millis;
 uint32_t systick_millis(void)
 {
     return s_host_millis;
+}
+
+/* chFrScanner.c's FAST BOTH profiling uses this; the preview's clock is coarse
+ * (one ms per step), which is all the scan-policy checks need. */
+uint32_t systick_micros(void)
+{
+    return s_host_millis * 1000u;
 }
 
 void host_systick_advance(uint32_t milliseconds)
