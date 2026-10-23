@@ -206,6 +206,7 @@ ARM assembly, so a PC build cannot use the real one) — see `NOTICE`.
 
 Stdlib only, except the radio/analysis tools: `tools/ra89r_flash.py`,
 `tools/ra89r_bootloader_sim.py`, `tools/rf_harness.py`,
+`tools/cat_rf_test.py` (pyserial for a real run),
 `tools/ra89r_eeprom.py`, `tools/look4sat_cat.py` (pyserial) and
 `tools/ra89r_analyze.py` (capstone).  On this machine those two are installed
 in the user site (step 1), so plain `python3` runs everything:
@@ -219,6 +220,11 @@ python3 tools/ra89r_analyze.py work/FIRMWARE_RA89R_20260203_V49.bin
 python3 tools/ra89r.py decode FW.icf work/fw.bin &&
 python3 tools/ra89r.py encode work/fw.bin work/out.icf &&
 cmp work/out.icf FW.icf
+
+# CAT + tinySA-MCP receive test (docs/ra89r_cat_tinysa_test.md):
+# --sim and --mcp-selftest need no hardware and no pyserial
+python3 tools/cat_rf_test.py --sim
+python3 tools/cat_rf_test.py --cat-port /dev/ttyUSB0 --tinysa-port /dev/ttyACM1
 ```
 
 (Or `source ~/.venvs/ra89r/bin/activate` once; `ra89r.py` itself is stdlib-only

@@ -34,6 +34,10 @@ port of the F4HWN UV-K1/K5V3 application that boots into the K1 GUI on the radio
 - `tools/ra89r_rf_console_sim.py` — test double for the console: emits the same
   `S`/`F`/`B`/`Q` text over a PTY and accepts CAT frames, so `rf_harness.py` can
   be exercised with no radio attached.
+- `tools/cat_rf_test.py` — the CAT + tinySA-MCP receive test: tunes and reads the
+  S-meter over CAT (`SM`/`STATUS`) and drives the carrier through the tinySA MCP;
+  `tools/tinysa_mcp_sim.py` is its stdio MCP test double, so `--sim` and
+  `--mcp-selftest` run without hardware.  See `docs/ra89r_cat_tinysa_test.md`.
 - `tools/BUILDING.md` — building the firmware and host tools. `tools/FLASHING.md`
   — the concrete flash procedure: hardware, entering update mode, the probe/flash
   commands, and how to go back to stock.
