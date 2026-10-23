@@ -285,10 +285,13 @@ static void CHFRSCANNER_AbortActiveReception(void)
  * 9-bit scale (0x67), so the dual lane uses its own, smaller margins rather
  * than comparing scales.  Radio 2026-10-21: the part's noise floor at 446 MHz
  * read 16-17 while the SQL-1 mark was 16, i.e. inside the noise, and the lane
- * stopped the scan on it every batch -- hence 8 (two marks' worth of margin)
- * after the seed-only first sample.  Still unvalidated as a *threshold*; the
+ * stopped the scan on it every batch.  Radio 2026-10-23: with a -38 dBm
+ * carrier on 446.00625 the 4815's wideband RSSI at 446.33125 (325 kHz away)
+ * still read 29-30 against a 17 floor; the old 12-count margin accepted that
+ * adjacent leak and FAST BOTH parked there.  20 keeps the on-channel 49 and
+ * rejects the 29-30 leak.  Still unvalidated as a *threshold*; the
  * floor-relative rule is what keeps it honest. */
-#define SCAN_FAST4815_RSSI_MARGIN    12
+#define SCAN_FAST4815_RSSI_MARGIN    20
 #define SCAN_FAST4815_SQUELCH_MARGIN 4
 #define SCAN_FAST4815_WEAK_MARGIN    4
 
@@ -823,20 +826,24 @@ static scan_fast_result_t ScanRangeFastPrecheckListen(void)
 
         uint16_t       rssi;
         bool           is_hit;
-        const uint16_t mark4815 = rx_squelch_open_mark_from_floor(true, listen_uhf,
-                                                                 gEeprom.SQUELCH_LEVEL, 0u);
+        const bool     scan4815  = !listen4815;
+        const uint16_t scan_mark = rx_squelch_open_mark_lane(scan4815, listen_uhf,
+                                                             FREQUENCY_IsAirband(freq));
 
         {
-            const uint16_t raw = ScanListenProbe(freq, listen4815, listen_uhf);
+            const uint16_t raw  = ScanListenProbe(freq, listen4815, listen_uhf);
+            const uint16_t trig = ScanFastSaturatingSub(
+                scan_mark, scan4815 ? SCAN_FAST4815_SQUELCH_MARGIN
+                                    : SCAN_FAST_SQUELCH_MARGIN);
 
             rssi   = listen4815 ? raw : (uint16_t)(raw * SCAN_FAST4815_RSSI_SCALE);
-            is_hit = listen4815 ? ScanFastIsCandidate(raw) : (raw >= mark4815);
+            is_hit = (raw >= trig);
 
             if (is_hit) {
                 /* Confirm on a second probe before moving the receiver. */
                 const uint16_t again = ScanListenProbe(freq, listen4815, listen_uhf);
 
-                is_hit = listen4815 ? ScanFastIsCandidate(again) : (again >= mark4815);
+                is_hit = (again >= trig);
             }
         }
 
@@ -1152,11 +1159,9 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
             const scan_lane_chip_t lane = scan_dual_assign_candidate(&c[k]);
             scan_lane_state_t     *lane_state = &scanBothState.lanes[lane];
             const bool             is_4815 = (lane == SCAN_LANE_BK4815);
-            const uint16_t         squelch = is_4815
-                                                 ? rx_squelch_open_mark(true,
-                                                                       c[k].frequency_10hz >= PA_BAND_SPLIT,
-                                                                       gEeprom.SQUELCH_LEVEL)
-                                                 : ScanFastReceiveMark();
+            const bool             uhf     = c[k].frequency_10hz >= PA_BAND_SPLIT;
+            const bool             am      = FREQUENCY_IsAirband(c[k].frequency_10hz);
+            const uint16_t         squelch = rx_squelch_open_mark_lane(is_4815, uhf, am);
             const uint16_t         noise_margin = is_4815 ? SCAN_FAST4815_RSSI_MARGIN
                                                           : SCAN_FAST_RSSI_MARGIN;
             const uint16_t         squelch_margin = is_4815 ? SCAN_FAST4815_SQUELCH_MARGIN

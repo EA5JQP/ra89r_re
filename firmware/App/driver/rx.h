@@ -358,6 +358,14 @@ uint16_t rx_rssi(void);
 uint16_t rx_squelch_open_mark_now(void);
 uint16_t rx_squelch_close_mark_now(void);
 
+/* The opening mark for a specified lane/band, not necessarily the selected
+ * audio lane.  The dual-transceiver scanner probes both chips at once and must
+ * compare each lane against its own floor and its own 7-bit (BK4815) or 9-bit
+ * (BK4829) scale; using the audio lane's mark for both mixed the two scales.
+ * `am` selects the AM floor slot (airband).  Returns the fixed fallback while
+ * that lane's floor is not valid yet. */
+uint16_t rx_squelch_open_mark_lane(bool use_4815, bool uhf, bool am);
+
 /* The active lane's floor estimate (0 while it is still unknown). */
 uint16_t rx_squelch_floor(void);
 

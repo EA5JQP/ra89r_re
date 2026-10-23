@@ -176,6 +176,15 @@ uint16_t rx_squelch_close_mark_now(void)
                                             gEeprom.SQUELCH_LEVEL, rx_active_floor());
 }
 
+uint16_t rx_squelch_open_mark_lane(bool use_4815, bool uhf, bool am)
+{
+    const uint8_t lane = use_4815 ? 1u : 0u;
+    const uint8_t slot = (uint8_t)((uhf ? 1u : 0u) | (am ? 2u : 0u));
+    const uint16_t floor = s_floor[lane][slot].valid ? s_floor[lane][slot].floor : 0u;
+
+    return rx_squelch_open_mark_from_floor(use_4815, uhf, gEeprom.SQUELCH_LEVEL, floor);
+}
+
 static void rx_floor_invalidate(void)
 {
     unsigned lane, band;
