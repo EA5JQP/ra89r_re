@@ -24,8 +24,17 @@ static bool s_fm_active;        /* the FM feature owns the audio; see rx_set_fm_
 static uint16_t s_rssi;
 static uint32_t s_freq_10hz;    /* what the BK4829 was last tuned to */
 
+/* Retune settling.  The first RSSI reads after a retune are the AGC/PLL
+ * settling, not the new channel's level; without a hold-off they cross the
+ * open mark and the squelch burps (a noise burst) on every frequency change --
+ * the 2026-10-23 bench finding.  Five polls at the 10 ms service tick is 50 ms:
+ * longer than the transient, short enough not to delay a real signal. */
+#define RX_SETTLE_POLLS 5u
+static uint8_t s_settle_polls;
+
 /* Defined with the floor tracker below; needed by the retune paths above it. */
 static void rx_floor_invalidate(void);
+static void rx_gate_hold_closed(void);
 
 void rx_init(uint32_t freq_10hz)
 {
@@ -66,6 +75,9 @@ void rx_init(uint32_t freq_10hz)
 
 void rx_set_frequency(uint32_t freq_10hz)
 {
+    if (freq_10hz != s_freq_10hz)
+        rx_gate_hold_closed();
+
     BK4819_SetFrequency(freq_10hz);
     s_freq_10hz = freq_10hz;
     pa_select_band(freq_10hz);
@@ -173,6 +185,18 @@ static void rx_floor_invalidate(void)
             rx_floor_reset(&s_floor[lane][band]);
 }
 
+/* A retune is not a signal: close the gate, silence all three audio gates at
+ * once, and ignore the RSSI for the settling window.  Called from every path
+ * that moves the receiver (rx_set_frequency, the BK4815 tune, a lane switch). */
+static void rx_gate_hold_closed(void)
+{
+    s_squelch_open  = false;
+    s_closed_polls  = 0;
+    s_settle_polls  = RX_SETTLE_POLLS;
+
+    rx_apply_audio_gate();
+}
+
 /* A temporary scan-hit receive route (see rx.h).  DEFAULT follows the selected
  * VFO's own transceiver; the other values pin the hit's chip until cleared. */
 static rx_scan_source_t s_scan_source = RX_SCAN_SOURCE_DEFAULT;
@@ -235,6 +259,7 @@ static void rx_set_audio_source(bool use_4815)
 
     s_audio_4815  = use_4815;
     s_closed_polls = 0u;
+    s_settle_polls = RX_SETTLE_POLLS;   /* a lane switch retunes the audio path */
     /* Mute both and let the squelch open the selected one.  The BK4815's audio
      * shares the BK4829's AF node (measured: it is only audible while the
      * BK4829's AF is open, e.g. with the K1 squelch at 0), so the BK4815 source
@@ -245,10 +270,50 @@ static void rx_set_audio_source(bool use_4815)
     rx_squelch_reset(&s_sq);
 }
 
+/* Drive the three audio gates from the current squelch state.  Split out of
+ * rx_poll() because the K1's own receive paths open the amplifier and unmute
+ * the chip's AF behind the gate's back: `RADIO_SetupRegisters()` ends with
+ * `RADIO_SetModulation()` (AF = FM) and `APP_StartListening()` does
+ * `AUDIO_AudioPathOn()` + `gEnableSpeaker = true`.  Re-applying the gate right
+ * there closes the retune/entry transient instead of leaving it to the next
+ * 10 ms poll -- the audible squelch burp on every frequency change
+ * (2026-10-23). */
+void rx_apply_audio_gate(void)
+{
+    if (!s_ready)
+        return;
+
+    if (s_audio_4815) {
+        bk4815_set_af(s_squelch_open);
+
+        /* While a scan runs on the other chip, keep the BK4829's AF output
+         * muted with the AF DAC alive (the stock TX-entry mute word). */
+        if (gScanStateDir != SCAN_OFF)
+            BK4819_WriteRegister(BK4819_REG_47, 0x6040u);
+        else
+            BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
+    } else {
+        bk4815_set_af(false);
+        BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
+    }
+
+    audio_path_drive(s_squelch_open);
+}
+
 void rx_poll(void)
 {
     if (!s_ready)
         return;
+
+    /* A retune's first readings are the receiver settling (the same reason the
+     * K1's squelch tick waits): hold the gate closed and the audio muted for
+     * RX_SETTLE_POLLS instead of letting a transient open the squelch. */
+    if (s_settle_polls != 0u) {
+        s_settle_polls--;
+        s_squelch_open = false;
+        rx_apply_audio_gate();
+        return;
+    }
 
     if (s_audio_4815) {
         /* Squelch 0 is the K1's "always open": RADIO_ConfigureSquelchAndOutputPower()
@@ -313,19 +378,7 @@ void rx_poll(void)
          * from then on.  The BK4815's own AF (0x49), the BK4829's AF (0x47, the
          * node the BK4815's audio rides) and the amplifier (PC13) must all be
          * open together for a BK4815 receive to be heard. */
-        bk4815_set_af(s_squelch_open);
-
-        /* While a scan runs on the other chip, keep the BK4829's AF output
-         * muted with the AF DAC alive (the stock TX-entry mute word): the
-         * stepped chip's demodulated audio must not ride the shared node,
-         * while the listen lane's own audio still reaches the amplifier
-         * through it (measured in the duplex runs, 2026-10-19). */
-        if (gScanStateDir != SCAN_OFF && s_audio_4815)
-            BK4819_WriteRegister(BK4819_REG_47, 0x6040u);
-        else
-            BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
-
-        audio_path_drive(s_squelch_open);
+        rx_apply_audio_gate();
         return;
     }
 
@@ -379,8 +432,7 @@ void rx_poll(void)
              * 2026-10-22, LISTEN with a -20 dBm carrier, squelch OPEN, RSSI 204,
              * and no tone at all.  The BK4815 branch already drove its gates
              * every poll for the same reason. */
-            BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
-            audio_path_drive(s_squelch_open);
+            rx_apply_audio_gate();
         }
     }
 }
@@ -584,6 +636,7 @@ void rf_dual_refresh(void)
     }
 
     if (roles.bk4815_vfo != s_dual_sec || f4815 != s_dual_sec_f) {
+        rx_gate_hold_closed();      /* the BK4815 retune below is a frequency change */
         rf_dual_apply(&roles, f4815);
         /* The rest of the stock's per-VFO receive entry (FUN_08016CEC): the
          * demod/baseband/AF block and the channel-spacing bit in 0x01, taken
