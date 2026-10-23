@@ -19,16 +19,25 @@ notes and quoted addresses use a shifted coordinate system.
 | [`ra89r_eeprom.md`](ra89r_eeprom.md) | the external SPI NOR flash ("EEPROM"): part and pins, SPI command set, what is actually on the chip, the write-validation test |
 | [`ra89r_lcd.md`](ra89r_lcd.md) | the 128x64 panel: pin map, init sequence, addressing, fonts, port notes |
 | [`ra89r_keypad.md`](ra89r_keypad.md) | the 20-button key matrix / ADC decode and the F4HWN `KEY_Code_e` mapping |
+| [`ra89r_pins.md`](ra89r_pins.md) | the board-wide MCU pin inventory: every GPIO line the stock uses, the free lines (`PC0`–`PC12`, `PD2`, GPIOE), the helper/descriptor model, package caveats |
 | [`ra89r_led.md`](ra89r_led.md) | the status LED (`PA13` red / `PA14` green, active high) and the backlight (`PA5`), including the pin searches that came up empty |
-| [`ra89r_battery.md`](ra89r_battery.md) | the companion gauge chip: bus, protocol, voltage arithmetic, configuration block, and the full troubleshooting log |
+| [`ra89r_battery.md`](ra89r_battery.md) | the battery sense (ADC channel 9 / `PB1`), and the record of the earlier "companion gauge" dead end — that bus is the BK1080, see below |
+| [`ra89r_bk1080.md`](ra89r_bk1080.md) | the BK1080 FM receiver on `PC14`/`PB2`: the I2C framing, the register map, the init block, the tune, the RSSI/seek path, and the imported K1 FM feature (`app/fm.c`, `ui/fmradio.c`) on branch `driver/fm` |
 | [`ra89r_beeper.md`](ra89r_beeper.md) | the beeper: TIM4 plus a tone generator, its pin is `PA4` (`DAC_OUT1`) |
 | [`ra89r_bk4829.md`](ra89r_bk4829.md) | the RF transceiver on chip select `PB8`: identity (`0x4829`), boot sequence, differences from the UV-K1/K5V3 driver |
-| [`ra89r_bk4815.md`](ra89r_bk4815.md) | the second transceiver, on `PB13`: identity (`0x4816`), its differently framed register access, boot sequence, 18-register table |
+| [`ra89r_bk4815.md`](ra89r_bk4815.md) | the second transceiver, on `PB13`: identity (`0x4816`), its differently framed register access, boot sequence, 18-register table, the datasheet register map, the `0x71`/`0x72` frequency word, and its role as the > 134 MHz receive path |
 | [`ra89r_rfpath.md`](ra89r_rfpath.md) | the RF path the two share: the bit-banged bus, boot bring-up order, what powers the RF section, the transmit chain |
 | [`ra89r_rffeatures.md`](ra89r_rffeatures.md) | the stock's feature routines above the part: AF, AGC, the CTCSS/CDCSS/DTMF/scramble/VOX group, sleep/idle/mode-restore, by register |
 | [`ra89r_noisereduction.md`](ra89r_noisereduction.md) | the noise reduction ("denoise"): the CPS's Noise Cancellation side-key, the compander (`0x28`) and the noise/SNR detectors (`0x63`/`0x65`) |
 | [`ra89r_bluetooth.md`](ra89r_bluetooth.md) | the Jieli Bluetooth audio module: USART3 on `PB10`/`PB11` (AF2, 115200), the AT command set, the `+IM_*` response parser, the "BT Switch" and its **PD0 module-reset** line, what the stock uses it for, and the partly-decoded binary `RDTP` path |
 | [`ra89r_port.md`](ra89r_port.md) | the K1/F4HWN port itself: what the RA89R side provides, the fixes and missing modules, the board facts to re-point, and the order to do it in |
+| [`ra89r_scan.md`](ra89r_scan.md) | the scanner and the dual-transceiver (`SetScn` `FAST BOTH`) mode: the shared candidate stream, the lane rule, per-lane RSSI, the RX scan-source override, and what is still radio-gated |
+| [`ra89r_cat.md`](ra89r_cat.md) | FT-817 CAT on the USB-C serial port (USART1), the feature view: why Look4Sat, the parser/actions, `ENABLE_CAT`, the stand-in script, and what is open |
+| [`ra89r_carserial.md`](ra89r_carserial.md) | the FT-817 CAT **wire protocol** on the USB-C port: the 5-byte frames, BCD frequency and tone encoding, mode bytes, ACK/reply semantics, auto-detect rules, the interrupt-driven receive, and the on-radio validation transcript |
+| [`ra89r_airband.md`](ra89r_airband.md) | airband (AM) reception: the band rule in `radio.c`, the K1's AM register sequence, the 108-137 range and 25 kHz step, and the `U` automation key |
+| [`ra89r_fullduplex.md`](ra89r_fullduplex.md) | the full-duplex investigation: why two transceivers behind one band-switched front end cannot receive and transmit at once, and why a cross-band repeater can |
+| [`ra89r_jlink.md`](ra89r_jlink.md) | SWD / J-Link debugging via the `jlink-mcp` MCP server: what an `.icf` really is (XOR records the bootloader decrypts to `0x08004000`), the `PY32F403xD` custom device and its bootloader-safety guard, the SVD, the host/MCP setup, and the `PA13`/`PA14` SWD-pad caveat |
+| [`ra89r_rf_harness.md`](ra89r_rf_harness.md) | `tools/rf_harness.py`: driving a tinySA generator in step with the console's `S`/`F`/`B`/`Q` so RSSI becomes an off/on pair; the CAT tuning path, the two output stages' coverage, and what is verified vs still open |
 | [`firmware.md`](firmware.md) | the custom firmware project: layout, build, the console, and what is verified on the radio vs. still open |
 
 ## Conventions

@@ -1,10 +1,12 @@
 #include "driver/rx.h"
 
+#include "app/chFrScanner.h"
 #include "driver/audio_path.h"
 #include "driver/bk4815.h"
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
 #include "driver/pa.h"
+#include "driver/rf_dual.h"
 #include "driver/tx.h"
 #include "driver/led.h"
 #include "functions.h"
@@ -14,8 +16,15 @@
 
 static bool s_ready;
 static bool s_squelch_open;
+/* Consecutive polls with the gate closed.  The LISTEN sweep waits for a few
+ * before probing: one corrupted reading used to be enough to start it. */
+static uint8_t s_closed_polls;
+static bool s_fm_active;        /* the FM feature owns the audio; see rx_set_fm_active() */
 static uint16_t s_rssi;
 static uint32_t s_freq_10hz;    /* what the BK4829 was last tuned to */
+
+/* Defined with the floor tracker below; needed by the retune paths above it. */
+static void rx_floor_invalidate(void);
 
 void rx_init(uint32_t freq_10hz)
 {
@@ -48,6 +57,7 @@ void rx_init(uint32_t freq_10hz)
 
     BK4819_SetAF(BK4819_AF_MUTE);       /* start quiet; rx_poll() opens it */
 
+    rx_floor_invalidate();      /* fresh estimates on every boot */
     s_ready = true;
     s_squelch_open = false;
 }
@@ -64,25 +74,327 @@ bool rx_ready(void)
     return s_ready;
 }
 
+/* The FM broadcast feature (app/fm.c) runs the BK1080 on this board's shared
+ * amplifier node.  While it is up, the BK4829 must not be polled or re-tuned:
+ * `rx_poll()` would open the chip's AF on a carrier and drive that node with
+ * the VFO's demodulated audio, and `rx_service()` would re-tune the RF chip to
+ * the VFO, both of which the stock's own FM-on avoids (it idles the
+ * transceivers, `FUN_08009CC4`).  `FM_Start()` sets this; `FM_TurnOff()`
+ * clears it. */
+void rx_set_fm_active(bool active)
+{
+    s_fm_active = active;
+}
+
+/* Which chip supplies the receive audio: the selected RX VFO's transceiver.
+ * The stock switches the AF source by the same flag (`FUN_08015F48`: the
+ * BK4829's 0x47 or the BK4815's 0x49 = 0x9A02), so only the selected VFO is
+ * heard.  `s_audio_4815` is that choice. */
+static bool s_audio_4815;
+static uint32_t s_4815_freq;    /* the tune last applied to the BK4815 (for its squelch marks) */
+static bool s_force_4815_af;    /* console 'A' diagnostic */
+
+/* Noise-floor tracker per (lane, band, modulation): the BK4829's floor is
+ * 49-57 at UHF, 96-103 at VHF in FM and 63 at VHF in AM (the AM AGC profile
+ * changes the scale), the BK4815's 10-18, so one number would be wrong
+ * somewhere.  Keeping one per combination also means a tune or a VFO switch
+ * does NOT throw the learned value away.  Index [lane][uhf | am << 1]. */
+static rx_floor_t s_floor[2][4];
+
+static uint16_t rx_floor_prior(uint8_t lane, bool uhf, bool am)
+{
+    if (lane == 1u)
+        return RX_FLOOR_PRIOR_4815;
+    if (uhf)
+        return am ? RX_FLOOR_PRIOR_4829_AM_UHF : RX_FLOOR_PRIOR_4829_FM_UHF;
+    return am ? RX_FLOOR_PRIOR_4829_AM_VHF : RX_FLOOR_PRIOR_4829_FM_VHF;
+}
+
+static bool rx_lane_am(void)
+{
+    return gRxVfo->Modulation == MODULATION_AM;
+}
+
+static uint16_t rx_floor_update(uint8_t lane, bool uhf, uint16_t rssi, bool closed)
+{
+    const bool am = rx_lane_am();
+    const uint8_t slot = (uint8_t)((uhf ? 1u : 0u) | (am ? 2u : 0u));
+
+    if (lane > 1u)
+        lane = 0u;
+
+    return rx_floor_step(&s_floor[lane][slot], lane == 1u,
+                         rx_floor_prior(lane, uhf, am), rssi, closed);
+}
+
+/* True when the active lane is tuned above the 280 MHz band split. */
+static bool rx_lane_uhf(void)
+{
+    const uint32_t f = s_audio_4815 ? s_4815_freq : s_freq_10hz;
+
+    return (f != 0u) && (f >= PA_BAND_SPLIT);
+}
+
+static uint16_t rx_active_floor(void)
+{
+    const uint8_t lane = s_audio_4815 ? 1u : 0u;
+
+    const bool    uhf  = rx_lane_uhf();
+    const uint8_t slot = (uint8_t)((uhf ? 1u : 0u) | (rx_lane_am() ? 2u : 0u));
+
+    return s_floor[lane][slot].valid ? s_floor[lane][slot].floor : 0u;
+}
+
+uint16_t rx_squelch_floor(void)
+{
+    return rx_active_floor();
+}
+
+uint16_t rx_squelch_open_mark_now(void)
+{
+    return rx_squelch_open_mark_from_floor(s_audio_4815, rx_lane_uhf(),
+                                           gEeprom.SQUELCH_LEVEL, rx_active_floor());
+}
+
+uint16_t rx_squelch_close_mark_now(void)
+{
+    return rx_squelch_close_mark_from_floor(s_audio_4815, rx_lane_uhf(),
+                                            gEeprom.SQUELCH_LEVEL, rx_active_floor());
+}
+
+static void rx_floor_invalidate(void)
+{
+    unsigned lane, band;
+
+    for (lane = 0; lane < 2u; lane++)
+        for (band = 0; band < 4u; band++)
+            rx_floor_reset(&s_floor[lane][band]);
+}
+
+/* A temporary scan-hit receive route (see rx.h).  DEFAULT follows the selected
+ * VFO's own transceiver; the other values pin the hit's chip until cleared. */
+static rx_scan_source_t s_scan_source = RX_SCAN_SOURCE_DEFAULT;
+
+/* The override actually applied to the chips, so rx_service() retunes only on a
+ * change instead of on every loop. */
+static rx_scan_source_t s_scan_source_applied = RX_SCAN_SOURCE_DEFAULT;
+static uint32_t         s_scan_source_freq;
+
+void rx_set_scan_source_override(rx_scan_source_t source)
+{
+    s_scan_source = source;
+
+    /* The scan lanes tune the chips themselves (chFrScanner.c's ScanBothProbe:
+     * pa_select_band() + bk4815_set_frequency(probe)).  rf_dual_refresh() only
+     * retunes on a change it knows about, so without this the part is left on
+     * the last probe when the scan ends: the VFO reads its own frequency, the
+     * chip is elsewhere, the squelch never opens on the real channel and a
+     * manual retune was the only way back (radio 2026-10-18: VFO A on 145.500
+     * but the BK4815 tuned to 146.25000, a scan probe).  Invalidate the
+     * applied state on entry and exit so returning to the VFOs re-applies
+     * both lanes. */
+    rf_dual_reapply();
+}
+
+void rx_clear_scan_source_override(void)
+{
+    s_scan_source = RX_SCAN_SOURCE_DEFAULT;
+    /* A scan writes the chips under the poller, so after one stops the floor
+     * learned before it may not describe this channel: start over. */
+    rf_dual_reapply();      /* see rx_set_scan_source_override() */
+}
+
+rx_scan_source_t rx_scan_source_override(void)
+{
+    return s_scan_source;
+}
+
+void rx_force_bk4815_af(bool on)
+{
+    s_force_4815_af = on;
+}
+
+bool rx_force_bk4815_af_on(void)
+{
+    return s_force_4815_af;
+}
+
+static void rx_set_audio_source(bool use_4815)
+{
+    /* The receive-path pin belongs to the lane, not to a VFO assignment: the
+     * stock sets it for its BK4815 entry and clears it for the BK4829's, and a
+     * wrongly set pin costs the BK4829 ~16 dB at VHF (measured).  Re-assert it
+     * on every pass, because the app's own radio setup and the scan probes write
+     * 0x33 too. */
+    pa_set_rx_lane(use_4815);
+
+    if (use_4815 == s_audio_4815)
+        return;
+
+    s_audio_4815  = use_4815;
+    s_closed_polls = 0u;
+    /* Mute both and let the squelch open the selected one.  The BK4815's audio
+     * shares the BK4829's AF node (measured: it is only audible while the
+     * BK4829's AF is open, e.g. with the K1 squelch at 0), so the BK4815 source
+     * must open the BK4829's AF as well as its own 0x49. */
+    BK4819_SetAF(BK4819_AF_MUTE);
+    bk4815_set_af(false);
+    s_squelch_open = false;
+}
+
 void rx_poll(void)
 {
     if (!s_ready)
         return;
 
-    s_rssi = BK4819_GetRSSI();
+    if (s_audio_4815) {
+        /* Squelch 0 is the K1's "always open": RADIO_ConfigureSquelchAndOutputPower()
+         * forces the BK4829's chip-squelch thresholds to 0 for it.  This
+         * software gate must honour it too, or a BK4815 VFO stays muted below
+         * the fixed mark even with the user's squelch turned off. */
+        const bool     squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
+        const bool     was_open    = s_squelch_open;
 
-    if (!s_squelch_open && s_rssi >= RX_SQUELCH_OPEN_MARK) {
-        s_squelch_open = true;
-        BK4819_SetAF(BK4819_AF_FM);
-    } else if (s_squelch_open && s_rssi < RX_SQUELCH_CLOSE_MARK) {
-        s_squelch_open = false;
-        BK4819_SetAF(BK4819_AF_MUTE);
+        s_rssi = bk4815_read_rssi();
+
+        /* Learn the lane's floor and take the marks from it: a fixed mark cannot
+         * work on this board (see rx.h).  Not while a scan runs: it retunes
+         * this very chip under the poller, and the samples it reads there
+         * dragged the floor to its minimum and left the gate unable to open on
+         * a real signal (radio 2026-10-21).
+         *
+         * While the gate is OPEN the floor is frozen *except* for a weak level
+         * (within two margins of it): that is noise that happened to trip the
+         * gate, and freezing on it would hold the squelch open forever.  A real
+         * signal is further above and keeps the floor where it is. */
+        {
+            const uint16_t open_now  = rx_squelch_open_mark_now();
+            const bool     weak_open = s_squelch_open &&
+                s_rssi < (uint16_t)(open_now + rx_squelch_margin(true, gEeprom.SQUELCH_LEVEL));
+
+            if (gScanStateDir == SCAN_OFF && (!s_squelch_open || weak_open))
+                (void)rx_floor_update(1u, rx_lane_uhf(), s_rssi, true);
+        }
+
+        {
+            const uint16_t open_mark  = rx_squelch_open_mark_now();
+            const uint16_t close_mark = rx_squelch_close_mark_now();
+
+            if (s_force_4815_af || squelch_off ||
+                (!s_squelch_open && s_rssi >= open_mark))
+                s_squelch_open = true;
+            else if (s_squelch_open && !squelch_off && s_rssi < close_mark)
+                s_squelch_open = false;
+        }
+
+        /* The K1's power save sleeps the BK4829 when idle (BK4819_Sleep():
+         * 0x30 = 0, 0x37 = 0x1D00) and its own receive path wakes it through
+         * BK4819_Conditional_RX_TurnOn().  The BK4815's audio rides that
+         * chip's RX/AF chain, so the first reception after an idle period
+         * opens the gates onto a sleeping chip: the shared path is dead and
+         * the reception is noise until the app's wake runs at its end (radio
+         * 2026-10-19: first PTT noise, second one voice).  Wake it here, on
+         * the opening edge, so the first reception is like the rest. */
+        if (s_squelch_open && !was_open)
+            BK4819_RX_TurnOn();
+
+        if (s_squelch_open)
+            s_closed_polls = 0u;
+        else if (s_closed_polls < 255u)
+            s_closed_polls++;
+
+        /* Drive the three gates every poll, not only on a transition.  The K1's
+         * own receive setup (RADIO_SetupRegisters -> RADIO_SetModulation, and
+         * AUDIO_AudioPathOff) writes the shared AF node and the amplifier behind
+         * our back, so a one-shot open at the transition leaves the audio muted
+         * from then on.  The BK4815's own AF (0x49), the BK4829's AF (0x47, the
+         * node the BK4815's audio rides) and the amplifier (PC13) must all be
+         * open together for a BK4815 receive to be heard. */
+        bk4815_set_af(s_squelch_open);
+
+        /* While a scan runs on the other chip, keep the BK4829's AF output
+         * muted with the AF DAC alive (the stock TX-entry mute word): the
+         * stepped chip's demodulated audio must not ride the shared node,
+         * while the listen lane's own audio still reaches the amplifier
+         * through it (measured in the duplex runs, 2026-10-19). */
+        if (gScanStateDir != SCAN_OFF && s_audio_4815)
+            BK4819_WriteRegister(BK4819_REG_47, 0x6040u);
+        else
+            BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
+
+        audio_path_drive(s_squelch_open);
+        return;
+    }
+
+    /* A reading below the lane's plausible floor is a bus artefact, not a
+     * signal: the scanner drives the same bit-banged bus, so a poll that
+     * collides with a probe transaction returns 0 or garbage.  Classifying that
+     * as "squelch closed" let the LISTEN sweep start, which collided further and
+     * turned the audio into noise (radio 2026-10-22).  Hold the previous value
+     * and the gate state instead. */
+    {
+        const uint16_t raw = BK4819_GetRSSI();
+
+        if (raw != 0u)
+            s_rssi = raw;
+    }
+
+    {
+        const bool     squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
+
+        {
+            const uint16_t open_now  = rx_squelch_open_mark_now();
+            const bool     weak_open = s_squelch_open &&
+                s_rssi < (uint16_t)(open_now + rx_squelch_margin(false, gEeprom.SQUELCH_LEVEL));
+
+            /* See the BK4815 branch: a weak open level (within two margins of
+             * the floor) is noise and is learned, a real signal is not. */
+            if (gScanStateDir == SCAN_OFF && (!s_squelch_open || weak_open))
+                (void)rx_floor_update(0u, rx_lane_uhf(), s_rssi, true);
+        }
+
+        {
+            const uint16_t open_mark  = rx_squelch_open_mark_now();
+            const uint16_t close_mark = rx_squelch_close_mark_now();
+
+            if (!s_squelch_open && (squelch_off || s_rssi >= open_mark))
+                s_squelch_open = true;
+            else if (s_squelch_open && !squelch_off && s_rssi < close_mark)
+                s_squelch_open = false;
+
+            if (s_squelch_open)
+                s_closed_polls = 0u;
+            else if (s_closed_polls < 255u)
+                s_closed_polls++;
+
+            /* Drive the AF and the amplifier every poll, not only on a
+             * transition.  The app's own receive setup runs on every scan start,
+             * VFO reconfiguration and scan hit and begins with
+             * AUDIO_AudioPathOff() (the K1's AUDIO_AudioPathOff ->
+             * GPIO_DisableAudioPath -> PC13), so a transition-only drive left
+             * the audio shut whenever the gate was already open: radio
+             * 2026-10-22, LISTEN with a -20 dBm carrier, squelch OPEN, RSSI 204,
+             * and no tone at all.  The BK4815 branch already drove its gates
+             * every poll for the same reason. */
+            BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
+            audio_path_drive(s_squelch_open);
+        }
     }
 }
 
 bool rx_squelch_open(void)
 {
     return s_squelch_open;
+}
+
+bool rx_squelch_quiet(uint8_t polls)
+{
+    return !s_squelch_open && s_closed_polls >= polls;
+}
+
+bool rx_audio_is_4815(void)
+{
+    return s_audio_4815;
 }
 
 uint16_t rx_rssi(void)
@@ -107,20 +419,55 @@ uint32_t rx_rx_frequency(void)
 void rx_service(void)
 {
     static bool squelch_open;
-    static uint32_t last_freq;
+
+    /* The FM feature owns the receiver and the audio while it is up (see
+     * rx_set_fm_active()): leave the BK4829 alone so it cannot drive the
+     * amplifier node out from under the BK1080. */
+    if (s_fm_active)
+        return;
+
+    /* Keep both transceivers on their own VFO.  This is now the only place the
+     * BK4829 is retuned from: the primary VFO (the BK4829 one) drives it, so
+     * with one VFO on each chip the BK4829 does not follow the receiver onto
+     * the BK4815's VFO. */
+    if (s_scan_source == RX_SCAN_SOURCE_DEFAULT) {
+        s_scan_source_applied = RX_SCAN_SOURCE_DEFAULT;
+
+        /* While a scan runs, the scanner owns the scan lane's chip and walks
+         * gRxVfo's frequency as its cursor.  Retuning/mirroring/repairing here
+         * would fight the probes (and, in LISTEN mode, move the listening
+         * lane), so the coordinator yields for the duration and re-applies
+         * when the scan stops (CHFRSCANNER_Stop clears the override). */
+        if (gScanStateDir == SCAN_OFF) {
+            rf_dual_refresh();
+
+            /* The receive audio follows the selected VFO's transceiver, so a
+             * VFO on the BK4815 is audible through that chip's own AF. */
+            rx_set_audio_source(SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815);
+        }
+    } else {
+        /* A paused scan hit: follow the chip that found it, not the saved VFO
+         * assignment.  The K1 receive setup only tunes the BK4829 when the
+         * selected VFO is assigned to it, so each hit's chip is retuned here
+         * (a BK4815 hit on the BK4815, a BK4829 hit on the BK4829). */
+        const bool     use_4815 = (s_scan_source == RX_SCAN_SOURCE_BK4815);
+        const uint32_t f        = gRxVfo->freq_config_RX.Frequency;
+
+        if (s_scan_source_applied != s_scan_source || s_scan_source_freq != f) {
+            if (use_4815) {
+                bk4815_set_frequency(f, false);
+                bk4815_set_band((f >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+            } else {
+                rx_set_frequency(f);
+            }
+            s_scan_source_applied = s_scan_source;
+            s_scan_source_freq    = f;
+        }
+        rx_set_audio_source(use_4815);
+    }
 
     if (rx_ready())
         rx_poll();
-
-    {
-        const uint32_t freq = (gRxVfo != 0) ? gRxVfo->pRX->Frequency : 0u;
-
-        if (freq != last_freq) {
-            last_freq = freq;
-            if (freq != 0u)
-                rx_set_frequency(freq);
-        }
-    }
 
     if (rx_ready() && rx_squelch_open() != squelch_open) {
         squelch_open = rx_squelch_open();
@@ -131,4 +478,136 @@ void rx_service(void)
         gUpdateDisplay = true;
         gUpdateStatus  = true;
     }
+}
+
+/* The gEeprom glue the pure coordinator (rf_dual.c) does not carry: resolve the
+ * per-VFO transceiver setting, choose the roles and tune the secondary.  Called
+ * from rx_service() and once at boot. */
+/* The last applied roles/frequencies, so rf_dual_refresh only retunes on a
+ * change.  -2 = "never applied". */
+static int      s_dual_pri   = -2;
+static int      s_dual_sec   = -2;
+static uint32_t s_dual_pri_f = 0u;
+static uint32_t s_dual_sec_f = 0u;
+static uint8_t  s_dual_rx_vfo = 0xFFu;   /* the RX_VFO the state was applied for */
+static uint32_t s_4829_mirror_f;         /* unassigned BK4829: the BK4815 tune mirrored onto it */
+
+void rf_dual_reapply(void)
+{
+    s_dual_pri = -2;
+    s_dual_sec = -2;
+    s_dual_rx_vfo = 0xFFu;
+    /* Force the mirror to be re-applied as well (the TX paths retune the 4829). */
+    s_4829_mirror_f = 0u;
+}
+
+void rf_dual_refresh(void)
+{
+    const bool      a_4829 = SETTINGS_GetVfoTransceiver(0u) != RF_XCVR_BK4815;
+    const bool      b_4829 = SETTINGS_GetVfoTransceiver(1u) != RF_XCVR_BK4815;
+    const rf_dual_roles_t roles = rf_dual_choose(a_4829, b_4829, gEeprom.RX_VFO);
+    uint32_t        f4829 = 0u;
+    uint32_t        f4815 = 0u;
+
+    /* Switching VFOs has to re-enter the selected lane's receive
+     * configuration, the way the stock does: its receive entry (FUN_08016cec)
+     * tunes the part and applies the demodulator set, the band register and
+     * the receive-path pin *together*, every time a lane is (re)configured --
+     * a VFO switch included.  The port split those steps and ran the tune only
+     * when the BK4815's role or frequency changed, so "switch to a BK4815 VFO"
+     * left the part un-retuned while the K1's own radio setup had moved its
+     * band/path state: the RSSI still read the carrier (the squelch opened)
+     * but the demodulator produced noise, and editing the frequency and back
+     * -- which forces the re-apply -- was the workaround (radio 2026-10-18).
+     * Selecting another VFO now invalidates the applied state so both lanes
+     * re-apply, exactly what a frequency change does. */
+    if (gEeprom.RX_VFO != s_dual_rx_vfo) {
+        s_dual_rx_vfo = gEeprom.RX_VFO;
+        s_dual_pri    = -2;
+        s_dual_sec    = -2;
+    }
+
+    if (roles.bk4829_vfo >= 0)
+        f4829 = gEeprom.VfoInfo[roles.bk4829_vfo].freq_config_RX.Frequency;
+    if (roles.bk4815_vfo >= 0)
+        f4815 = gEeprom.VfoInfo[roles.bk4815_vfo].freq_config_RX.Frequency;
+    s_4815_freq = f4815;
+
+    /* An unassigned BK4829 -- both VFOs on the BK4815, the usual setup here --
+     * is left receiving on whatever frequency it had last.  Its RX chain is
+     * the audio path the BK4815's audio rides (radio 2026-10-18: parking its
+     * demodulator silenced the receiver completely, and muting its AF output
+     * did the same), and while it sits on another frequency its demodulated
+     * noise sums into that path -- which is the "noise, squelch open" fault
+     * chased for so long.  The one state that works is the 4829 on the *same*
+     * channel as the BK4815 (the good capture had exactly that, RSSI 281).
+     * So mirror the BK4815's tune onto the unassigned 4829: its demod then
+     * sees the same carrier, its noise is the carrier's, and the shared audio
+     * path stays alive.  A VFO that names the chip tunes it itself. */
+    if (roles.bk4829_vfo < 0) {
+        if (f4815 != 0u && f4815 != s_4829_mirror_f) {
+            BK4819_SetFrequency(f4815);
+            s_4829_mirror_f = f4815;
+        }
+    } else {
+        s_4829_mirror_f = 0u;
+    }
+
+    /* The BK4815's own state -- its band register 0x75 and its receive-path
+     * pin -- belongs to the tune the BK4815 is on, but two other paths write
+     * it as a side effect:
+     *   - pa_select_band() writes 0x75 from *whatever frequency it is handed*,
+     *     and the BK4829's retune path and the TX path hand it the BK4829's;
+     *     it also clears the receive-path pin through pa_apply_chip_path().
+     *   - the K1's own radio setup clears the pin through
+     *     BK4819_PickRXFilterPathBasedOnFrequency() every time it configures
+     *     a BK4829-bound VFO -- i.e. on every VFO switch and end-of-reception
+     *     reconfigure.
+     * The repair used to run only when the BK4815's role or frequency
+     * changed, so the sequence "switch to a BK4829 VFO, switch back" left the
+     * pin cleared and the band stale: the RSSI still read the carrier (the
+     * squelch opened) but the demodulator produced noise, and a frequency
+     * edit-and-back -- which forces the re-apply -- was the workaround.
+     * Own both here instead: assert/clear them after every pass's retunes
+     * (which are the clobberers), writing the register only when the value
+     * actually changes. */
+
+    /* The BK4829 is retuned to its VFO here, not from the receiver's VFO: the
+     * receiver may be following the BK4815 one. */
+    if (f4829 != 0u && (roles.bk4829_vfo != s_dual_pri || f4829 != s_dual_pri_f)) {
+        rx_set_frequency(f4829);
+        s_dual_pri   = roles.bk4829_vfo;
+        s_dual_pri_f = f4829;
+    }
+
+    if (roles.bk4815_vfo != s_dual_sec || f4815 != s_dual_sec_f) {
+        rf_dual_apply(&roles, f4815);
+        /* The rest of the stock's per-VFO receive entry (FUN_08016CEC): the
+         * demod/baseband/AF block and the channel-spacing bit in 0x01, taken
+         * from this VFO's own bandwidth.  It runs on the (re)configuration, not
+         * on every pass, and never from the scanner's probes. */
+        if (roles.bk4815_vfo >= 0)
+            bk4815_receive_entry(gEeprom.VfoInfo[roles.bk4815_vfo].CHANNEL_BANDWIDTH
+                                 == BANDWIDTH_WIDE);
+        s_dual_sec   = roles.bk4815_vfo;
+        s_dual_sec_f = f4815;
+    }
+
+    if (roles.bk4815_vfo >= 0) {
+        static uint16_t s_band_written;
+
+        {
+            const uint16_t band = (f4815 >= PA_BAND_SPLIT) ? 0x0Au : 0x11u;
+
+            if (band != s_band_written) {
+                bk4815_set_band(band);
+                s_band_written = band;
+            }
+        }
+    }
+
+    /* The 0x33 receive-path pin is the *lane's*, set by rx_set_audio_source()
+     * through pa_set_rx_lane(): a VFO merely naming the BK4815 no longer sets
+     * it, because that costs the BK4829 ~16 dB at VHF when it is the lane being
+     * heard (measured, docs/ra89r_rfpath.md). */
 }

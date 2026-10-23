@@ -12,6 +12,7 @@
  * at all, only that we ask correctly.  `R` on the console is the other half.
  */
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -22,10 +23,23 @@
 #include "driver/gpio.h"
 #include "driver/pa.h"
 #include "driver/rf_bus.h"
+#include "driver/tx.h"
+#include "settings.h"
 
 /* Added with the stock-compatible BT GPIO implementation. */
 extern void pa_set_bt_audio(bool on);
 extern bool pa_bt_audio(void);
+
+/* tx.c's BT hooks: this test is about register traffic, so the BT service is
+ * stubbed rather than linked (which would drag in the EEPROM and the AT sink). */
+void bt_set_radio_tx_active(bool active) { (void)active; }
+bool bt_ptt_down(void) { return false; }
+bool bt_ptt_source_active(bool radio_ptt, bool headset_ptt, uint8_t mode)
+{
+    (void)headset_ptt;
+    (void)mode;
+    return radio_ptt;
+}
 
 /* The GPIO/timer scratch the host device-header double points at.  This test
  * does not link tools/host/host_hw.c, so it supplies its own.  `pa_init()` is
@@ -43,6 +57,18 @@ void gpio_config_output(GPIO_TypeDef *port, uint32_t mask)
     (void)port;
     (void)mask;
 }
+
+/* `driver/tx.c` is linked so `tx_start()`'s register order can be asserted.
+ * Only `tx_start()`/`tx_stop()` are called, so the application hooks the PTT
+ * poller (`tx_poll_ptt()`) references -- the keypad, the K1 function state and
+ * the coordinator's restore -- are stubbed and never reached. */
+VFO_Info_t *gTxVfo;
+bool  gUpdateDisplay;
+EEPROM_Config_t gEeprom;    /* tx.c reads the BT PTT mode; the poller is not called */
+void  rf_dual_reapply(void) { }
+unsigned KEYBOARD_GetKey(void) { return 0u; }
+void  FUNCTION_Select(int function) { (void)function; }
+void  audio_path_drive(int on) { (void)on; }   /* the 'w' variant's PC13 step */
 
 /* ------------------------------------------------------------- bus stub --- */
 
@@ -289,6 +315,99 @@ static void test_bk4815_config(void)
           "three writes are known to be placeholders (0x4c, 0x55, 0x62)");
 }
 
+/* The BK4815's synthesizer.  The stock's frequency word is at 0x71/0x72 (not
+ * 0x38/0x39, and not 0x22); 0x22 is the SELCALL tone.  Expected word values
+ * are the datasheet formula freq_Hz * Ndiv * 2^24 / 26e6 computed independently
+ * of the driver. */
+static void test_bk4815_synth(void)
+{
+    uint16_t reg4, freq_hi, freq_lo, tone;
+
+    printf("bk4815 synthesizer (0x04 / 0x70-0x72 / 0x22)\n");
+
+    /* VCO bands: the stock's FUN_0800EC70 thresholds, 187/270/383 MHz. */
+    check_hex(bk4815_vco_band(14575000u), 3, "145.75 MHz is VCO band 3");
+    check_hex(bk4815_vco_band(10800000u), 3, "108 MHz is VCO band 3");
+    check_hex(bk4815_vco_band(17400000u), 3, "174 MHz is VCO band 3");
+    check_hex(bk4815_vco_band(23000000u), 1, "230 MHz is VCO band 1");
+    check_hex(bk4815_vco_band(32000000u), 2, "320 MHz is VCO band 2");
+    check_hex(bk4815_vco_band(44600625u), 0, "446.00625 MHz is VCO band 0");
+    check_hex(bk4815_vco_divider(0), 8, "band 0 divides by 8");
+    check_hex(bk4815_vco_divider(1), 16, "band 1 divides by 16");
+    check_hex(bk4815_vco_divider(2), 12, "band 2 divides by 12");
+    check_hex(bk4815_vco_divider(3), 24, "band 3 divides by 24");
+
+    check_hex(bk4815_frequency_word(14575000u, 3), 0x8689D89Du,
+              "145.75 MHz band 3 word");
+    check_hex(bk4815_frequency_word(44600625u, 0), 0x893B91B9u,
+              "446.00625 MHz band 0 word");
+    check_hex(bk4815_frequency_word(10800000u, 3), 0x63B13B13u,
+              "108 MHz band 3 word");
+    check_hex(bk4815_frequency_word(52000000u, 0), 0xA0000000u,
+              "520 MHz band 0 word");
+
+    /* 0x22 is a signalling tone, (freq/18466)*65536, not the RF word. */
+    check_hex(bk4815_tone_word(1000u), 0x0DDDu, "1000 Hz tone word");
+    check_hex(bk4815_tone_word(2000u), 0x1BBAu, "2000 Hz tone word");
+
+    /* The full tune path, in FUN_0801703C's write order. */
+    log_reset();
+    bk4815_set_frequency(14575000u, false);
+    check(log_len == 3, "set_frequency is three transfers");
+    check(xfer_is(&log_[0], BK4815_CS_PIN, 0x08), "first is register 4");
+    reg4 = (uint16_t)((log_[0].data[0] << 8) | log_[0].data[1]);
+    check_hex(reg4, 0xB1C1u, "reg 4 = 0xb041 | band 3 << 7");
+    check(xfer_is(&log_[1], BK4815_CS_PIN, 0xE0) && log_[1].len == 6,
+          "then the 6-byte block at reg 0x70 in one select");
+    check_hex(log_[1].data[0], 0xA0u, "reg 0x70 = 0xA000 (receive)");
+    freq_hi = (uint16_t)((log_[1].data[2] << 8) | log_[1].data[3]);
+    freq_lo = (uint16_t)((log_[1].data[4] << 8) | log_[1].data[5]);
+    check_hex(freq_hi, 0x8689u, "reg 0x71 = high word");
+    check_hex(freq_lo, 0xD89Du, "reg 0x72 = low word");
+    check(xfer_is(&log_[2], BK4815_CS_PIN, 0xFC) && log_[2].len == 4,
+          "last is the 4-byte calibration block at reg 0x7e");
+
+    log_reset();
+    bk4815_set_frequency(44600625u, true);
+    check(log_len == 3 && xfer_is(&log_[0], BK4815_CS_PIN, 0x08),
+          "446.00625 MHz tune: reg 4 first");
+    check_hex((uint16_t)((log_[0].data[0] << 8) | log_[0].data[1]), 0xB041u,
+              "reg 4 = 0xb041 (band 0)");
+    check_hex(log_[1].data[0], 0xE0u, "reg 0x70 = 0xE000 (transmit)");
+    check_hex((uint16_t)((log_[1].data[2] << 8) | log_[1].data[3]), 0x893Bu,
+              "446.00625 MHz reg 0x71");
+    check_hex((uint16_t)((log_[1].data[4] << 8) | log_[1].data[5]), 0x91B9u,
+              "446.00625 MHz reg 0x72");
+
+    log_reset();
+    bk4815_set_tone(1000u);
+    check(log_len == 1 && xfer_is(&log_[0], BK4815_CS_PIN, 0x44),
+          "set_tone writes reg 0x22 (0x22<<1)");
+    tone = (uint16_t)((log_[0].data[0] << 8) | log_[0].data[1]);
+    check_hex(tone, 0x0DDDu, "reg 0x22 = the 1000 Hz tone word");
+
+    /* RSSI: register 0x44, bits 6:0. */
+    other_bk4815 = 0x00D5u;
+    log_reset();
+    check_hex(bk4815_read_rssi(), 0x55u, "RSSI is reg 0x44 masked to 7 bits");
+    check(log_len == 1 && xfer_is(&log_[0], BK4815_CS_PIN, 0x89),
+          "RSSI read addresses reg 0x44 ((0x44<<1)|1)");
+    other_bk4815 = 0u;
+
+    /* AF source: register 0x49, 0x9A02 on / 0x1A02 off (the stock's
+     * FUN_08015F48 / FUN_0801CCE8). */
+    log_reset();
+    bk4815_set_af(true);
+    check(log_len == 1 && xfer_is(&log_[0], BK4815_CS_PIN, 0x92),
+          "AF on addresses reg 0x49 (0x49<<1)");
+    check_hex((uint16_t)((log_[0].data[0] << 8) | log_[0].data[1]), 0x1A02u,
+              "AF on = 0x1A02 (hard mute clear)");
+    log_reset();
+    bk4815_set_af(false);
+    check_hex((uint16_t)((log_[0].data[0] << 8) | log_[0].data[1]), 0x9A02u,
+              "AF off = 0x9A02 (hard mute set)");
+}
+
 /* The accessors the console's read-back verification walks.  If these are wrong
  * the verification lies, so they get their own check. */
 static void test_accessors(void)
@@ -400,27 +519,39 @@ static void test_pa_rx_path(void)
 {
     printf("pa receive path (reg 0x33)\n");
 
-    /* The BK4829's own receive state clears both LNA pins (the stock's BK4829
-     * branch, FUN_08016DE8 -> FUN_080137D4(0x10, 0)); pin 4 is the BK4815
-     * branch's.  It also runs the stock BT-pin-off update, clearing paired bit
-     * 0x1000 from the driver's 0x9000 init word. */
+    /* The lane decides the receive path (stock: pin 4 for the BK4815 entry,
+     * pins 0/1 cleared for the BK4829's).  The K1's pin 0 ("RX_ENABLE") is kept
+     * for a BK4829 lane because that is the state the port receives with, and
+     * cleared for a BK4815 lane because the stock's receive entry clears it
+     * (FUN_080093EC -> FUN_080137D4(3, 0)).  The 0x9000 bits BK4819_Init() set
+     * must survive, except the BT pin's paired 0x1000, which the stock's
+     * BT-pin-off update clears. */
+    pa_set_rx_lane(false);
     log_reset();
     BK4819_Init();
     log_reset();
     pa_select_band(14550000u);
-    check_hex(last_reg33(), 0x8000, "VHF RX applies stock pin-2-off pair clear");
+    check_hex(last_reg33(), 0x8040, "BK4829 lane keeps pin 0, clears pin 4 and the BT pair bit");
 
     log_reset();
     BK4819_Init();
     log_reset();
     pa_select_band(44600625u);
-    check_hex(last_reg33(), 0x8000, "UHF RX applies stock pin-2-off pair clear");
+    check_hex(last_reg33(), 0x8040, "BK4829 lane at UHF is the same path state");
 
+    pa_set_rx_lane(true);
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    pa_select_band(44600625u);
+    check_hex(last_reg33(), 0x8004, "BK4815 lane sets pin 4 and clears the BK4829's pin 0");
+
+    pa_set_rx_lane(false);
     log_reset();
     BK4819_Init();
     log_reset();
     pa_select_band(11800000u);      /* 118.0 MHz */
-    check_hex(last_reg33(), 0x8000, "118 MHz RX applies stock pin-2-off pair clear");
+    check_hex(last_reg33(), 0x8040, "BK4829 lane at 118 MHz is the same path state");
 }
 
 /* The K1's power ladder reaches 0x36 (its SetupPowerAmplifier) and, with the
@@ -451,10 +582,33 @@ static void test_pa_tx_path(void)
     check_hex(pa_last_compare(), PA_PWM_MAX_DUTY, "UHF TX: full power clamps the compare");
 }
 
+/* The last value the bus saw written to a BK4829 register, 0xFFFF if none. */
+static uint16_t last_reg(uint8_t addr)
+{
+    unsigned i;
+
+    for (i = log_len; i-- > 0; )
+        if (xfer_is(&log_[i], BK4829_CS_PIN, addr))
+            return (uint16_t)((log_[i].data[0] << 8) | log_[i].data[1]);
+    return 0xFFFFu;
+}
+
+static uint16_t last_bk4815_reg70(void)
+{
+    unsigned i;
+
+    for (i = log_len; i-- > 0; )
+        if (!log_[i].is_read && xfer_is(&log_[i], BK4815_CS_PIN, 0xE0) &&
+            log_[i].len >= 2u)
+            return (uint16_t)((log_[i].data[0] << 8) | log_[i].data[1]);
+    return 0xFFFFu;
+}
+
 /* The stock's FUN_080137D4(mask=4, value=4) drives GPIO2 by clearing both
  * 0x0010 (output) and its paired 0x1000 configuration bit, then setting the
  * output when requested.  The port must do this without replacing the rest of
- * the PA/band register. */
+ * the PA/band register.  The lane still sets pin 0 for a BK4829 receive, so the
+ * base here is 0x8040 (the BT-off update has already cleared 0x1000). */
 static void test_pa_bt_audio(void)
 {
     printf("pa BT audio GPIO (stock 0x33 paired bit)\n");
@@ -465,7 +619,7 @@ static void test_pa_bt_audio(void)
     BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, true);
     pa_set_bt_audio(true);
     check(pa_bt_audio(), "BT link state retained");
-    check_hex(last_reg33(), 0x8050u, "BT on clears paired 0x1000, sets output 0x0010");
+    check_hex(last_reg33(), 0x8050u, "BT on keeps pin 0, sets output 0x0010");
 
     log_reset();
     pa_tx_enable(0x40u);
@@ -478,15 +632,40 @@ static void test_pa_bt_audio(void)
 
     pa_set_bt_audio(true);
     pa_rx_enable();
-    check_hex(pa_last_reg33(), 0x8010u, "VHF RX transition preserves BT output");
+    check_hex(pa_last_reg33(), 0x8050u, "VHF RX transition preserves BT output");
     pa_select_band(44600625u);
-    check_hex(pa_last_reg33(), 0x8010u, "UHF RX band selection preserves BT output");
+    check_hex(pa_last_reg33(), 0x8050u, "UHF RX band selection preserves BT output");
     pa_tx_enable(0xFFu);
     check_hex(pa_last_reg33(), 0x8032u, "UHF TX preserves BT output and applies band/T-R pins");
     pa_rx_enable();
-    check_hex(pa_last_reg33(), 0x8010u, "UHF TX-to-RX preserves BT output");
+    check_hex(pa_last_reg33(), 0x8050u, "UHF TX-to-RX preserves BT output");
     pa_set_bt_audio(false);
-    check_hex(pa_last_reg33(), 0x8000u, "BT off after RX clears only the BT output");
+    check_hex(pa_last_reg33(), 0x8040u, "BT off after RX clears only the BT output");
+}
+
+/* The order inside `tx_start()`: the PA enable (`0x36`, PA-CTL + bias) must be
+ * written **after** `BK4819_PrepareTransmit()`, whose `BK4819_TxOn_Beep()`
+ * writes `0x36 = 0`.  With the two the other way round the PA is disabled for
+ * the whole transmission: the chip's own low-level carrier still radiates (a
+ * nearby receiver hears it) but there is no measurable power at the antenna.
+ * The bench that validated the transmit chain wrote `0x36` after this call
+ * (docs/ra89r_rfpath.md), and the driver extraction reversed it -- this is the
+ * regression guard. */
+static void test_tx_order(void)
+{
+    printf("tx_start register order (PA enable after PrepareTransmit)\n");
+
+    log_reset();
+    BK4819_Init();
+    log_reset();
+    tx_start(14550000u, 0x40u, TX_SOURCE_MIC);
+    check_hex(last_reg(0x36), 0x4088u, "0x36 keeps PA-CTL + bias after PrepareTransmit");
+    check_hex(last_reg(0x7D), TX_REG7D_POWER, "0x7D = the stock's power/bias value");
+    check_hex(last_reg(0x37), 0x9D1F, "0x37 = the stock's TX value");
+    check_hex(last_reg(0x50), TX_REG50_UNMUTE, "0x50 = the stock's TX unmute");
+    tx_stop();
+    check_hex(last_bk4815_reg70(), 0xA000u,
+              "BK4815 0x70 restored from TX E000 to RX A000 after tx_stop");
 }
 
 int main(void)
@@ -497,11 +676,13 @@ int main(void)
     test_framing();
     test_bk4829_config();
     test_bk4815_config();
+    test_bk4815_synth();
     test_accessors();
     test_k1_interface();
     test_pa_rx_path();
     test_pa_tx_path();
     test_pa_bt_audio();
+    test_tx_order();
 
     printf("\n%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

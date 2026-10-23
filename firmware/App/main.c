@@ -19,11 +19,13 @@
 #include "driver/battery.h"
 #include "driver/bluetooth.h"
 #include "app/bt.h"
-#include "helper/battery.h"
+#include "driver/bk1080.h"
+#include "driver/i2c_bus.h"#include "helper/battery.h"
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
 #include "driver/audio_path.h"
 #include "driver/led.h"
+#include "driver/rf_dual.h"
 #include "driver/rx.h"
 #include "functions.h"
 #include "driver/clock.h"
@@ -37,8 +39,101 @@
 #include "driver/st7565.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
+
+/* FT-817 CAT auto-detect (App/cat.c) shares USART1 with the bring-up console.
+ *
+ * A CAT frame is a 5-byte burst -- the caller writes it in one go, so the bytes
+ * arrive back-to-back -- while console input is typed with gaps.  Bytes are
+ * buffered and then: a full, well-formed frame is applied to the radio; a pause
+ * (>20 ms) flushes whatever is buffered to the console; an invalid full window
+ * hands its oldest byte to the console.  Both features stay live and neither
+ * corrupts the other (the console is never fed a frame's bytes, so it cannot
+ * echo them or mistake a BCD byte for a command). */
+#ifdef ENABLE_CAT
+#include "cat.h"
+
+#define CAT_BURST_GAP_MS 20u
+#define CAT_Q_LEN        64u
+
+static uint8_t  cat_pend[CAT_FRAME_LEN];
+static uint8_t  cat_pend_n;
+static uint32_t cat_pend_last;
+static char     cat_q[CAT_Q_LEN];
+static uint8_t  cat_q_head;
+static uint8_t  cat_q_tail;
+
+static void cat_queue_char(char c)
+{
+    uint8_t next = (uint8_t)((cat_q_head + 1u) % CAT_Q_LEN);
+
+    if (next != cat_q_tail) {                 /* drop on overflow */
+        cat_q[cat_q_head] = c;
+        cat_q_head        = next;
+    }
+}
+
+static void cat_flush_pending(void)
+{
+    uint8_t i;
+
+    for (i = 0; i < cat_pend_n; i++)
+        cat_queue_char((char)cat_pend[i]);
+    cat_pend_n = 0;
+}
+
+static void cat_input_service(uint32_t now)
+{
+    int raw;
+
+    while ((raw = uart_getc()) >= 0) {
+        uint8_t b = (uint8_t)raw;
+        uint8_t i;
+
+        if (cat_pend_n > 0u && (uint32_t)(now - cat_pend_last) > CAT_BURST_GAP_MS)
+            cat_flush_pending();
+        cat_pend_last = now;
+
+        if (cat_pend_n < CAT_FRAME_LEN)
+            cat_pend[cat_pend_n++] = b;
+        else {
+            for (i = 1; i < CAT_FRAME_LEN; i++)
+                cat_pend[i - 1u] = cat_pend[i];
+            cat_pend[CAT_FRAME_LEN - 1u] = b;
+        }
+
+        if (cat_pend_n == CAT_FRAME_LEN) {
+            if (cat_frame_valid_bytes(cat_pend)) {
+                cat_apply(cat_pend);
+                cat_pend_n = 0;
+            } else {
+                cat_queue_char((char)cat_pend[0]);
+                for (i = 1; i < CAT_FRAME_LEN; i++)
+                    cat_pend[i - 1u] = cat_pend[i];
+                cat_pend_n = CAT_FRAME_LEN - 1u;
+            }
+        }
+    }
+
+    /* A lone typed character: flush it once the burst gap has clearly passed,
+     * so a single keystroke still reaches the console promptly. */
+    if (cat_pend_n > 0u && (uint32_t)(now - cat_pend_last) > CAT_BURST_GAP_MS)
+        cat_flush_pending();
+}
+
+static int cat_console_getc(void)
+{
+    int c;
+
+    if (cat_q_head == cat_q_tail)
+        return -1;
+    c          = (int)(uint8_t)cat_q[cat_q_tail];
+    cat_q_tail = (uint8_t)((cat_q_tail + 1u) % CAT_Q_LEN);
+    return c;
+}
+#endif
 #include "driver/py25q16.h"
 #include "app/app.h"
+#include "app/chFrScanner.h"
 #include "app/common.h"
 #include "app/scanner.h"
 #include "helper/boot.h"
@@ -228,7 +323,7 @@ static void print_help(void)
     uart_puts("\nthe K1 GUI owns the panel; these are console diagnostics\n"
               "          h help   i diagnostics   d dump screen as ASCII\n"
               "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
-              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n"
+              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40)   y toggle PA1   z toggle 0x33 pin 2 (0x10)\n          H audio chain (regs 0x30/0x47/0x48/0x50, PC13, squelch, lane)\n          o cycle SetScn   7 cycle SQL   8 switch VFO A/B   9/I cycle TrVfoA/B\n          N arm a +/-500 kHz range   E start/stop the scan   U arm the airband (108-136.975, 8.33 kHz)\n"
               "          D step the RF bus delay (find what still gives audio)\n"
               "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
@@ -238,12 +333,14 @@ static void print_help(void)
               "          R probe RF ids   W configure both   X verify config\n"
               "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
               "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
-              "          y Bluetooth (USART3): send AT+GMR?, print the reply\n"
-              "          A Bluetooth service: show state/version, toggle on/off\n"
-              "          N Bluetooth probe: send an arbitrary AT line, print the reply\n"
-              "          U dump the last USART3 bytes the module sent (hex)\n"
-              "          J enable BT and tight-drain the boot banner (compare with U)\n"
-              "          T transmit (DTMF tone)   Y step the PA power   C toggle PC13\n"
+              "          j BK1080 FM: init, id probe, tune 100.0 MHz, read status\n"
+              "          a FM audio route: toggle the BK4829 AF mute (0x47) under FM\n"
+              "          n BK4815 (PB13): dump all registers, boot config, tune, meters\n"
+              "          J dual-RF live state: roles, audio source, BK4815 regs/meters\n"
+              "          A force the BK4815 AF open (bypass squelch) to test audio\n"
+              "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
+              "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
+              "          BT: F then MENU opens the BT screen (switch, pairing, gains)\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
               "          5 save settings   6 flash write test   e flash dump\n"
@@ -348,7 +445,7 @@ static void print_profile(void)
     t0 = systick_millis();
     for (i = 0; i < 20u; i++) {
         ChannelScanDisplayInfo_t info;
-        if (SETTINGS_FetchChannelScanDisplayInfo(0, &info))
+        if (SETTINGS_FetchChannelScanDisplayInfo(gEeprom.RX_VFO, 0, &info))
             sink += info.rx.Frequency;
     }
     t1 = systick_millis();
@@ -525,245 +622,412 @@ static void rf_k1_bringup(void)
               "  stock configuration path, which this overwrites.\n");
 }
 
-/* The console's 'y': the Jieli Bluetooth module on USART3 (PB10 TX / PB11 RX,
- * AF2, 115200 8N1).  It sends the version query and prints whatever the module
- * answers for ~3 s -- the first thing this link has to show is whether the
- * module is there at all.  Nothing here has run on the radio --
- * docs/ra89r_bluetooth.md. */
-static void bt_on_event(bt_event_t ev, const char *payload, unsigned len)
+/* The console's 'j': the BK1080 FM receiver on its own two-wire bus, PC14
+ * (clock) / PB2 (data), device byte 0x80.  Bring the bus up, probe the chip
+ * id, replay the stock's init block, tune 100.0 MHz and read the status back.
+ * Nothing on this bus has ever run on the radio, so the first question is
+ * simply whether it acknowledges at all -- docs/ra89r_bk1080.md. */
+static void fm_bench(void)
 {
-    static const char *const names[] = {
-        "NONE", "BINARY(RDTP)", "READY", "OK", "ERROR", "VERSION",
-        "BT_EMITTER", "NAME_EQUALLY", "BT_RECEIVER", "BLE_MASTER", "BLE_SLAVE",
-        "CONN_STATE", "SCO_CONN", "CALL_CONNECTED", "CALL_DISCONNECTED",
-        "SCO_DISCONNECT", "EARDEV", "BT_SCAN_STOP", "BT_EAR_CONN",
-        "BT_DISCONNECT", "EAR_PTT_DOWN", "EAR_PTT_UP", "BLE_LOCAL", "BT_LOCAL",
-    };
+    uint16_t id;
+    uint16_t status;
+    uint32_t got;
 
-    uart_printf("  <- %s",
-                (unsigned)ev < (unsigned)(sizeof names / sizeof names[0])
-                    ? names[ev] : "?");
-    if (payload != 0 && len != 0u)
-        uart_printf("  '%.*s'", (int)len, payload);
-    uart_putc('\n');
-}
+    i2c_bus_init();
+    uart_puts("\nFM: BK1080 on PC14 (clock) / PB2 (data), device byte 0x80\n");
 
-/* Collect USART3 bytes for `ms` from the interrupt's receive ring and print
- * them.  The ring is filled by `USART3_IRQHandler`, so this can be as slow as
- * it likes and never loses a byte (the earlier polled capture did). */
-static unsigned bt_listen(unsigned ms)
-{
-    uint8_t  bytes[256];
-    unsigned got = 0;
-    uint32_t start = systick_millis();
-    unsigned i;
+    id = bk1080_read_id();
+    uart_printf("  chip id reg 0x01 = 0x%04X (datasheet 0x%04X) -- %s\n",
+                (unsigned)id, (unsigned)BK1080_ID,
+                id == BK1080_ID ? "present" : "no answer");
 
-    while ((uint32_t)(systick_millis() - start) < ms && got < sizeof bytes) {
-        const unsigned n =
-            bluetooth_rx_drain(bytes + got, (unsigned)sizeof bytes - got);
+    bk1080_configure();
+    uart_printf("  init: 68-byte block + %u writes to reg 0x32 sent\n",
+                (unsigned)bk1080_config_reg32_writes());
 
-        if (n != 0u) {
-            bluetooth_feed(bytes + got, n);   /* exercise the parser too */
-            got += n;
-        }
-    }
+    uart_printf("  after init: reg2=0x%04X reg3=0x%04X reg5=0x%04X\n",
+                (unsigned)bk1080_read_reg(0x02), (unsigned)bk1080_read_reg(0x03),
+                (unsigned)bk1080_read_reg(0x05));
 
-    for (i = 0; i < got; i++) {
-        const uint8_t b = bytes[i];
+    bk1080_set_frequency(10000000u);        /* 100.0 MHz, in 10 Hz units */
+    (void)bk1080_wait_tune(300);            /* the stock polls STC */
+    got = bk1080_get_frequency();
+    status = bk1080_read_status();
 
-        uart_printf("     raw 0x%02X %s\n", (unsigned)b,
-                    (b >= 0x20 && b < 0x7f) ? (const char[]){ b, 0 } : "");
-    }
-    return got;
-}
+    uart_printf("  after tune: reg2=0x%04X reg3=0x%04X reg5=0x%04X readchan=0x%04X\n",
+                (unsigned)bk1080_read_reg(0x02), (unsigned)bk1080_read_reg(0x03),
+                (unsigned)bk1080_read_reg(0x05), (unsigned)bk1080_read_reg(0x0B));
+    uart_printf("  tuned 100.0 MHz -> READCHAN reads %u.%05u MHz\n",
+                (unsigned)(got / 100000u), (unsigned)(got % 100000u));
+    uart_printf("  status 0x%04X: RSSI %u dBuV, SNR %u, STC %u, SF/BL %u, ST %u\n",
+                (unsigned)status, (unsigned)bk1080_get_rssi(),
+                (unsigned)bk1080_get_snr(),
+                (unsigned)bk1080_seek_complete(),
+                (unsigned)bk1080_seek_failed(),
+                (unsigned)((status & BK1080_STATUS_ST) ? 1u : 0u));
 
-/* Time the low pulse on PB11 (the module's TX) after a command: a UART start
- * bit is exactly one bit time and is always low, so the `low` count is the bit
- * time and a line that never goes low means the signal is inverted.  The
- * `high` count is *not* the bit time -- it is however many 1 bits begin the
- * first byte (two for '+', 0x2b), so a `high` twice the `low` is normal, not a
- * half-width start bit.  PB11 is taken off AF2 and read as a plain input for
- * this; a busy loop, since systick is 1 ms. */
-static void bt_bit_probe(void)
-{
-    unsigned n;
-
-    BOARD_BT_UART_PORT->MODER &= ~(3u << (11u * 2u));   /* PB11 -> input */
-
-    for (n = 0; n < 3u; n++) {
-        unsigned i = 0, low = 0, high = 0;
-
-        bluetooth_send_cmd(BT_CMD_GMR);
-
-        while (i < 3000000u && (BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN))
-            i++;
-        if (i >= 3000000u) {
-            uart_puts("     no low edge (line stays high)\n");
-            continue;
-        }
-        while (low < 3000000u && !(BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN))
-            low++;
-        while (high < 3000000u && (BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN))
-            high++;
-
-        uart_printf("     start-bit low = %u, high = %u loop ticks\n", low, high);
-    }
-
-    BOARD_BT_UART_PORT->MODER |= (2u << (11u * 2u));    /* PB11 -> AF */
-}
-
-static void bt_bench(void)
-{
-    /* bluetooth_init() brings up USART3 and releases the module from reset on
-     * PD0 (the stock's BT Switch line -- docs/ra89r_bluetooth.md). */
-    bluetooth_init();
-    bluetooth_set_event_cb(bt_on_event);
-    uart_puts("\nBT: Jieli module on USART3 (PB10 TX / PB11 RX, 115200)\n");
-    uart_printf("  USART3 CR1=0x%04X BRR=0x%04X CR3=0x%04X\n",
-                (unsigned)BOARD_BT_UART->CR1, (unsigned)BOARD_BT_UART->BRR,
-                (unsigned)BOARD_BT_UART->CR3);
-    uart_printf("  GPIOB MODER=0x%08X AFR[1]=0x%08X IDR=0x%04X -- PB11 idle %s\n",
-                (unsigned)BOARD_BT_UART_PORT->MODER,
-                (unsigned)BOARD_BT_UART_PORT->AFR[1],
-                (unsigned)BOARD_BT_UART_PORT->IDR,
-                (BOARD_BT_UART_PORT->IDR & BT_UART_RX_PIN) ? "high" : "low");
-    uart_printf("  GPIOD MODER=0x%08X ODR=0x%04X -- PD0 reset %s\n",
-                (unsigned)BOARD_BT_RESET_PORT->MODER,
-                (unsigned)BOARD_BT_RESET_PORT->ODR,
-                (BOARD_BT_RESET_PORT->ODR & BT_RESET_PIN)
-                    ? "released (high)" : "held (low)");
-
-    /* Power-cycle the module so this run shows whether the reset line is the
-     * switch: assert PD0 low, release it high, then listen for the unsolicited
-     * `+IM_READY` the module sends when it boots. */
-    uart_puts("  -> PD0 low (assert reset), then high (release)\n");
-    bluetooth_power(false);
-    systick_delay_ms(100);
-    bluetooth_power(true);
-    uart_puts("  <- boot banner (1 s):\n");
-    if (bt_listen(1000u) == 0u)
-        uart_puts("     (nothing)\n");
-
-    /* Measure the bit time on the wire: it settles both the baud and the
-     * polarity without guessing. */
-    uart_puts("  <- bit probe (PB11 as a plain input):\n");
-    bt_bit_probe();
-
-    /* Then the rate, both oversamplings.  (115200 16x is the one: it is the
-     * rate whose status word has FE clear.  The others set FE.) */
-    {
-        static const uint32_t bauds[] = { 115200u, 9600u, 38400u, 57600u,
-                                          19200u, 4800u, 230400u, 76800u };
-        unsigned b, o;
-
-        for (o = 0; o < 2u; o++) {
-            BOARD_BT_UART->CR1 = (uint32_t)((o ? (1u << 15) : 0u)
-                                            | USART_CR1_UE
-                                            | USART_CR1_TE | USART_CR1_RE);
-            for (b = 0; b < sizeof bauds / sizeof bauds[0]; b++) {
-                BOARD_BT_UART->BRR =
-                    (BOARD_APB1_HZ + (bauds[b] / 2u)) / bauds[b];
-                while (BOARD_BT_UART->SR & USART_SR_RXNE)
-                    (void)BOARD_BT_UART->DR;
-
-                uart_printf("  -- %s %u baud: -> AT+GMR?\n",
-                            o ? "OVER8" : "16x", (unsigned)bauds[b]);
-                bluetooth_send_cmd(BT_CMD_GMR);
-                if (bt_listen(500u) == 0u)
-                    uart_puts("     (nothing)\n");
-            }
-        }
-    }
-
-    /* Framing variants at 115200: 7 data bits (CR1 M, bit 12) and 2 stop bits
-     * (CR2 STOP, bits 13:12), in case the module is not 8N1. */
-    {
-        static const char *const names[] = { "8N1", "7N1", "8N2" };
-        unsigned m;
-
-        BOARD_BT_UART->BRR = (BOARD_APB1_HZ + (115200u / 2u)) / 115200u;
-        for (m = 0; m < 3u; m++) {
-            BOARD_BT_UART->CR1 = (uint32_t)(USART_CR1_UE | USART_CR1_TE
-                | USART_CR1_RE | (m == 1 ? (1u << 12) : 0u));
-            BOARD_BT_UART->CR2 = (uint16_t)(m == 2 ? (2u << 12) : 0u);
-            while (BOARD_BT_UART->SR & USART_SR_RXNE)
-                (void)BOARD_BT_UART->DR;
-
-            uart_printf("  -- %s 115200: -> AT+GMR?\n", names[m]);
-            bluetooth_send_cmd(BT_CMD_GMR);
-            if (bt_listen(500u) == 0u)
-                uart_puts("     (nothing)\n");
-        }
-    }
-
-    uart_puts("  The module is a Jieli YBT100 at 115200 8N1: the boot banner and\n"
-              "  AT+GMR? come back as whole +IM_* lines.  A non-115200 rate sets\n"
-              "  FE (framing error) and yields only aliased bytes; ORE alone is\n"
-              "  just this loop not draining fast enough.\n");
-
-    /* The bench overwrote the event callback and left USART3 on the last
-     * framing variant (8N2).  Re-init so the BT service keeps working after a
-     * diagnostic run. */
-    bt_init();
-}
-
-/* Console 'N': send an arbitrary AT line to the module and print its reply.
- *
- * This is the probe for a data path.  The stock's AT set is audio/control only,
- * so ask the module's own firmware whether it has a data profile: try
- * `AT+SPP?`, `AT+BLE_GATT?`, `AT+BLE_SERVICE?`, `AT+?`, or a vendor
- * `AT+HELP`.  A reply that is not `+ERROR` is the lead.  See
- * docs/ra89r_bluetooth.md. */
-static void bt_probe_line(void)
-{
-    char     line[64];
-    unsigned n = 0;
-    int      c;
-
-    uart_printf("\n  (BT state=%u linked=%u ptt=%u rx=%u%s)\n",
-                (unsigned)bt_state(), (unsigned)bt_connected(),
-                (unsigned)bt_ptt_down(), bluetooth_rx_bytes(),
-                bt_enabled() ? "" : " -- press 'A' to enable first");
-    uart_puts("\nAT> ");
-    for (;;) {
-        c = uart_getc_timeout(15000u);
-        if (c < 0) {
-            uart_puts("\n(timeout)\n");
-            return;
-        }
-        if (c == '\r' || c == '\n')
-            break;
-        if ((c == 8 || c == 127) && n > 0u) {   /* backspace */
-            n--;
-            uart_puts("\b \b");
-            continue;
-        }
-        if (n + 1u < sizeof line) {
-            line[n++] = (char)c;
-            uart_putc((char)c);
-        }
-    }
-    line[n] = '\0';
-    uart_puts("\n");
-    if (n == 0u)
+    if (id != BK1080_ID) {
+        uart_puts("  0xFFFF means the bus stayed high: check PC14/PB2 and the\n"
+                  "  part's supply -- see docs/ra89r_bk1080.md.\n");
         return;
-
-    {
-        char     tx[72];
-        unsigned i;
-
-        for (i = 0; i < n && i < sizeof tx - 3u; i++)
-            tx[i] = line[i];
-        tx[i++] = '\r';
-        tx[i++] = '\n';
-        tx[i]   = '\0';
-        bluetooth_send(tx);
     }
 
-    uart_puts("  <- reply:\n");
-    if (bt_listen(1500u) == 0u)
-        uart_puts("     (nothing)\n");
+    uart_puts("  the part answers: the bus, the pins and the framing are ours.\n"
+              "  band sweep -- RSSI should track the broadcast signals:\n");
+
+    {
+        static const uint32_t fm[] = { 8750000u, 9000000u, 9500000u, 9800000u,
+                                       10000000u, 10400000u, 10800000u };
+        unsigned k;
+
+        for (k = 0; k < sizeof fm / sizeof fm[0]; k++) {
+            uint16_t st;
+
+            bk1080_set_frequency(fm[k]);
+            (void)bk1080_wait_tune(300);
+            st = bk1080_read_status();
+            uart_printf("    %3u.%u MHz   RSSI %3u   %s\n",
+                        (unsigned)(fm[k] / 100000u),
+                        (unsigned)((fm[k] / 10000u) % 10u),
+                        (unsigned)(st & BK1080_STATUS_RSSI_MASK),
+                        (st & BK1080_STATUS_ST) ? "stereo" : "mono");
+        }
+    }
 }
+
+/* The console's 'n': the BK4815, the second transceiver on PB13.  The stock
+ * uses it as the receive path above 134 MHz; this tunes it through the
+ * 0x71/0x72 synthesizer path and reads its own 0x43/0x44 meters, to see
+ * whether the synth locks and it receives.  Nothing here has run on the
+ * radio -- docs/ra89r_bk4815.md. */
+/* Read and print the whole BK4815 register file (0x00-0x7F) as it currently
+ * stands.  Pure reads -- nothing is written -- so this is the state capture for
+ * a misbehaving receive: dump it while the reception is good and again while it
+ * is noise, and compare against each other and against the values the stock
+ * writes (docs/ra89r_bk4815.md).  Registers the part does not drive read back
+ * as whatever is on its data bus; the known ones are listed in the key. */
+static void bk4815_dump_registers(void)
+{
+    unsigned reg;
+    /* The routing state, so the capture is self-contained: which VFO the
+     * coordinator believes it is serving, what the two VFO records hold and
+     * what frequency the part actually sits on (decoded from 0x71/0x72 with
+     * the band in 0x04).  A mismatch between the selected VFO's frequency and
+     * the decoded tune is the fault this dump exists to catch. */
+    {
+        const bool      a_4829 = SETTINGS_GetVfoTransceiver(0u) != RF_XCVR_BK4815;
+        const bool      b_4829 = SETTINGS_GetVfoTransceiver(1u) != RF_XCVR_BK4815;
+        const rf_dual_roles_t roles = rf_dual_choose(a_4829, b_4829, gEeprom.RX_VFO);
+        const uint32_t  fa = gEeprom.VfoInfo[0].freq_config_RX.Frequency;
+        const uint32_t  fb = gEeprom.VfoInfo[1].freq_config_RX.Frequency;
+        const uint16_t  w_hi = bk4815_read_reg(0x71);
+        const uint16_t  w_lo = bk4815_read_reg(0x72);
+        const uint16_t  vco  = bk4815_read_reg(0x04);
+        const uint8_t   band = (uint8_t)((vco >> 7) & 3u);
+        const uint64_t  word = ((uint64_t)w_hi << 16) | w_lo;
+        const uint64_t  f10  = word * 2600000ull /
+                               ((uint64_t)bk4815_vco_divider(band) << 24);
+
+        uart_printf("\nBK4815 state capture\n"
+                    "  RX_VFO %u  TX_VFO %u   A %u.%05u MHz  B %u.%05u MHz\n",
+                    (unsigned)gEeprom.RX_VFO, (unsigned)gEeprom.TX_VFO,
+                    (unsigned)(fa / 100000u), (unsigned)(fa % 100000u),
+                    (unsigned)(fb / 100000u), (unsigned)(fb % 100000u));
+        uart_printf("  roles: BK4829<-VFO %d   BK4815<-VFO %d   audio %s  squelch %s  rssi 0x%03X\n",
+                    (int)roles.bk4829_vfo, (int)roles.bk4815_vfo,
+                    rx_audio_is_4815() ? "BK4815" : "BK4829",
+                    rx_squelch_open() ? "open" : "closed", (unsigned)rx_rssi());
+        uart_printf("  4815 is on %u.%05u MHz (band %u, Ndiv %u, 0x04=0x%04X, 0x75=0x%04X)\n",
+                    (unsigned)(f10 / 100000u), (unsigned)(f10 % 100000u),
+                    (unsigned)band, (unsigned)bk4815_vco_divider(band),
+                    (unsigned)vco, (unsigned)bk4815_read_reg(0x75));
+        uart_printf("  audio path line (PC13): %s\n",
+                    audio_path_is_on() ? "high (amplifier on)" : "low (off)");
+    }
+
+    uart_puts("\nBK4815 register file, as it stands now (read-only):\n");
+    for (reg = 0; reg < 0x80u; reg++) {
+        if ((reg & 7u) == 0u)
+            uart_printf("  ");
+        uart_printf("%02X:%04X ", reg, (unsigned)bk4815_read_reg((uint8_t)reg));
+        if ((reg & 7u) == 7u)
+            uart_puts("\n");
+    }
+    uart_puts("  key: 00=id(4816) 01=bandwidth 04=VCO-div 0C=T/R 16/2B/6D/73=RX set\n"
+              "       22=tone 42/4C/4D/4E/56/57=compander 43=SNR 44=RSSI(bits 6:0)\n"
+              "       48/4A=AF profile 49=AF (bit15 mute, low nibble volume)\n"
+              "       70=opctrl (A000 RX / E000 TX) 71/72=frequency word 75=band\n"
+              "       7E/7F=per-band calibration\n");
+}
+
+/* Read and print the whole BK4829 register file (0x00-0x7F) as it currently
+ * stands.  The BK4815's audio reaches the speaker through the BK4829's AF
+ * stage, so a receive fault that leaves the BK4815's own registers identical
+ * (radio 2026-10-18) has to show up here -- the AF output select (0x47), the
+ * AF gain (0x48), the audio unmute (0x50) and the RX/TX block word (0x30) are
+ * the shared path's gates.  Pure reads. */
+static void bk4829_dump_registers(void)
+{
+    unsigned reg;
+
+    uart_puts("\nBK4829 register file, as it stands now (read-only):\n");
+    for (reg = 0; reg < 0x80u; reg++) {
+        if ((reg & 7u) == 0u)
+            uart_printf("  ");
+        uart_printf("%02X:%04X ", reg, (unsigned)BK4819_ReadRegister((uint8_t)reg));
+        if ((reg & 7u) == 7u)
+            uart_puts("\n");
+    }
+    uart_puts("  key: 30=RX/TX blocks (bit9 AF DAC) 33=chip GPIOs 36=PA 37=mode\n"
+              "       40=mic gain 47=AF out (bits 11:8 select, 0=mute,1=normal)\n"
+              "       48=AF gain 50=audio unmute 67=RSSI 7D=power/mic\n");
+}
+
+/* The BK4815 bench ('n'): reconfigures and tunes, so the register-file capture
+ * comes first, before anything is written. */
+static void bk4815_bench(void)
+{
+    uint16_t id, vco, op, hi, lo, cal, snr, rssi;
+    uint32_t word;
+    uint8_t band;
+
+    bk4829_init();               /* brings up the shared bus and both selects */
+    uart_puts("\nBK4815 (PB13; shared PA12 clock / PB12 data):\n");
+
+    id = bk4815_read_reg(BK4815_REG_ID);
+    uart_printf("  reg 0x00 id = 0x%04X (expected 0x%04X) -- %s\n",
+                (unsigned)id, (unsigned)BK4815_ID,
+                id == BK4815_ID ? "present" : "not answering");
+
+    bk4815_configure();
+    uart_printf("  boot config replayed (%u writes, %u RAM-sourced as 0)\n",
+                bk4815_config_writes(), bk4815_ram_sourced_writes());
+
+    band = bk4815_vco_band(BENCH_FREQ_HZ);
+    word = bk4815_frequency_word(BENCH_FREQ_HZ, band);
+    bk4815_set_frequency(BENCH_FREQ_HZ, false);
+
+    vco = bk4815_read_reg(BK4815_REG_VCO);
+    op  = bk4815_read_reg(BK4815_REG_OPCTRL);
+    hi  = bk4815_read_reg(BK4815_REG_FREQ_HI);
+    lo  = bk4815_read_reg(BK4815_REG_FREQ_LO);
+    cal = bk4815_read_reg(BK4815_REG_CAL);
+
+    uart_printf("  tuned 145.7500 MHz: band %u, word 0x%08X\n",
+                (unsigned)band, (unsigned)word);
+    uart_printf("    reg 0x04=0x%04X 0x70=0x%04X 0x71=0x%04X 0x72=0x%04X 0x7E=0x%04X\n",
+                (unsigned)vco, (unsigned)op, (unsigned)hi, (unsigned)lo, (unsigned)cal);
+
+    snr  = bk4815_read_reg(0x43);
+    rssi = bk4815_read_reg(0x44);
+    uart_printf("    meters: 0x43 (SNR)=0x%04X  0x44 (RSSI)=0x%04X -> RSSI %u\n",
+                (unsigned)snr, (unsigned)rssi, (unsigned)(rssi & 0x7fu));
+    uart_puts("  if 0x71/0x72 hold the word the synth path landed; a 0x44 that\n"
+              "  moves with a carrier means it receives.\n"
+              "  sampling 0x44 for ~5 s -- key a transmitter on 145.7500 now:\n");
+
+    {
+        unsigned k;
+
+        for (k = 0; k < 25u; k++) {
+            uint16_t r = bk4815_read_reg(0x44);
+
+            uart_printf("    0x44 = 0x%04X   RSSI %u\n",
+                        (unsigned)r, (unsigned)(r & 0x7fu));
+            for (volatile unsigned d = 0; d < 400000u; d++)
+                ;
+        }
+    }
+}
+
+/* The scan mode the SetScn menu shows (scan_mode_t). */
+static const char *scan_mode_name(void)
+{
+    switch (gSetting_set_scn) {
+        case SCAN_MODE_FAST_BOTH: return "FAST BOTH";
+        case SCAN_MODE_FAST:      return "FAST";
+        case SCAN_MODE_LISTEN:    return "LISTEN";
+        default:                  return "NORMAL";
+    }
+}
+
+/* A controlled Default-vs-Both range-scan comparison, run by the console's 'J'.
+ * It forces the selected RX VFO onto a frequency channel over one shared range,
+ * then runs each mode for SCAN_BENCH_MS, pumping the same app loop the main loop
+ * runs, and reports probes over elapsed wall time.  The timing is wall-clock, so
+ * the display and bit-banged bus cost are included, as they are when scanning by
+ * hand.  It restores the saved VFO, range and scan mode before returning. */
+#define SCAN_BENCH_MS 3000u
+
+static void scan_rate_benchmark(void)
+{
+    const uint32_t step  = gRxVfo->StepFrequency ? gRxVfo->StepFrequency : 2500u;
+    const uint32_t start = FREQUENCY_RoundToStep(gRxVfo->freq_config_RX.Frequency, (uint16_t)step);
+    const uint32_t stop  = start + 100000u;   /* 1 MHz, in 10 Hz units */
+    static const char *const names[2] = { "FAST     ", "FAST BOTH" };
+    scan_bench_result_t res[2];
+    unsigned m;
+
+    uart_printf("\nscan benchmark: %u.%05u .. %u.%05u MHz, step %u.%01u kHz, %u ms per mode\n",
+                (unsigned)(start / 100000u), (unsigned)(start % 100000u),
+                (unsigned)(stop / 100000u), (unsigned)(stop % 100000u),
+                (unsigned)(step / 100u), (unsigned)((step % 100u) / 10u),
+                (unsigned)SCAN_BENCH_MS);
+    uart_printf("  ScnRev=%u  SetScn=%s\n",
+                (unsigned)gEeprom.SCAN_RESUME_MODE, scan_mode_name());
+
+    CHFRSCANNER_BenchmarkArm(start, stop);
+    for (m = 0; m < 2u; m++) {
+        uint32_t t0;
+
+        CHFRSCANNER_BenchmarkRun((uint8_t)m);
+        t0 = systick_millis();
+        while ((uint32_t)(systick_millis() - t0) < SCAN_BENCH_MS) {
+            APP_Update();
+            APP_TimeSlice10ms();
+        }
+        CHFRSCANNER_BenchmarkFinish(&res[m]);
+        uart_printf("  %s probes=%u elapsed=%u ms  %u probes/s\n",
+                    names[m], (unsigned)res[m].probes, (unsigned)res[m].elapsed_ms,
+                    (unsigned)res[m].probes_per_second);
+    }
+    CHFRSCANNER_BenchmarkDisarm();
+
+    if (res[0].probes_per_second > 0u) {
+        const uint32_t pct = (res[1].probes_per_second * 100u) / res[0].probes_per_second;
+
+        uart_printf("  FAST BOTH / FAST = %u.%02ux  (%s)\n",
+                    (unsigned)(pct / 100u), (unsigned)(pct % 100u),
+                    (res[1].probes_per_second > res[0].probes_per_second)
+                        ? "faster" : "not faster");
+    } else {
+        uart_puts("  FAST measured 0 probes/s: check squelch and the range\n");
+    }
+}
+
+/* The console's 'J': the live dual-RF state, without re-tuning anything.  Shows
+ * the per-VFO transceiver choice, the resolved roles, which chip supplies the
+ * receive audio, the squelch state, and the BK4815's own registers/meters, then
+ * samples its 0x44 RSSI.  This is the one that reflects what the running radio
+ * is actually doing. */
+static void dual_rf_diag(void)
+{
+    const rf_xcvr_t a = SETTINGS_GetVfoTransceiver(0u);
+    const rf_xcvr_t b = SETTINGS_GetVfoTransceiver(1u);
+    const bool      a_4829 = (a != RF_XCVR_BK4815);
+    const bool      b_4829 = (b != RF_XCVR_BK4815);
+    const rf_dual_roles_t roles = rf_dual_choose(a_4829, b_4829, gEeprom.RX_VFO);
+    const uint16_t  af  = bk4815_read_reg(BK4815_REG_AF);
+    unsigned        k;
+
+    uart_puts("\ndual RF\n");
+    uart_printf("  TrVfoA=%u TrVfoB=%u   TX_VFO=%u RX_VFO=%u\n",
+                (unsigned)a, (unsigned)b,
+                (unsigned)gEeprom.TX_VFO, (unsigned)gEeprom.RX_VFO);
+    {
+        scan_dual_stats_t st;
+
+        CHFRSCANNER_GetScanDualStats(&st);
+        uart_printf("  SetScn=%s (%u)   scan-source override=%u   scan dual active=%d hit=%u\n",
+                    scan_mode_name(), (unsigned)gSetting_set_scn,
+                    (unsigned)rx_scan_source_override(),
+                    (int)st.active, (unsigned)st.selected_hit);
+        uart_printf("  scan probes=%u elapsed=%u ms rate=%u candidates/s\n",
+                    (unsigned)st.rate.candidates, (unsigned)st.rate.elapsed_ms,
+                    (unsigned)st.rate.candidates_per_second);
+        uart_printf("    lane BK4829: cand=%u last=%u.%05u MHz rssi=%u\n",
+                    (unsigned)st.candidates[0],
+                    (unsigned)(st.last_frequency_10hz[0] / 100000u),
+                    (unsigned)(st.last_frequency_10hz[0] % 100000u),
+                    (unsigned)st.last_rssi[0]);
+        uart_printf("    lane BK4815: cand=%u last=%u.%05u MHz rssi=%u\n",
+                    (unsigned)st.candidates[1],
+                    (unsigned)(st.last_frequency_10hz[1] / 100000u),
+                    (unsigned)(st.last_frequency_10hz[1] % 100000u),
+                    (unsigned)st.last_rssi[1]);
+    }
+    uart_printf("  tuned: BK4829<-VFO %d   BK4815<-VFO %d   bk4815_active=%d\n",
+                (int)roles.bk4829_vfo, (int)roles.bk4815_vfo,
+                (int)rf_dual_bk4815_active());
+    uart_printf("  audio source: %s   squelch %s   rssi 0x%03X\n",
+                rx_audio_is_4815() ? "BK4815" : "BK4829",
+                rx_squelch_open() ? "OPEN" : "closed", (unsigned)rx_rssi());
+    uart_printf("  SQL level %u (0 = off)  lane floor %u  live marks open %u close %u\n",
+                (unsigned)gEeprom.SQUELCH_LEVEL,
+                (unsigned)rx_squelch_floor(),
+                (unsigned)rx_squelch_open_mark_now(),
+                (unsigned)rx_squelch_close_mark_now());
+    uart_printf("  RX lane path: pin 4 (0x33 bit 0x04) %s  (lane is %s)\n",
+                pa_rx_lane_is_4815() ? "SET" : "clear",
+                pa_rx_lane_is_4815() ? "BK4815" : "BK4829");
+    uart_printf("  VFO A %u.%05u MHz   VFO B %u.%05u MHz\n",
+                (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency / 100000u),
+                (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency % 100000u),
+                (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency / 100000u),
+                (unsigned)(gEeprom.VfoInfo[1].freq_config_RX.Frequency % 100000u));
+    uart_printf("  TX power: TX_VFO OUTPUT_POWER=%u  TXP_CalculatedSetting=%u  (menu 'Power'; USER global=%u)\n",
+                (unsigned)gTxVfo->OUTPUT_POWER, (unsigned)gTxVfo->TXP_CalculatedSetting,
+                (unsigned)gSetting_set_pwr);
+    uart_printf("  BK4829: 0x38=0x%04X 0x39=0x%04X -> %u.%05u MHz  0x47(AF)=0x%04X 0x67(RSSI)=0x%04X 0x33=0x%04X\n",
+                (unsigned)BK4819_ReadRegister(0x38), (unsigned)BK4819_ReadRegister(0x39),
+                (unsigned)((((uint32_t)BK4819_ReadRegister(0x39) << 16) | BK4819_ReadRegister(0x38)) / 100000u),
+                (unsigned)((((uint32_t)BK4819_ReadRegister(0x39) << 16) | BK4819_ReadRegister(0x38)) % 100000u),
+                (unsigned)BK4819_ReadRegister(0x47), (unsigned)BK4819_ReadRegister(0x67),
+                (unsigned)BK4819_ReadRegister(0x33));
+    uart_printf("  BK4815: 0x04=0x%04X 0x0C=0x%04X 0x49=0x%04X (AF %s)\n",
+                (unsigned)bk4815_read_reg(0x04), (unsigned)bk4815_read_reg(0x0C),
+                (unsigned)af, (af & 0x8000u) ? "MUTED" : "unmuted");
+    uart_printf("          0x70=0x%04X 0x71=0x%04X 0x72=0x%04X 0x75=0x%04X\n",
+                (unsigned)bk4815_read_reg(0x70), (unsigned)bk4815_read_reg(0x71),
+                (unsigned)bk4815_read_reg(0x72), (unsigned)bk4815_read_reg(0x75));
+    uart_printf("          0x43(SNR)=0x%04X 0x44(RSSI)=0x%04X -> %u  "
+                "(this lane: floor %u open %u close %u)\n",
+                (unsigned)bk4815_read_reg(0x43), (unsigned)bk4815_read_reg(0x44),
+                (unsigned)(bk4815_read_reg(0x44) & 0x7fu),
+                (unsigned)rx_squelch_floor(),
+                (unsigned)rx_squelch_open_mark_from_floor(true,
+                                                          gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
+                                                          gEeprom.SQUELCH_LEVEL,
+                                                          (uint16_t)(bk4815_read_reg(0x44) & 0x7fu)),
+                (unsigned)rx_squelch_close_mark_from_floor(true,
+                                                           gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
+                                                           gEeprom.SQUELCH_LEVEL,
+                                                           (uint16_t)(bk4815_read_reg(0x44) & 0x7fu)));
+
+    scan_rate_benchmark();
+
+    {
+        uint32_t us[5];
+        uint32_t batches = 0, probes = 0;
+
+        CHFRSCANNER_GetScanBothProfile(us, &batches, &probes);
+        if (batches != 0u) {
+            const uint32_t total = us[0] + us[1] + us[2];
+
+            uart_printf("  FAST BOTH profile: %u batches, %u probes, "
+                        "%u.%01u ms/batch in the batch, %u.%01u ms/batch wall\n",
+                        (unsigned)batches, (unsigned)probes,
+                        (unsigned)(total / batches / 1000u),
+                        (unsigned)((total / batches / 100u) % 10u),
+                        (unsigned)(us[3] / batches / 1000u),
+                        (unsigned)((us[3] / batches / 100u) % 10u));
+            uart_printf("    per batch: pull %u us  tune %u us  read %u us  "
+                        "precheck %u us  gap %u us\n",
+                        (unsigned)(us[0] / batches), (unsigned)(us[1] / batches),
+                        (unsigned)(us[2] / batches), (unsigned)(us[3] / batches),
+                        (unsigned)(us[4] / batches));
+        }
+    }
+
+    uart_puts("  sampling 0x44 for ~5 s -- key a signal on the selected VFO now:\n");
+
+    for (k = 0; k < 25u; k++) {
+        const uint16_t r = bk4815_read_reg(0x44);
+
+        uart_printf("    0x44 = 0x%04X   RSSI %u\n", (unsigned)r, (unsigned)(r & 0x7fu));
+        for (volatile unsigned d = 0; d < 400000u; d++)
+            ;
+    }}
 
 /* ------------------------------------------- cable-free audio-path bench
  *
@@ -927,6 +1191,54 @@ static void bench_screen(unsigned duty, uint16_t r50, uint16_t r36, uint16_t r7d
     lcd_refresh();
 }
 
+/* Console 'T': what the transmit path is actually doing, without keying it.
+ * Transmit is PTT's (or the bench's) -- this is the read-out: the PA bias PWM
+ * compare in force, the power the app would ask for, the chip band/path pin
+ * ('x' changes it), and the TX registers (`0x43` is the TX filter, `0x75` the
+ * BK4815's band, `0x0C` its T/R state). */
+static void tx_diag(void)
+{
+    const bool active = tx_active();
+
+    uart_puts("\nTX path\n");
+    if (active) {
+        const uint32_t f = gTxVfo->freq_config_TX.Frequency;
+
+        uart_printf("  transmitting (%s)  %u.%05u MHz  band %s  TX_VFO %u\n",
+                    tx_source() == TX_SOURCE_TONE ? "tone" : "mic",
+                    (unsigned)(f / 100000u), (unsigned)(f % 100000u),
+                    pa_band_is_uhf() ? "UHF" : "VHF", (unsigned)gEeprom.TX_VFO);
+    } else {
+        uart_puts("  idle -- hold PTT to transmit\n");
+    }
+
+    uart_printf("  PA duty (PB14/TIM1_CH2 compare): %u of %u   (pa_last_compare %u)\n",
+                (unsigned)TIM1->CCR2, (unsigned)PA_PWM_ARR,
+                (unsigned)pa_last_compare());
+    {
+        uint32_t want = ((uint32_t)gTxVfo->TXP_CalculatedSetting * PA_PWM_ARR) / 255u;
+
+        if (want > PA_PWM_MAX_DUTY)
+            want = PA_PWM_MAX_DUTY;                 /* the stock's ARR/2 clamp */
+        uart_printf("  power: OUTPUT_POWER=%u  TXP_CalculatedSetting=%u -> compare %u\n",
+                    (unsigned)gTxVfo->OUTPUT_POWER,
+                    (unsigned)gTxVfo->TXP_CalculatedSetting, (unsigned)want);
+    }
+    uart_printf("  TX path pin: mode %u -- %s -> band bits 0x%04X\n",
+                (unsigned)pa_tx_path_mode(), pa_tx_path_name(),
+                (unsigned)pa_tx_path_bits());
+    uart_printf("  BK4829: 0x33=0x%04X 0x36=0x%04X 0x7D=0x%04X 0x30=0x%04X 0x50=0x%04X\n",
+                (unsigned)BK4819_ReadRegister(0x33), (unsigned)BK4819_ReadRegister(0x36),
+                (unsigned)BK4819_ReadRegister(0x7D), (unsigned)BK4819_ReadRegister(0x30),
+                (unsigned)BK4819_ReadRegister(0x50));
+    uart_printf("  TX filter 0x43=0x%04X   BK4815 band 0x75=0x%04X  T/R 0x0C=0x%04X\n",
+                (unsigned)BK4819_ReadRegister(0x43),
+                (unsigned)bk4815_read_reg(0x75), (unsigned)bk4815_read_reg(0x0C));
+    uart_printf("  TX variant ('w'): %u -- %s\n",
+                (unsigned)tx_variant(), tx_variant_name());
+    uart_puts("  'x' cycles the TX path pin, 'Y' steps the PA duty, 'w' the TX variant\n");
+}
+
 static void radio_tx(int on, tx_source_t source)
 {
     if (on) {
@@ -1006,10 +1318,12 @@ static void rf_watch(void)
 {
     uint16_t min = 0xFFFFu, max = 0, last = 0;
     unsigned i;
+    const uint16_t open  = rx_squelch_open_mark_now();
+    const uint16_t close = rx_squelch_close_mark_now();
 
-    uart_printf("\nRF: BK4829 reg 0x67 every 200 ms for 4 s "
-                "(0xB4 / 0xCF are the stock's squelch marks)\n"
+    uart_printf("\nRF: reg 0x67 / 0x44 every 200 ms for 4 s (live marks open %u close %u)\n"
                 "  RX %u.%05u MHz, %s, %s (>134 MHz split)\n",
+                (unsigned)open, (unsigned)close,
                 (unsigned)(rx_rx_frequency() / 100000u),
                 (unsigned)(rx_rx_frequency() % 100000u),
                 pa_band_is_uhf() ? "UHF" : "VHF",
@@ -1019,6 +1333,9 @@ static void rf_watch(void)
                   "  in RX and these readings will not follow a carrier.\n");
 
     for (i = 0; i < 20u; i++) {
+        /* Read the part directly: the app loop (and so rx_poll) does not run
+         * while this handler blocks, and sampling the polled value showed the
+         * same number twenty times. */
         uint16_t v = BK4819_GetRSSI();
 
         if (v < min)
@@ -1028,7 +1345,8 @@ static void rf_watch(void)
         last = v;
 
         uart_printf("  %02u: 0x%03X%4u %s\n", i, (unsigned)v, (unsigned)v,
-                    v >= 0xCFu ? "open" : (v < 0xB4u ? "quiet" : "between"));
+                    v >= rx_squelch_open_mark_now() ? "open"
+                        : (v < rx_squelch_close_mark_now() ? "quiet" : "between"));
         systick_delay_ms(200);
     }
 
@@ -1387,6 +1705,9 @@ int main(void)
      * welcome).  Before the settings load BACKLIGHT_TIME is 0 and the K1 driver
      * reads that as "off"; before radio_boot the beep is silent. */
     radio_boot();
+    /* Apply the per-VFO transceiver choice: if a VFO selects the BK4815, tune
+     * it for that VFO alongside the BK4829 primary. */
+    rf_dual_refresh();
     BACKLIGHT_TurnOn();
     uart_printf("backlight: %s, brightness index %u of %u, %u/32 duty\n",
                 BACKLIGHT_IsOn() ? "on" : "off",
@@ -1443,7 +1764,12 @@ int main(void)
 
     for (;;) {
         uint32_t now = systick_millis();
+#ifdef ENABLE_CAT
+        cat_input_service(now);
+        int c = cat_console_getc();
+#else
         int c = uart_getc();
+#endif
 
         if (c >= 0) {
             char ch = (char)c;
@@ -1704,55 +2030,209 @@ int main(void)
             case 'Q':
                 rf_squelch_autodetect();
                 break;
-            case 'y':
-                bt_bench();
+            case 'j':
+                fm_bench();
                 break;
-            case 'A':
-                /* BT service: show the state, then toggle the saved switch. */
-                gEeprom.BT_Switch = !gEeprom.BT_Switch;
-                bt_set_enabled(gEeprom.BT_Switch);
-                gRequestSaveSettings = true;
-                uart_printf("\nBT: switch=%u state=%u linked=%u ptt=%u version='%s' rx=%u\n",
-                            (unsigned)gEeprom.BT_Switch,
-                            (unsigned)bt_state(), (unsigned)bt_connected(),
-                            (unsigned)bt_ptt_down(), bt_version(),
-                            bluetooth_rx_bytes());
-                uart_printf("  USART3 CR1=0x%04X CR2=0x%04X CR3=0x%04X BRR=0x%04X "
-                            "(want 0x202c/0/0/0x1a1)\n",
-                            (unsigned)BOARD_BT_UART->CR1,
-                            (unsigned)BOARD_BT_UART->CR2,
-                            (unsigned)BOARD_BT_UART->CR3,
-                            (unsigned)BOARD_BT_UART->BRR);
-                break;
-            case 'J':
-                /* Enable BT and capture the boot banner with the bench's tight
-                 * drain, to compare against the service's own drain (`U`). */
-                gEeprom.BT_Switch = true;
-                bt_set_enabled(true);
-                uart_puts("\nBT enabled; tight-drain listen 2 s:\n");
-                if (bt_listen(2000u) == 0u)
-                    uart_puts("  (nothing)\n");
-                break;
-            case 'N':
-                /* Probe the module for a data (SPP/BLE-GATT) path. */
-                bt_probe_line();
-                break;
-            case 'U': {
-                /* Dump the most recently received USART3 bytes. */
-                uint8_t  log[128];
-                unsigned n = bluetooth_rx_log(log, sizeof log);
-                unsigned i;
-
-                uart_printf("\nBT rx log (%u bytes):", n);
-                for (i = 0; i < n; i++) {
-                    uart_printf(" %02X", (unsigned)log[i]);
-                    if ((i & 15u) == 15u)
-                        uart_puts("\n ");
-                }
-                uart_puts("\n");
+            case 'a': {
+                /* The FM audio route: the stock's FM-on mutes the BK4829's AF
+                 * output (`FUN_08009CC4` writes `0x47 = 0x6042`, and
+                 * `REG_47<11:8> = 0` = Mute in the BK4829 register table)
+                 * because this board's BK4829 `EARO` and BK1080 `LOUT`/`ROUT`
+                 * reach the same amplifier input.  Toggle it here while FM is
+                 * playing: the broadcast audio should be heard with the RF chip
+                 * muted and lost with it at Normal AF.  See
+                 * docs/ra89r_bk1080.md, "The FM audio path". */
+                static bool rf_af_muted;
+                rf_af_muted = !rf_af_muted;
+                BK4819_SetAF(rf_af_muted ? BK4819_AF_MUTE : BK4819_AF_FM);
+                uart_printf("\nFM route: BK4829 0x47 -> %s (read back 0x%04X)\n",
+                            rf_af_muted ? "Mute (0x6042)" : "Normal AF (0x6142)",
+                            (unsigned)BK4819_ReadRegister(BK4819_REG_47));
                 break;
             }
-            case 'e': {
+            case 'J':
+                dual_rf_diag();
+                break;
+            case 'A':
+                rx_force_bk4815_af(!rx_force_bk4815_af_on());
+                uart_printf("\nBK4815 AF forced %s\n",
+                            rx_force_bk4815_af_on() ? "ON (squelch bypassed)" : "off");
+                break;
+            case 'o': {
+                /* Automation: cycle SetScn NORMAL -> FAST -> FAST BOTH -> LISTEN. */
+                static const uint8_t next[4] = { 1u, 2u, 3u, 0u };
+
+                gSetting_set_scn = next[gSetting_set_scn & 3u];
+                uart_printf("\nSetScn = %u (%s)\n", (unsigned)gSetting_set_scn,
+                            gSetting_set_scn == 1u ? "FAST" :
+                            gSetting_set_scn == 2u ? "FAST BOTH" :
+                            gSetting_set_scn == 3u ? "LISTEN" : "NORMAL");
+                break;
+            }
+            case '7':
+                /* Automation: cycle the squelch level 0..9. */
+                gEeprom.SQUELCH_LEVEL = (uint8_t)((gEeprom.SQUELCH_LEVEL + 1u) % 10u);
+                uart_printf("\nSQL level %u   marks now open %u close %u\n",
+                            (unsigned)gEeprom.SQUELCH_LEVEL,
+                            (unsigned)rx_squelch_open_mark_now(),
+                            (unsigned)rx_squelch_close_mark_now());
+                break;
+            case '8': {
+                /* Automation: switch the selected VFO (what EXIT does). */
+                const uint8_t vfo = (uint8_t)(gEeprom.RX_VFO ? 0u : 1u);
+
+                gEeprom.RX_VFO = vfo;
+                gEeprom.TX_VFO = vfo;
+                RADIO_ConfigureChannel(vfo, VFO_CONFIGURE_RELOAD);
+                gUpdateDisplay = true;
+                gUpdateStatus  = true;
+                uart_printf("\nVFO %c selected\n", vfo ? 'B' : 'A');
+                break;
+            }
+            case '9': {
+                /* Automation: cycle TrVfoA between the two transceivers. */
+                const rf_xcvr_t x = (SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4815)
+                                        ? RF_XCVR_BK4829 : RF_XCVR_BK4815;
+
+                SETTINGS_SetVfoTransceiver(0u, x);
+                rf_dual_reapply();
+                uart_printf("\nTrVfoA = %s\n", x == RF_XCVR_BK4815 ? "4815" : "4829");
+                break;
+            }
+            case 'I': {
+                const rf_xcvr_t x = (SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815)
+                                        ? RF_XCVR_BK4829 : RF_XCVR_BK4815;
+
+                SETTINGS_SetVfoTransceiver(1u, x);
+                rf_dual_reapply();
+                uart_printf("\nTrVfoB = %s\n", x == RF_XCVR_BK4815 ? "4815" : "4829");
+                break;
+            }
+            case 'N': {
+                /* Automation: arm a +/-500 kHz range around the current RX
+                 * frequency, in frequency mode (what F+5 does by hand). */
+                const uint32_t f  = gRxVfo->freq_config_RX.Frequency;
+                const uint8_t  rx = gEeprom.RX_VFO;
+
+                gRxVfo->Band              = (uint16_t)FREQUENCY_GetBand(f);
+                gEeprom.ScreenChannel[rx] = (uint16_t)(FREQ_CHANNEL_FIRST + gRxVfo->Band);
+                gEeprom.FreqChannel[rx]   = gEeprom.ScreenChannel[rx];
+                gRxVfo->CHANNEL_SAVE      = gEeprom.ScreenChannel[rx];
+                gScanRangeStart           = (f > 50000u) ? f - 50000u : 0u;
+                gScanRangeStop            = f + 50000u;
+                uart_printf("\nrange armed %u.%05u .. %u.%05u MHz\n",
+                            (unsigned)(gScanRangeStart / 100000u),
+                            (unsigned)(gScanRangeStart % 100000u),
+                            (unsigned)(gScanRangeStop / 100000u),
+                            (unsigned)(gScanRangeStop % 100000u));
+                break;
+            }
+            case 'U': {
+                /* Automation: arm the civil airband, 108.000-136.975 MHz, on the
+                 * 8.33 kHz channel spacing (Europe's airband grid) and tune
+                 * 118.000; the AM rule in radio.c then makes the demod AM.
+                 * Start the scan with E. */
+                const uint8_t rx = gEeprom.RX_VFO;
+
+                gRxVfo->STEP_SETTING = STEP_8_33kHz;
+                gRxVfo->StepFrequency = gStepFrequencyTable[STEP_8_33kHz];
+                gRxVfo->Band = (uint16_t)FREQUENCY_GetBand(11800000u);
+                gEeprom.ScreenChannel[rx] = (uint16_t)(FREQ_CHANNEL_FIRST + gRxVfo->Band);
+                gEeprom.FreqChannel[rx]   = gEeprom.ScreenChannel[rx];
+                gRxVfo->CHANNEL_SAVE      = gEeprom.ScreenChannel[rx];
+                gRxVfo->freq_config_RX.Frequency = 11800000u;
+                gRxVfo->freq_config_TX.Frequency = 11800000u;
+                gScanRangeStart = FREQ_AIRBAND_LO;
+                /* 136.975 is the last 8.33 kHz channel below 137.000. */
+                gScanRangeStop  = 13697500u;
+                RADIO_ApplyOffset(gRxVfo);
+                gVfoConfigureMode = VFO_CONFIGURE_RELOAD;
+                gUpdateDisplay    = true;
+                uart_printf("\nairband: 108.000-136.975 MHz, step 8.33 kHz, tuned 118.000, "
+                            "modulation %s (scan with E)\n",
+                            FREQUENCY_IsAirband(gRxVfo->pRX->Frequency) ? "AM" : "as the VFO says");
+                break;
+            }
+            case 'E':
+                /* Automation: start/stop the scan on the armed range. */
+                if (gScanStateDir == SCAN_OFF) {
+                    if (!gScanRangeStart) {
+                        uart_puts("\nno range armed -- press N first\n");
+                        break;
+                    }
+                    CHFRSCANNER_Start(true, SCAN_FWD);
+                    uart_puts("\nscan started\n");
+                } else {
+                    CHFRSCANNER_Stop();
+                    uart_puts("\nscan stopped\n");
+                }
+                break;
+            case 'H': {
+                /* Read-only: the whole audio chain as it stands.  Plain receive
+                 * and scanning differ here (radio 2026-10-22: a tone in plain
+                 * receive, silence while a LISTEN scan ran). */
+                uart_printf("\naudio chain: 0x30=%04X (bit9 = AF DAC) 0x37=%04X "
+                            "0x47=%04X (bits 11:8 = AF select) 0x48=%04X 0x50=%04X "
+                            "0x67=%04X\n",
+                            (unsigned)BK4819_ReadRegister(0x30),
+                            (unsigned)BK4819_ReadRegister(0x37),
+                            (unsigned)BK4819_ReadRegister(0x47),
+                            (unsigned)BK4819_ReadRegister(0x48),
+                            (unsigned)BK4819_ReadRegister(0x50),
+                            (unsigned)BK4819_ReadRegister(0x67));
+                uart_printf("  demod: 0x31=%04X (bit0 AM) 0x42=%04X 0x2A=%04X 0x3D=%04X  "
+                            "VFO mod %u (%s) airband %d\n",
+                            (unsigned)BK4819_ReadRegister(0x31),
+                            (unsigned)BK4819_ReadRegister(0x42),
+                            (unsigned)BK4819_ReadRegister(0x2A),
+                            (unsigned)BK4819_ReadRegister(0x3D),
+                            (unsigned)gRxVfo->Modulation,
+                            gModulationStr[gRxVfo->Modulation],
+                            (int)FREQUENCY_IsAirband(gRxVfo->pRX->Frequency));
+                uart_printf("  PC13 %u (audio path helper says %s), speaker %u, "
+                            "squelch %s, lane %s, function %u, scan dir %d\n",
+                            (unsigned)(gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN) ? 1u : 0u),
+                            audio_path_is_on() ? "on" : "off",
+                            (unsigned)gEnableSpeaker,
+                            rx_squelch_open() ? "open" : "closed",
+                            rx_audio_is_4815() ? "4815" : "4829",
+                            (unsigned)gCurrentFunction,
+                            (int)gScanStateDir);
+                break;
+            }
+            case 'y':
+                /* PA1: the stock's receive entry drives it low, the port high. */
+                {
+                    static bool high = true;
+
+                    high = !high;
+                    pa_set_pa1(high);
+                    uart_printf("\nPA1 %s\n", high ? "high" : "low");
+                }
+                break;
+            case 'z':
+                pa_toggle_pin2();
+                uart_printf("\n0x33 pin 2 (0x10) toggled -> 0x%04X\n",
+                            (unsigned)BK4819_ReadRegister(BK4819_REG_33));
+                break;
+            case 'g': {
+                /* Receive-path bit 0 of 0x33 (0x40): the K1 calls it
+                 * RX_ENABLE and keeps it set, the stock's receive entry clears
+                 * it (`FUN_080093EC` -> `FUN_080137d4(3, 0)`).  Toggle it live so
+                 * the bench can tell which reading is right without a rebuild. */
+                const bool set = (BK4819_ReadRegister(BK4819_REG_33) & 0x40u) != 0u;
+
+                BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, !set);
+                uart_printf("\n0x33 bit 0 (0x40) %s -> 0x%04X\n",
+                            set ? "cleared" : "set",
+                            (unsigned)BK4819_ReadRegister(BK4819_REG_33));
+                break;
+            }
+            case 'n':
+                bk4815_dump_registers();
+                bk4829_dump_registers();
+                bk4815_bench();
+                break;            case 'e': {
                 /* The external SPI NOR flash: identity, then a hexdump. */
                 uint16_t man_dev = 0;
                 uint32_t jedec = 0;
@@ -1842,12 +2322,37 @@ int main(void)
                 audio_path_toggle();
                 break;
             case 'T':
-                radio_tx(!tx_on, TX_SOURCE_TONE);
+                tx_diag();
+                break;
+            case 'x': {
+                /* The TX band/path pin (`0x33` bit 0x40 VHF / 0x20 UHF).  AUTO
+                 * is the stock's rule; the other modes force one so the radio
+                 * can settle which pin the PA actually needs. */
+                uint8_t mode = (uint8_t)((pa_tx_path_mode() + 1u) % PA_TX_PATH_MODES);
+
+                pa_set_tx_path_mode(mode);
+                uart_printf("\nTX path pin: mode %u -- %s (band bits 0x%04X)\n",
+                            (unsigned)mode, pa_tx_path_name(),
+                            (unsigned)pa_tx_path_bits());
+                uart_puts("  hold PTT and press 'T' to read 0x33 and the PA duty back\n");
+                break;
+            }
+            case 'w':
+                /* The stock TX register sweep: the K1 chain omits these, so step
+                 * them while PTT is held and watch the power meter. */
+                tx_variant_next();
+                uart_printf("\nTX variant: %u -- %s\n",
+                            (unsigned)tx_variant(), tx_variant_name());
+                if (tx_active())
+                    tx_variant_apply();
+                uart_puts("  hold PTT, press 'w' to step, and watch the meter\n");
                 break;
             case 'Y': {
                 /* The PA bias PWM compare: the one transmit level worth tuning
-                 * by ear or S-meter now that the amplifier works. */
-                static const uint16_t steps[] = { 64, 96, 128, 160, 192, 224 };
+                 * by ear or S-meter now that the amplifier works.  The steps
+                 * run past the stock's clamp (ARR/2 = 719, the 50 % the app's
+                 * own power setting reaches) so the full range can be swept. */
+                static const uint16_t steps[] = { 64, 128, 192, 256, 384, 512, 719 };
                 static unsigned i;
 
                 pa_duty = steps[i];

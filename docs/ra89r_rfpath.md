@@ -233,19 +233,20 @@ frequency flag decides is only which part receives the *T/R state* writes
 (`0x47`/`0x13`/`0x30`/`0x31` versus `0x0c`).  Whether both parts are then in the
 signal path at once, or one is a band the other is not, is not established.
 
-**The BK4829 is not switched off above 134 MHz -- but the radio does not transmit
-below it either.**  The codeplug's TX ranges are 144–146 MHz and 430–440 MHz
-(band table, EEPROM `0x1F40`), both above 134, so the ≤134 MHz branch is
-receive-only (airband) and neither part transmits there in normal use.  In the TX
-range the stock writes *both* chips: the BK4829's TX setup (`0x38`/`0x39`,
-`0x47`, `0x37`, `0x50`, `0x70`, `0x30`) via `FUN_08017280` -- which has no band
-test and runs for every TX -- and the BK4815's T/R state (`0x0c`) and per-mode
-config (`FUN_08016CEC`).  Which of the two actually radiates above 134 MHz is the
-open question: the port's own BK4829-only TX at 145.75 MHz shows the BK4829's
-registers suffice to produce a carrier, but not that it is the stock's intended
-path.  A plausible reading is that the BK4829 is the modulator (mic ADC + TX DSP
-in `0x30`, the `0x7D` bias) and the BK4815 the band/PA above 134 MHz, matching
-the two-PA board -- an interpretation, not a finding.
+**Correction: the TX setup is selected, and the stock selects the BK4829 on
+every band.**  This paragraph previously read `FUN_08017280` as running "for
+every TX" and left "which part radiates above 134 MHz" open.  It does not:
+`FUN_08018AB8` (the transmit entry) calls `FUN_08017306(chan, 1)` with the
+argument **hard-coded to 1**, and `FUN_08017306` runs `FUN_08017280` (BK4829) for
+`1` or the BK4815's `FUN_080171D0` for `0`.  The `0` branch has no caller, so the
+BK4815's TX config is **dead code** and the stock's transmitter is the BK4829 for
+all bands.  The BK4815 is instead the **receive path above 134 MHz**
+(`FUN_08016EE0`'s `flag == 0` branch powers it up, `FUN_08005218` reads its
+`0x43`/`0x44` meters).  `ra89r_bk4815.md` has the call sites and the register
+values.  The codeplug's TX ranges (144–146 and 430–440 MHz) are both above 134,
+so above 134 the stock receives on the BK4815 and transmits on the BK4829; below
+134 the BK4829 does both.  Whether the BK4815 can radiate at all (it is a full
+transceiver on its datasheet) is untested, not a finding.
 
 ## Band and path selection: the pins
 
@@ -315,11 +316,38 @@ flag `0` (BK4815, > 134 MHz) runs `FUN_08016CEC` -> `FUN_080137D4(0x10, 0x10)`
 leaves pin 4 **clear**, and pin 4 is set only when the BK4815 is the receive
 branch.
 
-The port uses the **BK4829** above 134 MHz (its own choice — see the open
-question below), so it must clear pin 4.  Measured on the radio with console
-`F`: pin 4 set gave `0x67` = 199 at 145.500, clearing it gave 232 — about 16 dB
-at the chip's 0.5 dB/step.  `pa_apply_chip_path()`'s AUTO and the port's
-`BK4819_PickRXFilterPathBasedOnFrequency()` both clear both LNA pins now.
+The port uses the **BK4829** above 134 MHz (its own choice -- the port's VFO
+transceiver setting decides per VFO, and the stock's frequency split is not
+applied automatically).  Pin 4 must therefore be **tied to the lane being
+listened to**, not to a VFO's assignment:
+
+* `rx_set_audio_source()` -> `pa_set_rx_lane()` sets pin 4 when the selected RX
+  VFO is on the BK4815 and clears it when it is on the BK4829, and
+  `pa_apply_chip_path()` re-asserts that choice on every receive re-entry.
+* The K1 hook `BK4819_PickRXFilterPathBasedOnFrequency()` **no longer writes the
+  LNA pins at all**: the application calls it on every receive setup, and its
+  old "clear both" would undo the lane's choice.  (An earlier port version
+  cleared both pins there, which was right only while the BK4829 was always the
+  lane.)
+
+Measured on the radio with console `F`: pin 4 set gave `0x67` = 199 at 145.500,
+clearing it gave 232 -- about 16 dB at the chip's 0.5 dB/step.  So a BK4815 VFO
+merely existing while the BK4829 is being listened to used to cost the BK4829
+that much; that is what the lane rule fixes.
+
+**Pin 0 (`0x40`) is the other half of the lane rule.**  The K1 calls it
+`GPIO0_PIN28_RX_ENABLE` and sets it on every receive setup, but the stock's
+receive entry *clears* pins 0/1 (`FUN_080093EC` -> `FUN_080137D4(3, 0)`), and
+`FUN_0801BDE8` sets the same bit as the VHF TX band path.  So on a BK4815 lane
+the port now clears pin 0 and sets pin 4 (`0x33` = `0x9004`); a BK4829 lane
+keeps the K1's pin 0 and clears pin 4 (`0x9040`).  Console `g` toggles pin 0,
+`y` PA1 and `z` `0x33` pin 2 (the other two lines the stock's receive entry
+drives and the port does not) for bench work.
+
+This did **not** make the BK4815 receive: a tinySA sweep at 145.5 and 446.00625
+moved its `0x44` by nothing over 28 dB in every combination of those lines
+(`docs/ra89r_bk4815.md`).  The BK4829 on the same antenna heard the carrier in
+both bands.
 
 ### The MCU pins
 
@@ -539,6 +567,27 @@ path the pin selects.  (That the `0x40`/`0x20` pin physically routes the bias to
 the selected PA is the reading that fits one PWM + one path pin set together and
 the two-PA board; a scope on `PB14` plus the two chip pins would confirm it.)
 
+**Validated on the radio (2026-10).**  The PWM output was dead from the start:
+`pa_init()` wrote `TIM1->CCER &= ~0x30u` (meaning to clear `CC2P`/`CC2NE`), but
+`TIM_CCER_CC2E` is bit 4 (`0x10`), so the mask cleared the enable itself.  The
+enable that actually drives `PB14` is **`CC2NE`** (bit 6, `0x40`): `PB14` is
+`TIM1_CH2N` (datasheet AF4), the complementary output, and the stock enables it
+in `FUN_08012f26` -> `FUN_0801de58(TIM1, 4, 4)` before `BDTR |= MOE` and
+`CR1 |= CEN`.  With `CC2NE` set the PA biases and a power meter reads ~7.5 W
+(the `Y` duty sweep moves it).  The K1 chain's `0x30 = 0xC1FE` is also required:
+the stock's `0x30 = 0xBFF1` (sendable with the `w` sweep) clears the PA-gain bit
+and drops the output to nothing.
+
+**The duty arithmetic matches the stock.**  The stock's compare is
+`FUN_08018A88(value)` = `(value * ARR) / 0xFF`, clamped by `FUN_080167B4` to
+`ARR/2`; the multiplier `*DAT_08018AA0` is the same RAM cell (`0x20000012`) that
+`FUN_08016C58` stores the period in, so it is the ARR.  The port's `pa_power()`
+is the same: `value * PA_PWM_ARR / 255`, clamped to `PA_PWM_ARR / 2`.  With
+ARR = 1439 the maximum compare is **719** on both sides.  The one difference is
+the *frequency*: the stock's APB2 is 144 MHz, so ARR 1439 gives 100 kHz, while
+this port runs at 48 MHz and the same ARR gives ~33 kHz -- the duty ratio is
+identical, the PWM is just slower.
+
 ### The transmit configuration, validated on the radio
 
 Voice was heard on a second receiver with exactly these values, so this is the
@@ -559,9 +608,33 @@ list the port keeps:
 | BK4815 `0x0C` | `0x0203` | the T/R path's other-branch state |
 | `0x38`/`0x39` | the channel in 10 Hz | |
 
+**Order matters for `0x36`.**  `BK4819_PrepareTransmit()` ends in
+`BK4819_TxOn_Beep()`, which writes `0x36 = 0`; the PA enable must therefore be
+written **after** it, or the whole transmission is unamplified (the chip's own
+low-level carrier only, audible to a nearby receiver but not to a power meter).
+The bench did this correctly; the extraction into `driver/tx.c` reversed the two
+and shipped the PA disabled.  `tools/test_rf.c` now asserts the final `0x36`
+write (`test_tx_order`), and `driver/tx.c` calls `pa_tx_enable()` after
+`BK4819_PrepareTransmit()`.
+
+**The PA enable is `0x36`, and the band pin is not the gate (measured).**  With
+the order fixed, a power meter (Surecom SW-102) reads a real carrier on the
+antenna.  The chip band/path pin (`0x33` bit `0x40` VHF / `0x20` UHF) does *not*
+gate it: swept with the console `x` override, the meter reads power with either
+band pin, with both, and with neither (T/R only) -- so `0x33`'s band bits select
+the front-end path, they do not enable the PA.  `0x50` reads back `0x0000` on
+this part, so its value cannot be confirmed by read-back (it is still written).
+
 The chip's own DTMF tone (`BK4819_EnterDTMF_TX` -> `EnableTXLink` ->
 `BK4819_PlayDTMF`) is audible on a second receiver through the same path, and is
 what settled the tone-versus-carrier question when the microphone was silent.
+
+When TX above 134 MHz ends, `bk4815_set_frequency(..., true)` has left the
+BK4815 operation-control register `0x70 = 0xE000` (TX).  `tx_stop()` must restore
+`0x70 = 0xA000` (RX) even if no VFO is assigned to the BK4815: in that case the
+coordinator correctly skips retuning it, which otherwise left the unused
+transceiver parked in TX mode after PTT release.  The register-order host test
+checks this TX cleanup as well as the PA-enable ordering.
 
 With that in place the CPU-side TX picture is complete: chip registers
 (`0x30`/`0x37`/`0x47`/`0x50`/`0x7D`), the band/path pins (`PA1 = 1, PA0 = 0`, chip
@@ -588,20 +661,41 @@ sweep, and the provisional table is where its results go.
 1. **Which chip does what.**  Answered as far as static reading goes: the BK4829
    carries the filter (`0x33`), the RSSI/metering (`0x63`/`0x65`/`0x67`/`0x99`),
    the squelch ramp (`0x13`), the T/R set (`0x47`/`0x30`/`0x31`) and the **whole
-   TX setup** (`0x38`/`0x39`/`0x30`/`0x50`/`0x7D`, written for both bands); the
-   BK4815 carries the band select (`0x75`), the T/R state (`0x0c`) and the per-mode
-   config above 134 MHz.  Still open: why the crossover is 134 MHz, what the state
-   byte `+0x75` means on its own, and **which part actually radiates above
-   134 MHz** -- the BK4829 is not switched off there (its TX registers are still
-   written), so this needs the radio, not the image.
+   TX setup** (`0x38`/`0x39`/`0x30`/`0x50`/`0x7D`; `FUN_08017306` selects it for
+   every TX); the BK4815 carries the band select (`0x75`), the T/R state (`0x0c`),
+   the per-mode config above 134 MHz and its own `0x43`/`0x44` RSSI/SNR.  Still
+   open: why the crossover is 134 MHz, what the state byte `+0x75` means on its
+   own, and **whether the BK4815 can radiate** -- its TX config is dead code, but
+   the part is a transceiver, so this needs the radio, not the image.
 2. The power-on/off and sleep handling, and whether anything else gates the RF
    rails — the decompiler is now available, but these paths have not been walked.
 3. The per-channel/per-band routines that feed the T/R registers.  The TX power
    setting is answered above: `0x7D`, computed by `FUN_0801BAF4` from the codeplug
-   level, plus the `PB14`/TIM1_CH2 bias PWM (`value * ARR / 255`); still open is
-   which of `0x7D`, `0x30` bit 3 and the PWM actually enables/limits the PA on the
-   radio.
+   level, plus the `PB14`/TIM1_CH2 bias PWM (`value * ARR / 255`).  Measured: the
+   **PA enable is `0x36`** (PA-CTL bit 7), and it must be written *after*
+   `BK4819_PrepareTransmit()` (which zeroes it); the `0x33` band pin is a path
+   select, not the gate.  Still open is the *level*: which duty the codeplug asks
+   for, and the microphone gain (`FUN_0801C3A8`, `0x40`) and AF level (`0x48`/`0x6C`).
 4. `FUN_0800A968`, `FUN_0801533C` and `FUN_0801537C` (the `FUN_08007F90` callees)
    are not identified.
 5. Which string `FUN_08015D14(0x0b)` actually renders, and what the byte at
    `0x20009F28 + 0x1c` selects (the language table it indexes is built in RAM).
+
+## Full-duplex is not possible: TX and RX share one front-end path (2026-10-14)
+
+Probed on the radio (throwaway console toggle, since removed).  With the BK4815
+left **entirely** alone across TX -- no T/R write (`0x0C`), no TX-mode retune
+(`0x70`), no band register (`0x75`), and none of `pa_select_band()`'s outputs
+(`pa_band_path()`, the `0x75` band, `pa_apply_chip_path()`) -- a BK4815 held in
+receive on 145.9 **keeps receiving while the BK4829 transmits on 435.1, and the
+transmit is gone**.  Restore any one of those writes and the transmit works but
+the receive dies.
+
+So the two transceivers sit behind a single, band-switched front end (one
+antenna): the PA/front-end pins carry both directions and can point at the
+uplink **or** the downlink, not both.  True simultaneous full-duplex therefore
+needs a diplexer/duplexer -- hardware, not firmware.  What the port can do is
+**cross-band half-duplex**: RX on one VFO's band, and on PTT it switches the
+front end and transmits on the other.  Settling board-vs-port needs a schematic
+or a scope on the band-switch lines; the probe already shows those pins carry
+both directions.

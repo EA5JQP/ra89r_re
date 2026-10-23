@@ -16,6 +16,9 @@
 #include <string.h>
 
 #include "app/dtmf.h"
+#ifdef ENABLE_FMRADIO
+    #include "app/fm.h"
+#endif
 #include "dcs.h"
 #include "driver/py25q16.h"
 #include "frequencies.h"
@@ -117,21 +120,74 @@ void SETTINGS_FixupVfoPointers(void)
     gCurrentVfo = gRxVfo;
 }
 
-/* The port's own state, saved in the blob next to gEeprom. */
+/* The port's own state, saved in the blob next to gEeprom.
+ *
+ * Version 2 reused the old `reserved` bytes for the per-VFO RF transceiver
+ * choice; version 3 appended the old scan-transceiver byte; version 4 reuses
+ * that same byte for the scan mode (SetScn).  The older layouts are kept
+ * explicit below so a blob written by an older build still loads. */
 typedef struct {
     uint32_t magic;
     uint16_t version;
-    uint16_t reserved;
+    uint8_t  rf_xcvr[2];                  /* rf_xcvr_t, VFO A and B */
     uint8_t  freq_channels[7 * 2 * 16];   /* codeplug_freq_snapshot() */
+#ifdef ENABLE_FMRADIO
+    uint16_t fm_channels[FM_CHANNELS_MAX]; /* the K1's FM memories (app/fm.c) */
+#endif
+    uint8_t  scan_mode;                   /* scan_mode_t (v4), scan_transceiver_mode_t (v3) */
 } settings_extra_t;
 
-#define EXTRA_MAGIC   0x58545241u    /* "ARTX" */
-#define EXTRA_VERSION 1u
+/* The version-2 payload, byte for byte: the same prefix without the appended
+ * scan byte.  Kept so a blob from an older build can still be read. */
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint8_t  rf_xcvr[2];
+    uint8_t  freq_channels[7 * 2 * 16];
+#ifdef ENABLE_FMRADIO
+    uint16_t fm_channels[FM_CHANNELS_MAX];
+#endif
+} settings_extra_v2_t;
+
+#define EXTRA_MAGIC      0x58545241u    /* "ARTX" */
+#define EXTRA_VERSION    4u
+#define EXTRA_VERSION_V3 3u
+#define EXTRA_VERSION_V2 2u
+
+/* The per-VFO RF transceiver choice, mirrored into the blob on save. */
+static uint8_t s_rf_xcvr[2] = { RF_XCVR_BK4829, RF_XCVR_BK4829 };
+
+rf_xcvr_t SETTINGS_GetVfoTransceiver(uint8_t vfo)
+{
+    const uint8_t v = (vfo > 1u) ? (uint8_t)RF_XCVR_BK4829 : s_rf_xcvr[vfo];
+
+    /* Old settings blobs contain 0 for Auto in these former reserved bytes;
+     * invalid values also safely fall back to the fixed BK4829 default. */
+    if (v != (uint8_t)RF_XCVR_BK4829 && v != (uint8_t)RF_XCVR_BK4815)
+        return RF_XCVR_BK4829;
+    return (rf_xcvr_t)v;
+}
+
+void SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr)
+{
+    if (vfo > 1u)
+        return;
+    if (xcvr != RF_XCVR_BK4829 && xcvr != RF_XCVR_BK4815)
+        xcvr = RF_XCVR_BK4829;
+    s_rf_xcvr[vfo] = (uint8_t)xcvr;
+}
 
 void SettingsDefaults(void)
 {
     memset(&gEeprom, 0, sizeof gEeprom);
     s_codeplug_bt_speaker_switch = false;
+
+    s_rf_xcvr[0] = (uint8_t)RF_XCVR_BK4829;
+    s_rf_xcvr[1] = (uint8_t)RF_XCVR_BK4829;
+
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+    gSetting_set_scn = SCAN_MODE_FAST;
+#endif
 
     gEeprom.RX_VFO = 0;
     gEeprom.TX_VFO = 0;
@@ -164,7 +220,12 @@ void SettingsDefaults(void)
     gEeprom.CROSS_BAND_RX_TX = CROSS_BAND_OFF;
     gEeprom.BATTERY_SAVE = 0;
     gEeprom.BACKLIGHT_TIME = 4;
-    gEeprom.SCAN_RESUME_MODE = 0;
+    /* The scan-resume delay (`ScnRev`).  0 is the K1's "stop scanning" mode:
+     * app/app.c's end-of-RX path calls CHFRSCANNER_Stop() when it is 0, so the
+     * first carrier ends the scan entirely.  The K1's own fallback when its
+     * EEPROM byte is absent is 14 (a 3.5 s pause), which is what a fresh radio
+     * should resume with. */
+    gEeprom.SCAN_RESUME_MODE = 14;
     /* The K1's scan-list selector is 1..24 plus "all" (`MR_CHANNELS_LIST + 1`,
      * and 0 means "no list at all").  Every channel this port reports is in
      * "all" (the stock has one channel set, not 24 lists), so 0 would make
@@ -200,6 +261,18 @@ void SettingsDefaults(void)
     gEeprom.BT_PTTType = 0;
     gEeprom.BT_HoldTime = 0;
     gEeprom.BT_PairedName[0] = '\0';
+
+#ifdef ENABLE_FMRADIO
+    /* The FM broadcast feature (app/fm.c).  The K1 loads these from its flat
+     * EEPROM; this port's stock codeplug has no such field, so the defaults are
+     * the port's and the user's choices round-trip in the port's own blob.
+     * BAND 1 = 76-108 MHz, the K1's usual one; 87.5 MHz is its lower edge. */
+    gEeprom.FM_Band              = 1;
+    gEeprom.FM_SelectedFrequency = 875;
+    gEeprom.FM_FrequencyPlaying  = 875;
+    gEeprom.FM_SelectedChannel   = 0;
+    gEeprom.FM_IsMrMode          = false;
+#endif
 }
 
 /* The first channel the codeplug has at or after `start`, or 0xFFFF. */
@@ -248,6 +321,12 @@ void SETTINGS_InitEEPROM(void)
      * the stock firmware or its CPS already carries. */
     codeplug_shared_settings();
 
+#ifdef ENABLE_FMRADIO
+    /* The FM memories start empty -- 0xFFFF is the K1's "no channel" marker
+     * (`FM_CheckValidChannel`).  A blob, if there is one, replaces them below. */
+    memset(gFM_Channels, 0xFF, sizeof gFM_Channels);
+#endif
+
     /* Then the port's own blob, which wins where the two overlap: it is what
      * the user last set with this firmware. */
     if (storage_load_settings()) {
@@ -256,8 +335,41 @@ void SETTINGS_InitEEPROM(void)
         memset(&extra, 0, sizeof extra);
         if (storage_get_extra(&extra, sizeof extra) &&
             extra.magic == EXTRA_MAGIC &&
-            extra.version == EXTRA_VERSION) {
+            (extra.version == EXTRA_VERSION || extra.version == EXTRA_VERSION_V3)) {
             codeplug_freq_restore(extra.freq_channels, sizeof extra.freq_channels);
+            memcpy(s_rf_xcvr, extra.rf_xcvr, sizeof s_rf_xcvr);
+#ifdef ENABLE_FMRADIO
+            memcpy(gFM_Channels, extra.fm_channels, sizeof gFM_Channels);
+#endif
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+            if (extra.version == EXTRA_VERSION) {
+                gSetting_set_scn = (extra.scan_mode <= (uint8_t)SCAN_MODE_LISTEN)
+                                       ? extra.scan_mode : (uint8_t)SCAN_MODE_FAST;
+            } else {
+                /* v3 stored the old ScTrMd byte: 0 Default -> FAST,
+                 * 1 Both -> FAST BOTH. */
+                gSetting_set_scn = extra.scan_mode ? (uint8_t)SCAN_MODE_FAST_BOTH
+                                                   : (uint8_t)SCAN_MODE_FAST;
+            }
+#endif
+        } else {
+            /* A version-2 blob has no scan byte: keep its fields and default
+             * the scan mode to FAST. */
+            settings_extra_v2_t old;
+
+            memset(&old, 0, sizeof old);
+            if (storage_get_extra(&old, sizeof old) &&
+                old.magic == EXTRA_MAGIC &&
+                old.version == EXTRA_VERSION_V2) {
+                codeplug_freq_restore(old.freq_channels, sizeof old.freq_channels);
+                memcpy(s_rf_xcvr, old.rf_xcvr, sizeof s_rf_xcvr);
+#ifdef ENABLE_FMRADIO
+                memcpy(gFM_Channels, old.fm_channels, sizeof gFM_Channels);
+#endif
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+                gSetting_set_scn = (uint8_t)SCAN_MODE_FAST;
+#endif
+            }
         }
     } else {
         /* No blob yet: land the two VFOs on the first two channels the codeplug
@@ -289,6 +401,13 @@ void SETTINGS_InitEEPROM(void)
      * overwritten on every boot; force the type here, as DUAL_WATCH is.  The
      * BatTyp menu can still change it at runtime. */
     gEeprom.BATTERY_TYPE = BATTERY_TYPE_2800_MAH;
+
+#ifdef ENABLE_FMRADIO
+    /* The K1's own boot does this right after loading the FM memories: if the
+     * selected memory is empty it falls back, and FM_FrequencyPlaying is set
+     * from the selected frequency/memory. */
+    FM_ConfigureChannelState();
+#endif
 }
 
 void SETTINGS_LoadCalibration(void)
@@ -376,7 +495,7 @@ bool SETTINGS_FetchChannelScanInfo(const uint16_t channel, uint32_t *frequency, 
 {
     ChannelScanDisplayInfo_t info;
 
-    if (!SETTINGS_FetchChannelScanDisplayInfo(channel, &info)) {
+    if (!SETTINGS_FetchChannelScanDisplayInfo(gEeprom.RX_VFO, channel, &info)) {
         if (frequency != 0)
             *frequency = 0u;
         if (modulation != 0)
@@ -391,7 +510,7 @@ bool SETTINGS_FetchChannelScanInfo(const uint16_t channel, uint32_t *frequency, 
     return true;
 }
 
-bool SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDisplayInfo_t *info)
+bool SETTINGS_FetchChannelScanDisplayInfo(uint8_t vfo, const uint16_t channel, ChannelScanDisplayInfo_t *info)
 {
     if (info == 0)
         return false;
@@ -408,7 +527,7 @@ bool SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDis
     }
 
     if (IS_FREQ_CHANNEL(channel))
-        return codeplug_freq_get(channel, gEeprom.RX_VFO, info);
+        return codeplug_freq_get(channel, vfo, info);
 
     return false;
 }
@@ -456,7 +575,16 @@ static bool settings_save_all(void)
     memset(&extra, 0, sizeof extra);
     extra.magic = EXTRA_MAGIC;
     extra.version = EXTRA_VERSION;
+    memcpy(extra.rf_xcvr, s_rf_xcvr, sizeof extra.rf_xcvr);
     codeplug_freq_snapshot(extra.freq_channels, sizeof extra.freq_channels);
+#ifdef ENABLE_FMRADIO
+    memcpy(extra.fm_channels, gFM_Channels, sizeof extra.fm_channels);
+#endif
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+    extra.scan_mode = gSetting_set_scn;
+#else
+    extra.scan_mode = (uint8_t)SCAN_MODE_FAST;
+#endif
 
     if (!storage_set_extra(&extra, sizeof extra))
         return false;
@@ -470,6 +598,19 @@ void SETTINGS_SaveSettings(void)
     settings_dirty = false;
     (void)settings_save_all();
 }
+
+#ifdef ENABLE_FMRADIO
+void SETTINGS_SaveFM(void)
+{
+    /* The K1 writes its FM config and memories into its flat EEPROM at
+     * 0x00A020/0x00A028.  On this radio those addresses are inside the stock's
+     * codeplug, which the port never writes (docs/ra89r_port.md); the FM state
+     * -- the config fields are already part of gEeprom -- and the 48 memories
+     * go into the port's own blob instead, through the same save path as the
+     * rest of the settings. */
+    (void)settings_save_all();
+}
+#endif
 
 /* The VFO indices are the K1's *deferred* save: SETTINGS_SaveVfoIndices() asks
  * for one and SETTINGS_SaveVfoIndicesFlush() -- which APP_TimeSlice10ms() calls
@@ -516,7 +657,7 @@ void SETTINGS_SaveChannel(uint16_t Channel, uint8_t VFO, const VFO_Info_t *pVFO,
         info.dtmfPttIdTxMode = pVFO->DTMF_PTT_ID_TX_MODE;
 
         if (IS_FREQ_CHANNEL(Channel)) {
-            codeplug_freq_set(Channel, gEeprom.TX_VFO, &info);
+            codeplug_freq_set(Channel, VFO, &info);
         } else {
             uint8_t raw[16];
 

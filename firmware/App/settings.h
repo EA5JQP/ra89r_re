@@ -340,7 +340,7 @@ bool     SETTINGS_BluetoothSpeakerSwitch(void);
 
 uint32_t SETTINGS_FetchChannelFrequency(const uint16_t channel);
 bool     SETTINGS_FetchChannelScanInfo(const uint16_t channel, uint32_t *frequency, ModulationMode_t *modulation);
-bool     SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDisplayInfo_t *info);
+bool     SETTINGS_FetchChannelScanDisplayInfo(uint8_t vfo, const uint16_t channel, ChannelScanDisplayInfo_t *info);
 void     SETTINGS_FetchChannelName(char *s, const uint16_t channel);
 /* The K1's ChannelAttributes_t as a plain u16, decoded from the stock codeplug
  * (whose format now lives in settings.c).  0xFFFF = no such channel. */
@@ -356,6 +356,9 @@ void     codeplug_name(char *out, size_t size, uint16_t channel);
 #define CODEPLUG_CHANNEL_COUNT 210u
 void codeplug_channel_pack(const ChannelScanDisplayInfo_t *info, uint8_t *out);
 void codeplug_channel_unpack(const uint8_t *in, ChannelScanDisplayInfo_t *info);
+/* The port's frequency-channel snapshot, saved inside the settings blob. */
+void codeplug_freq_snapshot(uint8_t *dest, size_t size);
+bool codeplug_freq_restore(const uint8_t *src, size_t size);
 void     SETTINGS_FactoryReset(bool bIsAll);
 #ifdef ENABLE_FMRADIO
     void SETTINGS_SaveFM(void);
@@ -376,4 +379,26 @@ void SETTINGS_UpdateChannel(uint16_t channel, const VFO_Info_t *pVFO, bool keep)
 #ifdef ENABLE_FEAT_F4HWN
     void SETTINGS_ResetTxLock(void);
 #endif
+
+/* Which RF transceiver a VFO uses.  Value 0 is reserved for old settings blobs
+ * written when the menu had an Auto entry; getters normalize it to BK4829.
+ * The choice lives in the port's own settings blob, not the read-only stock
+ * codeplug. */
+typedef enum {
+    RF_XCVR_LEGACY_DEFAULT = 0,
+    RF_XCVR_BK4829 = 1,
+    RF_XCVR_BK4815 = 2
+} rf_xcvr_t;
+
+rf_xcvr_t SETTINGS_GetVfoTransceiver(uint8_t vfo);
+void      SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr);
+
+/* The scanner's mode, shown as the SetScn menu item and persisted in the port's
+ * settings blob.  gSetting_set_scn (misc.c) holds this value at run time. */
+typedef enum {
+    SCAN_MODE_NORMAL    = 0,   /* step scan, no fast precheck */
+    SCAN_MODE_FAST      = 1,   /* single-lane fast RSSI precheck */
+    SCAN_MODE_FAST_BOTH = 2,   /* both transceivers as interleaved scan lanes */
+    SCAN_MODE_LISTEN    = 3    /* listen on the selected VFO's chip, scan the other */
+} scan_mode_t;
 #endif

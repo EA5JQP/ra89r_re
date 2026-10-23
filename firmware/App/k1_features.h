@@ -26,14 +26,47 @@
 #define ENABLE_VOX 1
 
 /* The K1's own `default` CMake preset, for the entries that only change how the
- * screens are drawn.  What that preset also turns on but the RA89R lacks (FM
- * broadcast, air copy, NOAA, USB, voice prompts, spectrum, password) stays off,
- * and so do the hardware features that need a module the port has not brought
- * in yet (UART console, TX1750, flashlight, DTMF calling). */
+ * screens are drawn.  What that preset also turns on but the RA89R lacks (air
+ * copy, NOAA, USB, voice prompts, spectrum, password) stays off, and so do the
+ * hardware features that need a module the port has not brought in yet (UART
+ * console, TX1750, flashlight, DTMF calling). */
 #define ENABLE_BIG_FREQ 1
 #define ENABLE_CUSTOM_MENU_LAYOUT 1
 #define ENABLE_KEEP_MEM_NAME 1
 #define ENABLE_WIDE_RX 1
+
+/* Scanning: the K1's scan engine (App/app/chFrScanner.c, App/app/scanner.c) is
+ * imported verbatim and carries the F4HWN fast-RSSI sweep and the scan-range
+ * engine behind these flags, so the port turns them on rather than adding code
+ * to the imported files.  The fast sweep is the "Scan faster" setting
+ * (`gSetting_set_scn`): it reads the chip RSSI and only fully tunes a channel
+ * whose RSSI clears the learned noise floor.  `ENABLE_FEAT_F4HWN_SCAN_RSSI`
+ * draws the sweep sparkline; `ENABLE_SCAN_RANGES` is the range engine the fast
+ * path prechecks.  The K1's `ENABLE_FEAT_F4HWN_RESUME_STATE` is left off: it
+ * needs `SETTINGS_WriteCurrentState`, which is a scan-state EEPROM record the
+ * port has no equivalent of, and it is not needed for the fast sweep.  None of
+ * this is validated on the radio yet. */
+#define ENABLE_SCAN_RANGES 1
+#define ENABLE_FEAT_F4HWN_SCAN_FASTER 1
+#define ENABLE_FEAT_F4HWN_SCAN_RSSI 1
+
+/* FT-817 CAT auto-detect on the serial port (App/cat.c, App/cat_radio.c).  CAT
+ * and the bring-up console SHARE USART1: a CAT frame is a back-to-back burst
+ * while the console is typed with gaps, so the auto-detect keeps both features
+ * live (see App/main.c).  Stays on in the default build; with it off the port
+ * is console-only.  See docs/ra89r_cat.md and docs/ra89r_carserial.md. */
+#define ENABLE_CAT 1
+
+/* FM broadcast: the RA89R *does* carry a BK1080 FM receiver (docs/ra89r_bk1080.md),
+ * on its own bus (PC14/PB2, driver/i2c_bus.c).  The K1's own feature is imported
+ * (App/driver/bk1080.c, App/app/fm.c, App/ui/fmradio.c) and the K1 CMake's rule
+ * is followed: ENABLE_FMRADIO_EMBEDDED selects the resident state machine and
+ * the FM screen (the K1 sets it whenever ENABLE_FMRADIO is on and the overlay
+ * apps are not, which is this port's configuration).  The FM audio path (the
+ * BK1080's analogue output into the shared amplifier) is unverified -- see
+ * docs/ra89r_bk1080.md. */
+#define ENABLE_FMRADIO 1
+#define ENABLE_FMRADIO_EMBEDDED 1
 
 /* The port draws the K1's double-channel VFO layout without the K1's dual-watch
  * engine.  The K1 draws both rows only when DUAL_WATCH (or CROSS_BAND) is not

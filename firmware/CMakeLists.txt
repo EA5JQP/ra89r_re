@@ -46,12 +46,16 @@ set(APP_SOURCES
     App/driver/bt_capture.c
     App/app/bt.c
     App/driver/systick.c
+    App/driver/scheduler.c
     App/driver/lcd_st7565.c
     App/driver/keypad.c
     App/driver/battery.c
     App/driver/rf_bus.c
     App/driver/bk4829.c
     App/driver/bk4815.c
+    App/driver/rf_dual.c
+    App/driver/bk1080.c
+    App/driver/i2c_bus.c
     App/driver/bk4819.c
     App/driver/audio_path.c
     App/driver/pa.c
@@ -73,9 +77,11 @@ set(APP_SOURCES
     App/ui/scanner.c
     App/ui/welcome.c
     App/ui/bt.c
+    App/ui/fmradio.c
     App/driver/keyboard.c
     App/app/menu.c
     App/app/action.c
+    App/app/fm.c
     App/version.c
     App/dcs.c
     App/frequencies.c
@@ -87,8 +93,11 @@ set(APP_SOURCES
     App/app/generic.c
     App/app/common.c
     App/app/chFrScanner.c
+    App/app/scan_dual.c
     App/app/dtmf.c
     App/app/scanner.c
+    App/cat.c
+    App/cat_radio.c
     App/board.c
     App/radio.c
     App/functions.c

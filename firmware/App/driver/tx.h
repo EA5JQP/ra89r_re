@@ -36,6 +36,16 @@ typedef enum {
     TX_SOURCE_MIC           /* the microphone */
 } tx_source_t;
 
+/* The 'w' sweep: extra stock TX register candidates, applied on top of the
+ * measured chain, so the radio can settle which one the PA actually needs.  The
+ * stock's own TX (`FUN_08016228`) writes `0x30 = 0xBFF1`, `0x47 = 0x6142`,
+ * `0x13 = 0x03FF`, clears `0x31` bit 2 and raises `PC13`; the K1 chain sends
+ * none of those.  See docs/ra89r_rfpath.md. */
+uint8_t     tx_variant(void);
+void        tx_variant_next(void);
+void        tx_variant_apply(void);
+const char *tx_variant_name(void);
+
 /* Measured values.  The tone source ignores the microphone gain and vice versa. */
 #define TX_REG7D_POWER    0xE958u   /* stock's power/bias for this codeplug */
 #define TX_REG50_UNMUTE   0x3B20u   /* stock's TX unmute (our import sent 0x3B18) */

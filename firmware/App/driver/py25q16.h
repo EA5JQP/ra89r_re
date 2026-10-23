@@ -73,9 +73,10 @@ void     storage_init(void);
 uint32_t storage_size(void);
 bool     storage_id(uint16_t *man_dev, uint32_t *jedec);
 
-/* The port's own settings blob (no K1 counterpart): gEeprom and the frequency
- * channels the stock codeplug has no place for. */
-#define STORAGE_EXTRA_MAX 240u
+/* The port's own settings blob (no K1 counterpart): gEeprom, the frequency
+ * channels the stock codeplug has no place for, and (with ENABLE_FMRADIO) the
+ * K1's 48 FM memories. */
+#define STORAGE_EXTRA_MAX 336u
 bool storage_load_settings(void);
 bool storage_save_settings(void);
 bool storage_set_extra(const void *data, uint32_t size);

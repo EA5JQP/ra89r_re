@@ -126,3 +126,151 @@ void bk4815_configure(void)
     for (i = 0; i < bk4815_config_writes(); i++)
         bk4815_write_reg(bk4815_config[i].reg, bk4815_config[i].value);
 }
+
+void bk4815_set_band(uint16_t band)
+{
+    /* The stock's FUN_08013790 is a read-modify-write: `0x75 = (read & 0xFFC0)
+     * | value`, which preserves the register's own state.  Two of those bits
+     * must *not* be preserved here, though:
+     *
+     *   - bit 10 is the datasheet's LO injection side.  The stock's synthesizer
+     *     programs the IF in registers 0x7E/0x7F (its per-band "calibration"
+     *     word, which is really the RX IF), while this port -- like the stock's
+     *     own word -- tunes `Ndiv * fwanted` with no IF offset.  With bit 10
+     *     set (the part's reset state, 0x0400) the 4815 sees a constant
+     *     LO-leakage level (0x44 = 28 at 145-146 MHz, 21 at 174 MHz, unmoved by
+     *     a -30 dBm carrier -- radio 2026-10-21), i.e. high-side injection with
+     *     no matching IF.  Force it low-side: bit 10 = 0.
+     *   - the low six bits are the band code.
+     *
+     * Bits 15:11 and 9:6 (RX-audio source, tone-to-audio) are preserved. */
+    bk4815_write_reg(0x75u, (uint16_t)((bk4815_read_reg(0x75u) & 0xfbc0u) | (band & 0x3fu)));
+}
+
+/* --------------------------------------------------------- receive entry --- */
+
+/* The per-VFO receive entry the stock runs after the tune, FUN_08016CEC's
+ * writes in its own order.  The values are the stock's literals; the register
+ * meanings are the datasheet's (docs/ra89r_bk4815.md, "The per-VFO receive
+ * entry"):
+ *
+ *   0x01  common: channel spacing, bit 15 = 1 for 25 kHz, 0 for 12.5 kHz.
+ *         The stock sends 0x0044 (narrow) or 0x8044 (wide, its channel byte
+ *         0x91 == 2); the port picks by the VFO's CHANNEL_BANDWIDTH.
+ *   0x16  VOX module (the stock writes it on receive entry as well)
+ *   0x2B  RAMP: ramp up/down enable + speeds
+ *   0x6D  PA output power control, the receive value 0x6618
+ *   0x73  interrupt mask (0x81D0: link-loss, CTCSS and CDCSS-loss enables)
+ *   0x70  the receive restart pair, 0 then 0xA000
+ *
+ * It runs on a lane (re)configuration -- a VFO switch or a frequency change --
+ * and never from the scanner's probe loop, where seven extra writes per
+ * candidate would cost scan throughput. */
+void bk4815_receive_entry(bool wide)
+{
+    bk4815_write_reg(0x16u, 0xb200u);
+    bk4815_write_reg(0x2bu, 0x403fu);
+    bk4815_write_reg(0x6du, 0x6618u);
+    bk4815_write_reg(0x73u, 0x81d0u);
+    bk4815_write_reg(0x01u, wide ? 0x8044u : 0x0044u);
+    bk4815_write_reg(BK4815_REG_OPCTRL, 0x0000u);
+    bk4815_write_reg(BK4815_REG_OPCTRL, 0xa000u);
+}
+
+/* ------------------------------------------------------------- synthesizer */
+
+/* The stock's VCO-band thresholds (FUN_0800EC70), in the codeplug's 10 Hz
+ * units: 187 / 270 / 383 MHz. */
+#define BK4815_VCO_LO  18700000u
+#define BK4815_VCO_MID 27000000u
+#define BK4815_VCO_HI  38300000u
+
+/* The 26 MHz crystal reference the fractional-N word is scaled by. */
+#define BK4815_REF_HZ  26000000u
+
+uint8_t bk4815_vco_band(uint32_t freq_10hz)
+{
+    if (freq_10hz <= BK4815_VCO_LO)
+        return 3u;
+    if (freq_10hz <= BK4815_VCO_MID)
+        return 1u;
+    if (freq_10hz <= BK4815_VCO_HI)
+        return 2u;
+    return 0u;
+}
+
+uint8_t bk4815_vco_divider(uint8_t band)
+{
+    /* Register 4 bits 8:7: 0:8, 1:16, 2:12, 3:24.  The stock's per-band
+     * (Ndiv, calibration) pairs are in FUN_0801703C. */
+    static const uint8_t div[4] = { 8u, 16u, 12u, 24u };
+
+    return div[band & 3u];
+}
+
+uint32_t bk4815_frequency_word(uint32_t freq_10hz, uint8_t band)
+{
+    uint64_t f_hz = (uint64_t)freq_10hz * 10u;
+    uint64_t word = f_hz * (uint64_t)bk4815_vco_divider(band)
+                    * ((uint64_t)1u << 24);
+
+    /* The stock's float form (freq_MHz * Ndiv * 2^24/26) truncates to the same
+     * integer for every channel the band table holds, so integer math is exact
+     * here. */
+    return (uint32_t)(word / BK4815_REF_HZ);
+}
+
+uint16_t bk4815_tone_word(uint32_t tone_hz)
+{
+    /* The datasheet's SELCALL word: (freq/18466)*65536.  18466 is 0x4822,
+     * the same divisor the stock's FUN_08005C34 hard-codes. */
+    return (uint16_t)((tone_hz << 16) / 18466u);
+}
+
+void bk4815_set_frequency(uint32_t freq_10hz, bool tx)
+{
+    /* The per-band calibration word FUN_0801703C writes to 0x7E/0x7F; band 0's
+     * is the boot configuration's 0xFFF5/0x3568, so these are the stock's own
+     * constants rather than a guess. */
+    static const uint32_t cal[4] = {
+        0xfff53568u, 0xffea6ad0u, 0xffefd01cu, 0xffdfa037u,
+    };
+    uint8_t band = bk4815_vco_band(freq_10hz);
+    uint32_t word = bk4815_frequency_word(freq_10hz, band);
+    uint8_t buf[6];
+    uint8_t calbuf[4];
+
+    /* FUN_0801703C's three writes, in its order. */
+    bk4815_write_reg(BK4815_REG_VCO,
+                     (uint16_t)(((uint16_t)band << 7) | 0xb041u));
+
+    buf[0] = tx ? 0xe0u : 0xa0u;
+    buf[1] = 0x00u;
+    buf[2] = (uint8_t)(word >> 24);
+    buf[3] = (uint8_t)(word >> 16);
+    buf[4] = (uint8_t)(word >> 8);
+    buf[5] = (uint8_t)word;
+    bk4815_write_block(BK4815_REG_OPCTRL, buf, (unsigned)sizeof buf);
+
+    calbuf[0] = (uint8_t)(cal[band] >> 24);
+    calbuf[1] = (uint8_t)(cal[band] >> 16);
+    calbuf[2] = (uint8_t)(cal[band] >> 8);
+    calbuf[3] = (uint8_t)cal[band];
+    bk4815_write_block(BK4815_REG_CAL, calbuf, (unsigned)sizeof calbuf);
+}
+
+void bk4815_set_tone(uint32_t tone_hz)
+{
+    bk4815_write_reg(BK4815_REG_TONE, bk4815_tone_word(tone_hz));
+}
+
+uint16_t bk4815_read_rssi(void)
+{
+    /* Register 0x44: RSSI in bits 6:0 (bk4815.h's register table). */
+    return (uint16_t)(bk4815_read_reg(0x44u) & 0x7fu);
+}
+
+void bk4815_set_af(bool on)
+{
+    bk4815_write_reg(BK4815_REG_AF, on ? BK4815_AF_ON : BK4815_AF_OFF);
+}

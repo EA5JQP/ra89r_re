@@ -113,7 +113,7 @@ enum BacklightOnRxTx_t gSetting_backlight_on_tx_rx;
 #endif
 
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
-    bool          gSetting_set_scn = 1;
+    uint8_t       gSetting_set_scn = 1;   /* scan_mode_t: FAST */
 #endif
 
 #ifdef ENABLE_FEAT_F4HWN

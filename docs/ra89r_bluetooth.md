@@ -11,12 +11,20 @@ Bluetooth is enabled, so a firmware that never drives PD0 sees the same idle byt
 `0x51 'Q'` with a framing error at every rate and every command — an idle/
 floating line, not a response.  `bluetooth_init()` now configures PD0 as an
 output and releases the module (the stock's own low→high reset pulse) before the
-first command, and console `y` prints the PD0 state and captures the module's
+first command, and console `y` (bring-up build) prints the PD0 state and captures the module's
 replies.  **VALIDATED on the radio:** with the buffered capture, the module
 answers in full at 115200 8N1 — `AT+GMR?` returns
 `+IM_VERSION:YBT100_FW_V01_02_012`, so it is a Jieli **YBT100**.  The earlier
 "distorted waveform" was the bench dropping bytes, not the module.  See
 "On-radio result" and "The BT Switch and the module reset line (PD0)".
+
+**Merge note (2026-10-23):** the branch is merged onto the current `develop`
+(the RX/TX split, dual-RF, airband, FM and scan work) on
+`driver/bluetooth-merge`.  The bring-up console commands (`y`, `A`, `N`, `U`,
+`J`) were not carried over -- develop's single-letter console space is full and
+the BT screen + service are the interface now -- so the console references below
+describe the bring-up build.  The merged build still needs its own on-radio
+validation.
 
 The owner's teardown says the board carries a **Jieli** Bluetooth audio chip; the
 firmware agrees and adds the detail: it is a Jieli **"AT" module**, the firmware
@@ -401,7 +409,7 @@ retained.
 
 ## On-radio result: VALIDATED — the module answers in full at 115200
 
-**The AT link works.**  After the buffered capture fix, console `y` on the radio
+**The AT link works.**  After the buffered capture fix, console `y` (bring-up build) on the radio
 reads complete, clean `+IM_*` lines with `FE` clear at 115200 8N1.  The module
 identifies itself:
 
@@ -496,7 +504,7 @@ host-preview coverage; a live pairing-session check is still required.
 The stock's AT set is audio/control only; there is no command in the image that
 moves a data payload, and the framed `RDTP` path is call/PTT control, not a data
 pipe.  Whether the module's firmware exposes a **serial (SPP)** or **BLE GATT**
-data service is not in the image, so it was probed live with console `N` (which
+data service is not in the image, so it was probed live with console `N` (bring-up build; which
 sends an arbitrary AT line and prints the reply).  Result on the radio
 (2026-10):
 

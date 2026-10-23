@@ -17,6 +17,10 @@ static bool s_bt_audio;
 static bool s_uhf;
 static bool s_main;
 
+/* Which transceiver is the audio lane (see pa_set_rx_lane()).  The stock's
+ * receive-path pin (0x33 bit 4) follows it. */
+static bool s_rx_lane_4815;
+
 /* The 'F' experiment: which chip-side receive path to apply.  AUTO is the
  * BK4829's own receive state (both LNA pins clear, the stock's BK4829 branch);
  * the other modes let the radio settle the pin-4/pin-3 choice on the bench.
@@ -33,6 +37,42 @@ static uint8_t s_chip_path = PA_CHIP_PATH_AUTO;
 
 /* The 'B' experiment: the MCU band pin PA0.  The stock's value is LOW. */
 static uint8_t s_band_pin_mode = PA_BAND_PIN_STOCK;
+
+/* The 'x' experiment: which chip band/path pin a transmission drives.  AUTO is
+ * the stock's rule (the TX frequency's band). */
+static uint8_t s_tx_path = PA_TX_PATH_AUTO;
+
+uint8_t pa_tx_path_mode(void) { return s_tx_path; }
+
+void pa_set_tx_path_mode(uint8_t mode)
+{
+    if (mode < PA_TX_PATH_MODES)
+        s_tx_path = mode;
+}
+
+uint16_t pa_tx_path_bits(void)
+{
+    switch (s_tx_path) {
+        case PA_TX_PATH_VHF:  return PA_REG33_BAND_VHF;
+        case PA_TX_PATH_UHF:  return PA_REG33_BAND_UHF;
+        case PA_TX_PATH_BOTH: return PA_REG33_BAND_VHF | PA_REG33_BAND_UHF;
+        case PA_TX_PATH_NONE: return 0u;
+        default:              return s_uhf ? PA_REG33_BAND_UHF : PA_REG33_BAND_VHF;
+    }
+}
+
+const char *pa_tx_path_name(void)
+{
+    static const char *const names[PA_TX_PATH_MODES] = {
+        "auto: the frequency's band (default)",
+        "force VHF pin 0x40",
+        "force UHF pin 0x20",
+        "both band pins",
+        "neither band pin (T/R only)",
+    };
+
+    return names[s_tx_path];
+}
 
 bool pa_is_uhf(uint32_t freq_10hz)  { return freq_10hz >= PA_BAND_SPLIT; }
 bool pa_is_main(uint32_t freq_10hz) { return freq_10hz > PA_MAIN_SPLIT; }
@@ -91,6 +131,53 @@ void pa_set_bt_audio(bool on)
 
 bool pa_bt_audio(void) { return s_bt_audio; }
 
+void pa_set_rx_lane(bool use_4815)
+{
+    const bool changed = (use_4815 != s_rx_lane_4815);
+
+    s_rx_lane_4815 = use_4815;
+
+    /* The 'F' experiment modes own the pins themselves; only AUTO re-applies. */
+    if (s_chip_path != PA_CHIP_PATH_AUTO)
+        return;
+
+    /* Whenever the BK4815 is the lane the pin is re-asserted, because the K1's
+     * own receive setup sets pin 0 on every reconfigure and would put the
+     * antenna path back on the BK4829. */
+    if (!changed && !use_4815)
+        return;
+
+    /* The stock's receive entry clears the band pins 0/1 (`FUN_080093EC` ->
+     * `FUN_080137d4(3, 0)`) and selects the receive branch with pin 4.  The K1
+     * calls pin 0 "RX_ENABLE" and sets it, so with a BK4815 lane the port used
+     * to leave *both* the BK4829 path (0x40) and the BK4815 path (0x04) set:
+     * the 4829 heard everything and the 4815 nothing (radio 2026-10-21, tinySA
+     * swept over 28 dB on both bands).  Follow the stock: pin 0 is the BK4829's
+     * path and is cleared when the 4815 is the lane. */
+    BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, !use_4815);
+    BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, use_4815);
+}
+
+bool pa_rx_lane_is_4815(void) { return s_rx_lane_4815; }
+
+/* Bench toggles (console 'y'/'z'), receive-path lines only.  PA1 is what the
+ * stock's receive entry drives low (`FUN_080093EC` -> `FUN_08011b74(GPIOA, 2,
+ * 0)`), while this port leaves it high; `0x33` pin 2 (output bit 0x10) is set
+ * or cleared by `FUN_08015D44` from a config/codeplug pair the port never
+ * writes.  Both are candidates for the antenna path the BK4815 is missing
+ * (radio 2026-10-21), so they can be swept without a rebuild. */
+void pa_set_pa1(bool high)
+{
+    gpio_write(GPIOA, PA_BAND_PA1_PIN, high ? 1 : 0);
+}
+
+void pa_toggle_pin2(void)
+{
+    const bool set = (BK4819_ReadRegister(BK4819_REG_33) & 0x10u) != 0u;
+
+    BK4819_ToggleGpioOut((BK4819_GPIO_PIN_t)2, !set);
+}
+
 /* Apply the chip-side receive path.  AUTO is the K1 application's rule (and the
  * one the radio received with); the other modes are the 'F' experiment, which
  * walks the individual LNA pins so the radio can settle the stock's own pin-4
@@ -111,17 +198,20 @@ static void pa_apply_chip_path(void)
             BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, false);
             break;
         case PA_CHIP_PATH_AUTO:
-            /* The BK4829's own receive state: both LNA pins clear.  The stock's
-             * BK4829 branch clears pin 4 (`FUN_08016DE8` ->
-             * `FUN_080137D4(0x10, 0)`); pin 4 belongs to the BK4815 branch
-             * (`FUN_08016CEC` sets it) and costs ~16 dB on the BK4829 at VHF --
-             * measured on the radio with console 'F' (pin 4 gave 0x67 = 199,
-             * clearing it 232).  BK4819_ToggleGpioOut read-modify-writes the
-             * driver's output shadow.  If stock BT pin 2 is active, its paired
-             * update has already cleared bit 12 of the 0x9000 init word; the
-             * remaining bits and pin 0 (RX_ENABLE) are preserved.  See
-             * docs/ra89r_rfpath.md. */
-            BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, false);
+            /* The stock's per-lane receive path, re-asserted on every re-entry:
+             * pin 4 belongs to the BK4815 receive branch (`FUN_08016CEC` sets
+             * it) and is cleared for the BK4829 (`FUN_08016DE8`), and it costs
+             * ~16 dB on the BK4829 at VHF when wrongly set -- measured on the
+             * radio with console 'F' (pin 4 gave 0x67 = 199, clearing it 232).
+             * The lane, not "a VFO names the BK4815", decides: s_rx_lane_4815
+             * is set from the selected RX VFO's transceiver by rx_set_audio_
+             * source().  BK4819_ToggleGpioOut read-modify-writes the driver's
+             * output shadow, so the 0x9000 bits BK4819_Init() set survive, and
+             * pin 0 (RX_ENABLE), which RADIO_SetupRegisters sets, is preserved.
+             * The stock's BT pin 2 is applied by pa_apply_bt_audio() after this
+             * switch.  See docs/ra89r_rfpath.md. */
+            BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, !s_rx_lane_4815);
+            BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, s_rx_lane_4815);
             BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, false);
             break;
         default:                /* LEAVE: touch nothing */
@@ -141,7 +231,7 @@ void pa_select_band(uint32_t freq_10hz)
 
     /* The BK4815's band register 0x75, the stock's FUN_08013790: band 1 (0x11)
      * for VHF, band 2 (0x0A) for UHF. */
-    bk4815_write_reg(0x75, s_uhf ? 0x0Au : 0x11u);
+    bk4815_set_band(s_uhf ? 0x0Au : 0x11u);
 
     pa_apply_chip_path();
 }
@@ -165,7 +255,13 @@ void pa_init(void)
     TIM1->PSC = 0;
     TIM1->ARR = PA_PWM_ARR;
     TIM1->CCMR1 = (TIM1->CCMR1 & ~0xFF00u) | 0x6000u;   /* OC2M = PWM mode 1 */
-    TIM1->CCER &= ~0x30u;                                /* CC2P/CC2NE = 0  */
+    /* PB14 is **TIM1_CH2N** (datasheet AF4), the *complementary* output, so the
+     * channel is enabled with **CC2NE** (CCER bit 6, 0x40) -- which is exactly
+     * what the stock does: `FUN_08012f26` -> `FUN_0801de58(TIM1, 4, 4)` sets
+     * CC2NE, then BDTR MOE and CR1 CEN.  CC2E (bit 4) does not drive PB14 at
+     * all.  The old `CCER &= ~0x30u` cleared the enable bit and the PWM never
+     * reached the PA (PB14 sits on a pull-down, so the bias stayed 0). */
+    TIM1->CCER = (TIM1->CCER & ~(0x20u | 0x80u)) | 0x40u;  /* CC2NE on, CC2P/CC2NP clear */
     TIM1->CCR2 = 0;
     TIM1->BDTR |= 0x8000u;                               /* MOE: TIM1 needs it */
     TIM1->EGR = 1u;                                      /* UG */
@@ -189,17 +285,27 @@ void pa_tx_enable(uint8_t power)
 {
     /* The stock's transmit word: the band pin (`0x40` VHF / `0x20` UHF, set by
      * FUN_0801BDE8 from the TX band index) plus the T/R pin (`0x02`, set by
-     * FUN_08013A70(2)) -- 0x42 / 0x22. */
+     * FUN_08013A70(2)) -- 0x42 / 0x22.  The band pin comes from the 'x'
+     * override (`pa_tx_path_bits()`), AUTO being the frequency's band. */
     const uint8_t gain = s_uhf ? PA_REG36_GAIN_UHF : PA_REG36_GAIN_VHF;
 
-    /* The stock uses masked GPIO writes, not a replacement 0x33 word.  This
-     * preserves other outputs while applying the paired-bit rule for its band,
-     * T/R and BT-controlled pins. */
-    s_reg33 = BK4819_ToggleGpioOutStock(0x03u,
-        s_uhf ? 0x02u : 0x01u);
-    s_reg33 = BK4819_ToggleGpioOutStock(0x20u, 0x20u);
-    s_reg33 = BK4819_ToggleGpioOutStock(0x04u,
-        s_bt_audio ? 0x04u : 0u);
+    /* The stock uses masked GPIO writes, not a replacement 0x33 word, so the
+     * paired-bit rule and the other outputs survive.  The 'x' override's band
+     * bits (0x40 VHF = pin 0, 0x20 UHF = pin 1), the T/R pin (pin 5) and the
+     * BT audio pin (pin 2) are applied through the stock helper. */
+    {
+        const uint16_t path = pa_tx_path_bits();
+        uint8_t band = 0u;
+
+        if ((path & PA_REG33_BAND_VHF) != 0u)
+            band |= 0x01u;                  /* pin 0 */
+        if ((path & PA_REG33_BAND_UHF) != 0u)
+            band |= 0x02u;                  /* pin 1 */
+
+        s_reg33 = BK4819_ToggleGpioOutStock(0x03u, band);
+        s_reg33 = BK4819_ToggleGpioOutStock(0x20u, 0x20u);
+        s_reg33 = BK4819_ToggleGpioOutStock(0x04u, s_bt_audio ? 0x04u : 0u);
+    }
 
     /* The K1's BK4819_SetupPowerAmplifier: 0x36 = (bias << 8) | PA-CTL | gain.
      * The RA89R's own power knob is the PB14 bias PWM, so the same setting

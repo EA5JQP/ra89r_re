@@ -346,7 +346,7 @@ void RADIO_ConfigureChannel(const unsigned int VFO, const unsigned int configure
          * including where a frequency channel's own frequency is kept. */
         ChannelScanDisplayInfo_t info;
 
-        if (SETTINGS_FetchChannelScanDisplayInfo(channel, &info))
+        if (SETTINGS_FetchChannelScanDisplayInfo(VFO, channel, &info))
         {
             pVfo->TX_OFFSET_FREQUENCY_DIRECTION = info.txOffsetFrequencyDirection;
             pVfo->Modulation                    = info.modulation;
@@ -370,10 +370,18 @@ void RADIO_ConfigureChannel(const unsigned int VFO, const unsigned int configure
 #endif
             pVfo->DTMF_PTT_ID_TX_MODE  = info.dtmfPttIdTxMode;
 
-            if (info.rx.Frequency == 0xFFFFFFFFu)
-                pVfo->freq_config_RX.Frequency = frequencyBandTable[band].lower;
-            else
-                pVfo->freq_config_RX.Frequency = info.rx.Frequency;
+            /* Only a full reload (a VFO switch) takes the channel's own
+             * frequency.  A plain reconfigure must not: it runs in the same pass
+             * as a frequency step, before that step has been saved (the save is
+             * deferred to key release), so re-reading would undo the step and
+             * the VFO could never be tuned. */
+            if (VFO_CONFIGURE_RELOAD == configure)
+            {
+                if (info.rx.Frequency == 0xFFFFFFFFu)
+                    pVfo->freq_config_RX.Frequency = frequencyBandTable[band].lower;
+                else
+                    pVfo->freq_config_RX.Frequency = info.rx.Frequency;
+            }
 
             pVfo->TX_OFFSET_FREQUENCY = info.offset;
         }
@@ -436,6 +444,11 @@ void RADIO_ConfigureChannel(const unsigned int VFO, const unsigned int configure
     }
 
     pVfo->Compander = att->compander;
+
+    /* The channel record carries FM for a frequency channel (settings.c), and
+     * every consumer below reads VFO_Info_t::Modulation, so normalise it here
+     * too -- the airband is AM whether or not a demod write follows. */
+    RADIO_ApplyBandModulation(pVfo);
 
     #ifdef ENABLE_FEAT_F4HWN_RESCUE_OPS
     if(gRemoveOffset)
@@ -700,6 +713,49 @@ BK4819_FilterBandwidth_t RADIO_GetAMFilterBandwidth(const VFO_Info_t *pVfo)
     return (pVfo->CHANNEL_BANDWIDTH == BANDWIDTH_WIDE) ? BK4819_FILTER_BW_WIDE : BK4819_FILTER_BW_AM;
 }
 
+/* The airband is AM by nature, and a range scan carries the VFO's modulation,
+ * so a scan of 108-137 MHz would demodulate FM (unintelligible) unless the menu
+ * had been set to AM first -- which would then also apply to 145 MHz.  The band
+ * therefore decides the receive demodulation inside 108.0-137.0 MHz; the menu's
+ * modulation choice applies outside it.  Called from RADIO_SetupRegisters(),
+ * which runs on every channel change, knob step and scan hit.
+ *
+ * Receive-only: the K1's RADIO_PrepareTX() already refuses TX for any non-FM
+ * modulation, so an airband channel cannot key the PA. */
+static bool s_airband_rule_active;
+
+void RADIO_ApplyBandModulation(VFO_Info_t *vfo)
+{
+    const bool air = FREQUENCY_IsAirband(vfo->pRX->Frequency);
+    bool       changed = false;
+
+    if (air && vfo->Modulation != MODULATION_AM) {
+        vfo->Modulation = MODULATION_AM;
+        changed         = true;
+    } else if (!air && vfo->Modulation == MODULATION_AM && s_airband_rule_active) {
+        /* Only undo the rule's own choice, not a menu setting. */
+        vfo->Modulation = MODULATION_FM;
+        changed         = true;
+    }
+
+    if (changed) {
+        gUpdateDisplay = true;
+        gUpdateStatus  = true;
+    }
+
+    if (vfo != gRxVfo)
+        return;
+
+    s_airband_rule_active = air;
+
+    /* Program the demod here, not through a later caller: on the radio
+     * 2026-10-22 the VFO field read AM while 0x31/0x42 still held the FM/init
+     * values, because RADIO_ConfigureChannel set the field after the receive
+     * setup and nothing called RADIO_SetModulation again. */
+    if (changed)
+        RADIO_SetModulation(vfo->Modulation);
+}
+
 void RADIO_SetupRegisters(bool switchToForeground)
 {
     BK4819_FilterBandwidth_t Bandwidth = gRxVfo->CHANNEL_BANDWIDTH;
@@ -763,17 +819,30 @@ void RADIO_SetupRegisters(bool switchToForeground)
     #else
         Frequency = gRxVfo->pRX->Frequency;
     #endif
-    BK4819_SetFrequency(Frequency);
+
+    /* Port adaptation (see NOTICE): the port owns the transceiver routing
+     * (driver/rx.c, driver/rf_dual.c).  When the selected RX VFO is on the
+     * BK4815, the BK4829 must not be retuned to it or have its receive path
+     * pin cleared.  RADIO_SetupRegisters() runs on every VFO switch
+     * (COMMON_SwitchVFOs -> gFlagReconfigureVfos), so without this the BK4829
+     * is yanked off the other VFO's frequency and the BK4815's path pin is
+     * dropped, and two VFOs on different chips can never stay apart.  The port
+     * tunes both chips from rx_service() -> rf_dual_refresh(). */
+    if (SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) != RF_XCVR_BK4815)
+    {
+        BK4819_SetFrequency(Frequency);
+
+        BK4819_PickRXFilterPathBasedOnFrequency(Frequency);
+    }
 
     // Keep the demodulator in sync when retuning without entering RX audio.
+    RADIO_ApplyBandModulation(gRxVfo);
     RADIO_SetModulation(gRxVfo->Modulation);
 
     BK4819_SetupSquelch(
         gRxVfo->SquelchOpenRSSIThresh,    gRxVfo->SquelchCloseRSSIThresh,
         gRxVfo->SquelchOpenNoiseThresh,   gRxVfo->SquelchCloseNoiseThresh,
         gRxVfo->SquelchCloseGlitchThresh, gRxVfo->SquelchOpenGlitchThresh);
-
-    BK4819_PickRXFilterPathBasedOnFrequency(Frequency);
 
     // what does this in do ?
     BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, true);
@@ -994,6 +1063,13 @@ void RADIO_SetTxParameters(void)
 
 void RADIO_SetModulation(ModulationMode_t modulation)
 {
+    /* The airband is AM by nature, and the demod is programmed from several
+     * callers (receive setup, the app's incoming handler, the menu).  Enforce
+     * the band here so none of them can put the receiver back on FM while it
+     * is tuned inside 108.0-137.0 MHz. */
+    if (FREQUENCY_IsAirband(gRxVfo->pRX->Frequency))
+        modulation = MODULATION_AM;
+
     #ifdef ENABLE_BYP_RAW_DEMODULATORS
     if (modulation == MODULATION_BYP || modulation == MODULATION_RAW) {
         uint16_t reg_3d_val = 0x0000;

@@ -29,14 +29,17 @@ A bad flash is therefore recoverable: re-flash the stock image.
 
 ## 2. Software
 
-Already present in this environment:
+The flasher needs `pyserial`.  On this machine it is installed in the user site
+(`python3 -m pip install --user pyserial`, see [`BUILDING.md`](BUILDING.md) §1),
+so plain `python3` works:
 
 ```sh
-python3 + pyserial
+python3 tools/ra89r_flash.py --port /dev/ttyUSB0 probe
 ```
 
-If pyserial is missing: `pip install pyserial` (or `python3-pyserial`).  Nothing
-else is needed to flash; the ARM toolchain is only for building the image.
+If pyserial is missing elsewhere: `python3 -m ensurepip --user && python3 -m pip
+install --user pyserial` (or `python3-pyserial`).  Nothing else is needed to
+flash; the ARM toolchain is only for building the image.
 
 ## 3. Get the image to flash
 
@@ -86,16 +89,18 @@ sudo usermod -aG dialout "$USER"      # then log out/in
 The stock bootloader samples board signals at power-up to decide whether to run
 the application or stay in update mode; both PB9 and PA2 low at reset force
 update mode
-([`../docs/ra89r_bootloader.md`](../docs/ra89r_bootloader.md) §4c), but which
-physical key drives which line is not encoded in the image.
+([`../docs/ra89r_bootloader.md`](../docs/ra89r_bootloader.md) §4c).
 
-* **Try first:** with the radio **off**, hold the **side key** (the small
-  top/side button, or PTT on some models) and switch it on.
-* **Authoritative source:** open the stock CPS (`RA89R+V1.0`) and start its
-  firmware-update function — it displays the key combination for this model.
-  You do not have to let it flash; just read the instruction.
-* Either way, confirm with `probe` (below): the bootloader announces itself; the
-  running application answers differently, and `probe` says which one you got.
+**With the radio off, hold both PTT buttons and switch it on.**  The two PTTs
+drive exactly the two gate lines: `PTT2` is `PB9`, and `PTT1` pulls `PA2` fully
+low — the radio's own wording is "PTT1 and PTT2 must be pressed to reach the
+bootloader" ([`../docs/ra89r_keypad.md`](../docs/ra89r_keypad.md); measured
+there: `PTT2` + `SIDE1` also works, since any `PA2` key satisfies the second
+line).  The bootloader then shows `Update....` on the LCD
+([`../docs/ra89r_bootloader.md`](../docs/ra89r_bootloader.md) §4d).
+
+Confirm with `probe` (below): the bootloader announces itself; the running
+application answers differently, and `probe` says which one you got.
 
 ## 7. Probe, then flash
 

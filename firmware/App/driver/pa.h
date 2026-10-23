@@ -78,6 +78,26 @@
  * PA is unbiased until a transmission asks for power. */
 void pa_init(void);
 
+/* Which transceiver is the one being listened to, for the `0x33` receive-path
+ * pin (pin 4, `PA_REG33_RX_MAIN`).  The stock ties that pin to the receive
+ * branch, not to the board's band: its BK4815 receive entry sets it
+ * (`FUN_08016CEC` -> `FUN_080137D4(0x10, 0x10)`) and its BK4829 entry clears it
+ * (`FUN_08016DE8` -> `FUN_080137D4(0x10, 0)`).  It is worth ~16 dB on the
+ * BK4829 at VHF when wrongly set (measured; docs/ra89r_rfpath.md), so it must
+ * follow the **audio lane** -- a VFO merely being *assigned* to the BK4815 is
+ * not enough.  `pa_apply_chip_path()` (and therefore every receive re-entry)
+ * re-asserts this choice. */
+void pa_set_rx_lane(bool use_4815);
+
+/* The lane last applied, for diagnostics. */
+bool pa_rx_lane_is_4815(void);
+
+/* Bench toggles (console 'y'/'z'), receive path only: PA1's level and the 0x33
+ * pin-2 bit (0x10), the two lines the stock's receive entry drives and the port
+ * does not.  See pa.c. */
+void pa_set_pa1(bool high);
+void pa_toggle_pin2(void);
+
 /* The bias PWM compare, 0 .. PA_PWM_MAX_DUTY.  Higher is more bias. */
 void pa_power(uint16_t compare);
 
@@ -121,6 +141,24 @@ enum {
 };
 uint8_t pa_band_pin_mode(void);
 void    pa_set_band_pin_mode(uint8_t mode);
+
+/* Which chip band/path pin a transmission drives ('x').  AUTO is the stock's
+ * rule -- the TX frequency's band (`0x40` VHF / `0x20` UHF, set by
+ * FUN_0801BDE8) -- and the other modes force a single pin so the radio can
+ * settle which one actually enables the PA.  The T/R pin (`0x02`) is always
+ * present. */
+enum {
+    PA_TX_PATH_AUTO = 0,   /* the frequency's band: 0x40 VHF / 0x20 UHF */
+    PA_TX_PATH_VHF,        /* force the 0x40 pin */
+    PA_TX_PATH_UHF,        /* force the 0x20 pin */
+    PA_TX_PATH_BOTH,       /* both band pins */
+    PA_TX_PATH_NONE,       /* neither band pin, T/R only */
+    PA_TX_PATH_MODES
+};
+uint8_t     pa_tx_path_mode(void);
+void        pa_set_tx_path_mode(uint8_t mode);
+const char *pa_tx_path_name(void);
+uint16_t    pa_tx_path_bits(void);   /* the band bits the current mode yields */
 
 /* Chip side, transmit: the band pin (`0x40` VHF / `0x20` UHF) plus the T/R pin
  * (`0x02`), and `0x36 = (power << 8) | PA-CTL | gain` (the K1's

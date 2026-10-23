@@ -5,8 +5,12 @@
 
 #include "driver/backlight.h"
 #include "driver/audio_path.h"
+#include "driver/bk1080.h"
+#include "driver/bk4815.h"
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
+#include "driver/pa.h"
+#include "driver/rx.h"
 #include "driver/systick.h"
 #include "driver/tx.h"
 #include <string.h>
@@ -60,6 +64,76 @@ void BK4819_SetFilterBandwidth(const BK4819_FilterBandwidth_t Bandwidth,
 }
 
 void BK4819_SetRxAudioGain(void) { }
+
+/* FM broadcast: the host compiles no I2C bus, so the K1's BK1080 API is a set of
+ * no-ops here.  The FM screen's layout and the FM state machine still run (the
+ * ported app/fm.c is linked), which is what the preview exercises; the chip
+ * itself is only reachable on the radio (docs/ra89r_bk1080.md). */
+uint16_t BK1080_BaseFrequency;
+uint16_t BK1080_FrequencyDeviation;
+void     BK1080_Init0(void) { }
+void     BK1080_Init(uint16_t Frequency, uint8_t band) { (void)Frequency; (void)band; }
+uint16_t BK1080_ReadRegister(BK1080_Register_t Register) { (void)Register; return 0; }
+void     BK1080_WriteRegister(BK1080_Register_t Register, uint16_t Value) { (void)Register; (void)Value; }
+void     BK1080_Mute(bool Mute) { (void)Mute; }
+uint16_t BK1080_GetFreqLoLimit(uint8_t band) { static const uint16_t lim[] = {875, 760, 760, 640}; return lim[band % 4]; }
+uint16_t BK1080_GetFreqHiLimit(uint8_t band) { static const uint16_t lim[] = {1080, 1080, 900, 760}; return lim[band % 4]; }
+void     BK1080_SetFrequency(uint16_t frequency, uint8_t band) { (void)frequency; (void)band; }
+void     BK1080_GetFrequencyDeviation(uint16_t Frequency) { (void)Frequency; }
+
+/* The FM feature now brings the BK1080's two-wire bus up itself (the real
+ * driver's bk1080_init() -> i2c_bus_init()); the host compiles no bus. */
+void     bk1080_init(void) { }
+
+/* driver/rx.c's FM gate.  The preview never runs rx_service(), so the host only
+ * has to satisfy the reference. */
+void     rx_set_fm_active(bool active) { (void)active; }
+
+/* app/chFrScanner.c's LISTEN confirmation uses this; the preview does not run
+ * the receiver gate, so report a quiet lane. */
+bool     rx_squelch_quiet(uint8_t polls) { (void)polls; return true; }
+
+/* The FAST BOTH scan path reads the live open mark and sets the BK4815 band;
+ * the preview does not execute a scan sweep, so these are inert. */
+uint16_t rx_squelch_open_mark_now(void) { return 0u; }
+void     bk4815_set_band(uint16_t band) { (void)band; }
+
+/* The preview's step() advances this counter by 10 ms, matching one
+ * scheduler_tick_10ms().  The target links the real SysTick implementation. */
+static uint32_t s_host_millis;
+
+uint32_t systick_millis(void)
+{
+    return s_host_millis;
+}
+
+/* chFrScanner.c's FAST BOTH profiling uses this; the preview's clock is coarse
+ * (one ms per step), which is all the scan-policy checks need. */
+uint32_t systick_micros(void)
+{
+    return s_host_millis * 1000u;
+}
+
+void host_systick_advance(uint32_t milliseconds)
+{
+    s_host_millis += milliseconds;
+}
+
+/* The dual-scan path in app/chFrScanner.c references the BK4815, the shared
+ * band path and the RX scan-source override.  The preview does not run the RF
+ * scan; these stand in so it links, and the override is recorded so a preview
+ * check can confirm it is cleared on stop. */
+void     pa_select_band(uint32_t freq_10hz) { (void)freq_10hz; }
+void     bk4815_set_frequency(uint32_t freq_10hz, bool tx) { (void)freq_10hz; (void)tx; }
+void     bk4815_write_reg(uint8_t reg, uint16_t value) { (void)reg; (void)value; }
+uint16_t bk4815_read_rssi(void) { return 0; }
+
+static int s_host_scan_source;
+
+void             rx_set_scan_source_override(rx_scan_source_t source) { s_host_scan_source = (int)source; }
+void             rx_clear_scan_source_override(void) { s_host_scan_source = 0; }
+rx_scan_source_t rx_scan_source_override(void) { return (rx_scan_source_t)s_host_scan_source; }
+int              host_rx_scan_source(void) { return s_host_scan_source; }
 
 /* Keypad: the RA89R reads an ADC ladder, so the host stands in with a key the
  * preview sets by hand -- that is how the port's key loop (port_gui.c) is
@@ -167,9 +241,11 @@ static uint8_t *host_flash_ptr(uint32_t addr)
     return 0;
 }
 
-/* A codeplug shaped like the one this radio shipped with: four channels with
+/* A codeplug shaped like the one this radio shipped with: five channels with
  * the stock's 21-byte records (rx, tx, rx tone, tx tone, three flag bytes, six
- * characters of name) and both bitmaps marking those four channels. */
+ * characters of name) and both bitmaps marking those five channels.  The last
+ * is deliberately below the 134 MHz split, so the dual-scan lane rule (the
+ * BK4815 is only used above it) can be exercised through the real cursor. */
 static void host_codeplug_defaults(void)
 {
     static const struct {
@@ -178,18 +254,20 @@ static void host_codeplug_defaults(void)
         uint16_t rx_tone;              /* 0x0FFF = none */
         uint16_t tx_tone;
         const char *name;
-    } channels[4] = {
+    } channels[5] = {
         { 14497500u, 14497500u, 0x0FFFu, 0x0FFFu, "CH-01 " },
         { 14575000u, 14575000u, 0x0FFFu, 0x0FFFu, "CH-02 " },
         /* 885 = CTCSS 88.5 Hz; 0x0013 + bit 15 = DCS 023 inverted. */
         { 43037500u, 43037500u, 0x0375u, 0x8013u, "CH-03 " },
         { 43865000u, 43865000u, 0x0FFFu, 0x0FFFu, "CH-04 " },
+        /* Below the stock's 134 MHz split: a BK4829-only scan candidate. */
+        {  5000000u,  5000000u, 0x0FFFu, 0x0FFFu, "CH-05 " },
     };
     unsigned int i;
 
     memset(s_host_codeplug, 0xFF, sizeof s_host_codeplug);
 
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < 5; i++) {
         uint8_t *record = s_host_codeplug + i * 21u;
 
         record[0] = (uint8_t)(channels[i].rx);
@@ -210,9 +288,9 @@ static void host_codeplug_defaults(void)
         memcpy(record + 15, channels[i].name, 6);
     }
 
-    /* 7936: channel used; 7968: scan allow.  Both mark the first four. */
-    s_host_codeplug[7936] = 0x0Fu;
-    s_host_codeplug[7968] = 0x0Fu;
+    /* 7936: channel used; 7968: scan allow.  Both mark the first five. */
+    s_host_codeplug[7936] = 0x1Fu;
+    s_host_codeplug[7968] = 0x1Fu;
 }
 
 void spi_flash_init(void)
@@ -296,7 +374,9 @@ void spi_flash_wait_ready(void) { }
  * the measured transmit chain (driver/tx.c).  Signatures match driver/bk4819.h.
  * ------------------------------------------------------------------------- */
 void     BK4819_SetFrequency(uint32_t Frequency) { (void)Frequency; }
-void     BK4819_SetAF(BK4819_AF_Type_t AF) { (void)AF; }
+static int s_host_last_af = -1;
+void     BK4819_SetAF(BK4819_AF_Type_t AF) { s_host_last_af = (int)AF; }
+int      host_bk4819_last_af(void) { return s_host_last_af; }
 void     BK4819_SetAGC(bool enable) { (void)enable; }
 void     BK4819_InitAGC(bool amModulation) { (void)amModulation; }
 void     BK4819_SetupSquelch(uint8_t SquelchOpenRSSIThresh, uint8_t SquelchCloseRSSIThresh,
@@ -331,6 +411,7 @@ void GPIO_DisableAudioPath(void) { audio_path_drive(0); }
 bool host_audio_path_is_on(void) { return audio_path_is_on(); }
 
 void systick_delay_ms(uint32_t ms) { (void)ms; }
+void SYSTICK_DelayUs(uint32_t us) { (void)us; }
 
 bool tx_active(void) { return false; }
 void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source) { (void)freq_10hz; (void)power; (void)source; }
