@@ -59,6 +59,7 @@
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
 #include "driver/keyboard.h"
+#include "driver/rx.h"
 #include "driver/st7565.h"
 #include "driver/system.h"
 #include "dtmf.h"
@@ -798,6 +799,12 @@ void APP_StartListening(FUNCTION_Type_t function)
 
     AUDIO_AudioPathOn();
     gEnableSpeaker = true;
+
+    /* The K1 opens the amplifier on every receive entry; the port's squelch
+     * gate owns it.  Re-apply the gate here so a frequency change cannot make
+     * the receiver audible before the new channel is evaluated (the retune
+     * burp, 2026-10-23). */
+    rx_apply_audio_gate();
 
     if (gSetting_backlight_on_tx_rx & BACKLIGHT_ON_TR_RX) {
         BACKLIGHT_TurnOn();
