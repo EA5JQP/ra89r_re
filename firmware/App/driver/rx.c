@@ -16,6 +16,7 @@
 
 static bool s_ready;
 static bool s_squelch_open;
+static rx_squelch_t s_sq;       /* the stock's 0..10 counter; see rx.h */
 /* Consecutive polls with the gate closed.  The LISTEN sweep waits for a few
  * before probing: one corrupted reading used to be enough to start it. */
 static uint8_t s_closed_polls;
@@ -60,6 +61,7 @@ void rx_init(uint32_t freq_10hz)
     rx_floor_invalidate();      /* fresh estimates on every boot */
     s_ready = true;
     s_squelch_open = false;
+    rx_squelch_reset(&s_sq);
 }
 
 void rx_set_frequency(uint32_t freq_10hz)
@@ -240,6 +242,7 @@ static void rx_set_audio_source(bool use_4815)
     BK4819_SetAF(BK4819_AF_MUTE);
     bk4815_set_af(false);
     s_squelch_open = false;
+    rx_squelch_reset(&s_sq);
 }
 
 void rx_poll(void)
@@ -279,12 +282,12 @@ void rx_poll(void)
         {
             const uint16_t open_mark  = rx_squelch_open_mark_now();
             const uint16_t close_mark = rx_squelch_close_mark_now();
+            const bool     present    = (s_rssi >= open_mark);
+            const bool     absent     = (s_rssi < close_mark);
+            const bool     force      = s_force_4815_af || squelch_off;
 
-            if (s_force_4815_af || squelch_off ||
-                (!s_squelch_open && s_rssi >= open_mark))
-                s_squelch_open = true;
-            else if (s_squelch_open && !squelch_off && s_rssi < close_mark)
-                s_squelch_open = false;
+            rx_squelch_step(&s_sq, present, absent, force);
+            s_squelch_open = s_sq.open;
         }
 
         /* The K1's power save sleeps the BK4829 when idle (BK4819_Sleep():
@@ -356,11 +359,11 @@ void rx_poll(void)
         {
             const uint16_t open_mark  = rx_squelch_open_mark_now();
             const uint16_t close_mark = rx_squelch_close_mark_now();
+            const bool     present    = (s_rssi >= open_mark);
+            const bool     absent     = (s_rssi < close_mark);
 
-            if (!s_squelch_open && (squelch_off || s_rssi >= open_mark))
-                s_squelch_open = true;
-            else if (s_squelch_open && !squelch_off && s_rssi < close_mark)
-                s_squelch_open = false;
+            rx_squelch_step(&s_sq, present, absent, squelch_off);
+            s_squelch_open = s_sq.open;
 
             if (s_squelch_open)
                 s_closed_polls = 0u;

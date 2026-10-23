@@ -67,7 +67,11 @@
  * margin = base + step * level, hysteresis below the opening mark. */
 #define RX_SQUELCH_MARGIN_BASE_4829   6u
 #define RX_SQUELCH_MARGIN_STEP_4829   6u
-#define RX_SQUELCH_MARGIN_BASE_4815   2u
+/* The BK4815's RSSI is 7-bit and its noise moves by 2-3 counts; the old base of
+ * 2 (SQL 1 margin 4, close 2) was one sample away from the noise and chattered
+ * on a quiet channel.  Base 4 gives SQL 1 a 6-count margin (3 dB) and SQL 9 22
+ * counts, while still opening on the measured carriers (32-58). */
+#define RX_SQUELCH_MARGIN_BASE_4815   4u
 #define RX_SQUELCH_MARGIN_STEP_4815   2u
 #define RX_SQUELCH_HYST_4829          12u
 #define RX_SQUELCH_HYST_4815          4u
@@ -106,6 +110,57 @@ static inline uint16_t rx_squelch_close_mark_from_floor(bool use_4815, bool uhf,
     const uint16_t hyst   = (uint16_t)(rx_squelch_margin(use_4815, level) / 2u);
 
     return (uint16_t)((open > hyst) ? (uint16_t)(open - hyst) : 0u);
+}
+
+/* ---- the gate's decision, in the stock's shape ----------------------------
+ *
+ * The stock does not open on a single RSSI sample: FUN_080052B8 returns a
+ * verdict, FUN_0801D420 feeds it to FUN_0801D3F0's 0..10 counter at
+ * `state+0x21`, and the receiver opens when that counter reaches 7 and closes
+ * when it falls below 3 (`FUN_08004C84`).  The 3..6 dead band is what keeps a
+ * noise sample from chattering the audio; the level marks above supply the
+ * amplitude hysteresis, this supplies the time one.
+ *
+ * `present` is `rssi >= open_mark`, `absent` is `rssi < close_mark`, so a
+ * reading between the marks holds the counter (the stock's verdict 2 does the
+ * same).  `force_open` is SQL 0 and the BK4815 AF override.
+ */
+#define RX_SQ_COUNT_MAX   10u
+#define RX_SQ_OPEN_AT      7u
+#define RX_SQ_CLOSE_AT     3u
+
+typedef struct {
+    uint8_t count;      /* 0..RX_SQ_COUNT_MAX */
+    bool    open;
+} rx_squelch_t;
+
+static inline void rx_squelch_reset(rx_squelch_t *s)
+{
+    s->count = 0u;
+    s->open  = false;
+}
+
+static inline void rx_squelch_step(rx_squelch_t *s, bool present, bool absent,
+                                   bool force_open)
+{
+    if (force_open) {
+        s->count = RX_SQ_COUNT_MAX;
+        s->open  = true;
+        return;
+    }
+
+    if (present) {
+        if (s->count < RX_SQ_COUNT_MAX)
+            s->count++;
+    } else if (absent) {
+        if (s->count > 0u)
+            s->count--;
+    }
+
+    if (!s->open && s->count >= RX_SQ_OPEN_AT)
+        s->open = true;
+    else if (s->open && s->count < RX_SQ_CLOSE_AT)
+        s->open = false;
 }
 
 /* Backwards-compatible wrappers for callers that only know the level (the
