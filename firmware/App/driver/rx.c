@@ -193,6 +193,10 @@ static void rx_gate_hold_closed(void)
     s_squelch_open  = false;
     s_closed_polls  = 0;
     s_settle_polls  = RX_SETTLE_POLLS;
+    /* The hold-off is a fresh start: if the counter were left open, the first
+     * settled sample would re-open the gate through its still-high count and
+     * the retune burp would be back. */
+    rx_squelch_reset(&s_sq);
 
     rx_apply_audio_gate();
 }
