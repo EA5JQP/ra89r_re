@@ -365,6 +365,11 @@ uint16_t rx_squelch_floor(void);
  * RX VFO's transceiver), for the console diagnostic. */
 bool rx_audio_is_4815(void);
 
+/* Console '@': bounded electrical tail trace for the BK4829 hybrid.  Blocking
+ * for ~5 s and owns the audio; prints RSSI fall/chip close/gate timestamps and
+ * the transition count.  No scope, no marker pin. */
+void rx_tail_trace(void);
+
 /* Diagnostic (console 'A'): force the BK4815's AF open, bypassing the squelch,
  * so the audio path can be judged separately from the squelch. */
 void rx_force_bk4815_af(bool on);

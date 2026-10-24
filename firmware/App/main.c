@@ -334,6 +334,7 @@ static void print_help(void)
               "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
               "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
               "          ! K1 chip-squelch probe: 0x4D/0x4E/0x4F/0x78 + 0x02/0x0C\n"
+              "          @ tail trace: RSSI fall / REG_0C close / audio gate (5 s, BK4829)\n"
               "          j BK1080 FM: init, id probe, tune 100.0 MHz, read status\n"
               "          a FM audio route: toggle the BK4829 AF mute (0x47) under FM\n"
               "          n BK4815 (PB13): dump all registers, boot config, tune, meters\n"
@@ -2193,6 +2194,9 @@ int main(void)
                 break;
             case '!':
                 squelch_k1_probe();
+                break;
+            case '@':
+                rx_tail_trace();
                 break;
             case 'j':
                 fm_bench();

@@ -7,7 +7,9 @@
 #include "driver/bk4829.h"
 #include "driver/pa.h"
 #include "driver/rf_dual.h"
+#include "driver/systick.h"
 #include "driver/tx.h"
+#include "driver/uart.h"
 #include "driver/led.h"
 #include "functions.h"
 #include "misc.h"
@@ -461,6 +463,169 @@ bool rx_squelch_quiet(uint8_t polls)
 bool rx_audio_is_4815(void)
 {
     return s_audio_4815;
+}
+
+/* Put the bench VFO back to the normal UHF receive after the forced 145.5
+ * setup.  The VFO unit is 10 Hz. */
+static void rx_tail_restore_vfo(void)
+{
+    gRxVfo->freq_config_RX.Frequency = 44600625u;
+    gRxVfo->freq_config_TX.Frequency = 44600625u;
+    gRxVfo->Modulation              = MODULATION_FM;
+    RADIO_ConfigureSquelchAndOutputPower(gRxVfo);
+    RADIO_SetupRegisters(false);
+    rx_set_frequency(44600625u);
+    uart_puts("tail: VFO restored to 446.00625 MHz\n");
+}
+
+/* Console '@': bounded electrical tail trace for the BK4829 hybrid.
+ *
+ * The app loop is blocked, so the trace owns the audio: AF FM, amplifier on,
+ * the app's thresholds.  It reads 0x67 and REG_0C<1> every ~2 ms and records
+ * the RSSI fall, the chip's close and the audio-gate call.  The deltas are the
+ * electrical tail components; the speaker decay is not visible here (the ear
+ * is the acoustic acceptance).  No scope, no case opening, no marker pin.
+ *
+ * t_close - t_fall: chip comparator + AGC/quieting + the 2 ms sample loop.
+ * t_gate - t_close: the MCU mute (0x47 + PC13), a couple of bus writes.
+ */
+void rx_tail_trace(void)
+{
+    enum {
+        TAIL_SAMPLE_US   = 2000u,
+        TAIL_DURATION_MS = 30000u
+    };
+    uint32_t t0, deadline, next, close_at = 0u;
+    uint32_t t_fall = 0u, t_close = 0u, t_gate = 0u;
+    uint16_t open_mark;
+    uint16_t rssi;
+    uint16_t reg0c;
+    bool was_open;
+    bool first_fall  = false;
+    bool first_close = false;
+    unsigned transitions = 0u;
+
+    if (!s_ready) {
+        uart_puts("\ntail: receiver not ready\n");
+        return;
+    }
+    if (s_audio_4815) {
+        uart_puts("\ntail: selected lane is BK4815; this trace measures the BK4829 hybrid\n");
+        return;
+    }
+
+    /* Pin the bench frequency and its matching threshold table.  The app's VFO
+     * state has wandered across the CAT tests; an adjacent-channel carrier
+     * would silently invalidate the trace. 145.500 is the low-output tinySA
+     * setting used for the tail.  The codeplug's unit is 10 Hz. */
+    gRxVfo->freq_config_RX.Frequency = 14550000u;
+    gRxVfo->freq_config_TX.Frequency = 14550000u;
+    gRxVfo->Modulation              = MODULATION_FM;
+    RADIO_ConfigureSquelchAndOutputPower(gRxVfo);
+    RADIO_SetupRegisters(false);
+    rx_set_frequency(14550000u);
+    systick_delay_ms(60);
+
+    bk4815_set_af(false);
+    BK4819_SetAF(BK4819_AF_FM);
+    audio_path_drive(1);
+
+    /* Use the chip's own RSSI-open threshold, not the app's floor: the floor
+     * tracker can be poisoned by a carrier that was present while the gate was
+     * closed.  0x78<15:8> is the open threshold, the same 0.5 dB/step scale as
+     * 0x67. */
+    open_mark = (uint16_t)((BK4819_ReadRegister(BK4819_REG_78) >> 8) & 0xFFu);
+    if (open_mark == 0u)
+        open_mark = rx_squelch_open_mark_now();
+
+    uart_printf("tail: thresholds 4D=%04X 4E=%04X 4F=%04X 78=%04X "
+                "63=%u 65=%u 67=%u\n",
+                BK4819_ReadRegister(BK4819_REG_4D),
+                BK4819_ReadRegister(BK4819_REG_4E),
+                BK4819_ReadRegister(BK4819_REG_4F),
+                BK4819_ReadRegister(BK4819_REG_78),
+                BK4819_GetGlitchIndicator(),
+                BK4819_GetExNoiceIndicator(),
+                BK4819_GetRSSI());
+
+    /* The squelch open delay (0x4E<13:11> = 5) can take longer than the 60 ms
+     * settle; wait up to 500 ms for the chip to report link. */
+    {
+        unsigned i;
+
+        for (i = 0u; i < 50u; i++) {
+            rssi  = BK4819_GetRSSI();
+            reg0c = BK4819_ReadRegister(BK4819_REG_0C);
+            if ((reg0c & 0x0002u) != 0u && rssi >= open_mark)
+                break;
+            systick_delay_ms(10u);
+        }
+    }
+
+    was_open = (reg0c & 0x0002u) != 0u;
+
+    if (!was_open || rssi < open_mark) {
+        uart_printf("\ntail: no carrier at start (rssi %u, mark %u, reg0c 0x%04X); "
+                    "key the tone and retry\n",
+                    rssi, open_mark, reg0c);
+        rx_tail_restore_vfo();
+        return;
+    }
+
+    uart_printf("\ntail trace: 145.500 MHz, open mark %u, start rssi %u, "
+                "reg0c 0x%04X; turn the tinySA output off now (up to %u ms)\n",
+                open_mark, rssi, reg0c, (unsigned)TAIL_DURATION_MS);
+
+    t0       = systick_micros();
+    deadline = t0 + TAIL_DURATION_MS * 1000u;
+    next     = t0;
+
+    while ((int32_t)(systick_micros() - deadline) < 0) {
+        rssi  = BK4819_GetRSSI();
+        reg0c = BK4819_ReadRegister(BK4819_REG_0C);
+
+        {
+            const uint32_t now  = systick_micros();
+            const bool     open = (reg0c & 0x0002u) != 0u;
+
+            if (!first_fall && rssi < open_mark) {
+                first_fall = true;
+                t_fall     = now - t0;
+            }
+
+            if (was_open && !open) {
+                transitions++;
+                if (!first_close) {
+                    first_close   = true;
+                    t_close       = now - t0;
+                    close_at      = now;
+                    s_squelch_open = false;
+                    rx_apply_audio_gate();
+                    t_gate        = systick_micros() - t0;
+                }
+            }
+            was_open = open;
+            if (first_close &&
+                (int32_t)(systick_micros() - close_at) > 200000) {
+                break;      /* 200 ms after the close is enough for chatter */
+            }
+        }
+
+        next += TAIL_SAMPLE_US;
+        while ((int32_t)(systick_micros() - next) < 0) {
+        }
+    }
+
+    uart_printf("tail: fall %s%u us, close %s%u us, gate %s%u us; "
+                "close-fall %d us, gate-close %d us; transitions %u\n",
+                first_fall ? "" : "(none) ", (unsigned)t_fall,
+                first_close ? "" : "(none) ", (unsigned)t_close,
+                first_close ? "" : "(none) ", (unsigned)t_gate,
+                (int)((int32_t)t_close - (int32_t)t_fall),
+                (int)((int32_t)t_gate - (int32_t)t_close),
+                transitions);
+    uart_puts("tail: the app gate resumes on the next rx poll\n");
+    rx_tail_restore_vfo();
 }
 
 uint16_t rx_rssi(void)
