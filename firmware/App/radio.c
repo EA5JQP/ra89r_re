@@ -830,7 +830,10 @@ void RADIO_SetupRegisters(bool switchToForeground)
     //BK4819_WriteRegister(BK4819_REG_48, 0xB3A8);  // 1011 00 111010 1000
     BK4819_SetRxAudioGain();
 
-    uint16_t InterruptMask = BK4819_REG_3F_SQUELCH_FOUND | BK4819_REG_3F_SQUELCH_LOST;
+    /* The squelch result is polled from REG_0C<1> (driver/rx.c); its interrupt
+     * bits are not armed because the AF gate is MCU-side and the result is
+     * level-based.  The other interrupts below are unaffected. */
+    uint16_t InterruptMask = 0;
 
     #ifdef ENABLE_NOAA
         if (!IS_NOAA_CHANNEL(gRxVfo->CHANNEL_SAVE))

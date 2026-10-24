@@ -38,6 +38,8 @@ The BK4819 application note §13 gives the register semantics:
 
 The K1's `CheckRadioInterrupts()` treats `sqlLost` as `g_SquelchLost = true`
 (open) and `sqlFound` as false (closed) — the same polarity as `REG_0C<1>`.
+This port uses the level result `REG_0C<1>` directly (see below); the SQL
+interrupt bits are not armed.
 
 ## The experiment (`!` console command)
 
@@ -98,12 +100,12 @@ Firmware cannot change that routing.  The portable half is the **decision**.
    BK4815 `0x49` on its lane) from `s_squelch_open`.  This is the stock's job
    and is required on this board.
 
-4. **One owner** — `rx_squelch_chip_owner()` is true only when the BK4829 is
-   the audio lane and no scan is retuning it.  `CheckRadioInterrupts()` uses
-   the K1 SQL path (`g_SquelchLost`, green LED) only then; on the BK4815 lane
-   and during scan/LISTEN `rx_service()` keeps publishing the software gate.
-   The BK4815 lane and scan/LISTEN still use the existing `0x44`/RSSI software
-   gate.
+4. **One owner** — `rx_service()` publishes `g_SquelchLost`, the green LED and
+   the app's display flags on the 10 ms transition, from `REG_0C<1>` on the
+   BK4829 lane and from the software gate on the BK4815 lane and during
+   scan/LISTEN.  The chip's SQL interrupt bits are **not armed** in `REG_3F`:
+   the result is level-based and the AF gate is MCU-side.  `CheckRadioInterrupts()`
+   still clears `REG_02` and services CTCSS/CDCSS/DTMF/VOX.
 
 ## Validation so far
 

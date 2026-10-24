@@ -1068,20 +1068,10 @@ static void CheckRadioInterrupts(void)
         }
 #endif
 
-        if (rx_squelch_chip_owner()) {
-            if (interrupts.sqlLost) {
-                g_SquelchLost = true;
-                BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, true);
-                #ifdef ENABLE_FEAT_F4HWN_RX_TX_TIMER
-                    gRxTimerCountdown_500ms = 7200;
-                #endif
-            }
-
-            if (interrupts.sqlFound) {
-                g_SquelchLost = false;
-                BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, false);
-            }
-        }
+        /* The squelch result is level-based (REG_0C<1>) and the AF mute is on
+         * the MCU, so driver/rx.c's 10 ms service owns g_SquelchLost and the
+         * LED.  The SQL interrupt bits are not used; the handler still clears
+         * REG_02 and services CTCSS/CDCSS/DTMF/VOX below. */
 
 #if defined(ENABLE_AIRCOPY) || defined(ENABLE_FEAT_F4HWN_BEAM)
         if (interrupts.fskFifoAlmostFull || interrupts.fskRxFinied)

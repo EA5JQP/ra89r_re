@@ -365,12 +365,6 @@ uint16_t rx_squelch_floor(void);
  * RX VFO's transceiver), for the console diagnostic. */
 bool rx_audio_is_4815(void);
 
-/* True when the BK4829's own squelch result (REG_0C<1>) owns g_SquelchLost and
- * the status LED: the BK4829 is the audio lane and no scan is retuning it.
- * False on the BK4815 lane and during scan/LISTEN, where the software gate owns
- * them. */
-bool rx_squelch_chip_owner(void);
-
 /* Diagnostic (console 'A'): force the BK4815's AF open, bypassing the squelch,
  * so the audio path can be judged separately from the squelch. */
 void rx_force_bk4815_af(bool on);

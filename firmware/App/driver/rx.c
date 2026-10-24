@@ -463,17 +463,6 @@ bool rx_audio_is_4815(void)
     return s_audio_4815;
 }
 
-/* True when the BK4829's own squelch result is the owner of g_SquelchLost and
- * the status LED.  The K1's CheckRadioInterrupts() path is only meaningful on
- * the lane that is actually being heard, outside a scan (the scanner retunes
- * the chip under the poller). */
-bool rx_squelch_chip_owner(void)
-{
-    return s_ready && !s_audio_4815 &&
-           gScanStateDir == SCAN_OFF &&
-           s_scan_source == RX_SCAN_SOURCE_DEFAULT;
-}
-
 uint16_t rx_rssi(void)
 {
     return s_rssi;
@@ -549,13 +538,13 @@ void rx_service(void)
     if (rx_ready() && rx_squelch_open() != squelch_open) {
         squelch_open = rx_squelch_open();
 
-        if (rx_squelch_chip_owner()) {
-            /* CheckRadioInterrupts() owns g_SquelchLost and the LED on the
-             * BK4829 lane; the MCU audio gate above only follows REG_0C<1>. */
-        } else {
-            g_SquelchLost = squelch_open;
-            if (!tx_active())
-                led_set(squelch_open ? LED_GREEN : LED_OFF);
+        g_SquelchLost = squelch_open;
+        if (!tx_active())
+            led_set(squelch_open ? LED_GREEN : LED_OFF);
+        if (squelch_open) {
+            #ifdef ENABLE_FEAT_F4HWN_RX_TX_TIMER
+                gRxTimerCountdown_500ms = 7200;
+            #endif
         }
         gUpdateDisplay = true;
         gUpdateStatus  = true;
