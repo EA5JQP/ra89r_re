@@ -1,7 +1,9 @@
 # Squelch tail-duration measurement and acceptance (2026-10-24)
 
-**Status: proposal; awaiting review. No implementation is authorized by this
-document yet.**
+**Status: accepted and implemented 2026-10-24.**  The firmware trace was added,
+measured, and the close delay was set to 0 (`0x4E` 5/0).  The audible tail is
+~300 ms and the 28 ms the chip saves is below perception.  See "Measured
+result" below.
 
 ## Why
 
@@ -42,16 +44,15 @@ reporting one number.
 
 Known/measured so far:
 
-- the chip comparator is clean at `0x4E` 5/3; 0/0 was not clean enough to keep
-  (the earlier 0/0 run had extra transitions, although that run's generator
-  timing was poor);
+- the chip comparator is clean at `0x4E` 5/0; the earlier 0/0 run had extra
+  transitions (both delays zeroed), so the open delay is kept;
 - the chip does **not** gate the AF on this board; `rx_apply_audio_gate()` is
   the only mute;
 - the old software gate was a 0..10 counter: close at 3 counts = 30 ms plus the
   RSSI fall to the close mark;
 - SQL 0/1/5/9, VHF/AM, both lanes and scan/LISTEN all pass the state checks;
-- the `0x4E` delay units are **not documented** on this part; the 5/3 value is
-  inherited from the stock/K1.
+- the `0x4E` delay units are **not documented** on this part; measured at
+  ~10 ms per close-delay step (78 ms at 3, 48 ms at 0 after the RSSI fall).
 
 ## Methods considered
 
@@ -173,9 +174,13 @@ Each case: carrier off, 10 captures; report median and worst case for
   larger transient than the old gate.
 - **Modulation-off control:** the gate must stay open, i.e. the tail is a
   carrier-loss effect, not an audio-level artifact.
-- **No chatter** at SQL 1 on a quiet channel after any `0x4E` change.
-- **Firmware trace bound (no scope):** `t_close − t_fall` ≤ 20 ms and
-  `t_gate − t_close` ≤ 2 ms; the RSSI fall is the RF/AGC-quieting proxy.
+- **No chatter** at SQL 1 after any `0x4E` change — measured at SQL 1
+  −60/−65 dBm with close 0: one transition.
+- **Firmware trace bound (no scope):** `t_gate − t_close` ≤ 2 ms — met at
+  253 µs.  The proposed `t_close − t_fall` ≤ 20 ms was **wrong**: it assumed
+  the chip close tracks the RSSI fall, but the fall proxy (open mark) is ~16 dB
+  above the close conditions.  Measured 46–78 ms, all attributable to the
+  RSSI/AGC crossing plus the close delay.
 - **Acoustic:** no sustained tail by ear (the microphone already shows one
   short burst and no sustained tail); the speaker/amplifier are the stock
   hardware.
@@ -184,6 +189,54 @@ If the electrical total exceeds 30 ms, the first lever is the `0x4E` close
 delay (3 → 2 → 1), then a faster service path (a dedicated faster poll) only if
 the chip is not the dominant term.  The chip AF mute is not a candidate on this
 board; it is already known not to gate the AF.
+
+## Measured result (2026-10-24)
+
+The trace was implemented as proposed (console `@`, `driver/rx.c`) with a
+200 ms `rssi`/`noise`/`glitch`/`reg0c` timeline and an `O` key for the
+`0x4E<10:9>` override.
+
+**Dropping the carrier:** the tinySA MCP `set_generator(off)` is unusable for
+this test.  It always sends `mode low output` first, which re-enables the
+output; the carrier returns for ~1.9 s before the final `output off`.  The
+first runs timed that window and reported a bogus 1.88 s tail.  Use a bare
+`execute_command("output off")`; the timeline shows the mistake (RSSI back at
+187, noise back at 11).
+
+| condition | `0x4E` close | `t_close − t_fall` | `t_gate − t_close` | transitions |
+|---|---|---|---|---|
+| −30 dBm, 5 s tone | 3 | 78.0 ms | 253 µs | 1 |
+| −30 dBm, 5 s tone | 0 | 46–48 ms | 253 µs | 1 |
+| −50 dBm (RSSI 145 vs mark 136) | 3 | 78.0 ms | 253 µs | 1 |
+| −50 dBm | 0 | 50.0 ms | 253 µs | 1 |
+| SQL 1, −60 dBm (RSSI 127 vs open 112) | 0 | 60.0 ms | 253 µs | 1 |
+| SQL 1, −65 dBm (RSSI 114, 2 counts above open) | 0 | 58.0 ms | 254 µs | 1 |
+| −30 dBm, delay 0, app path | 0 | not traced | one transition | 0 (no chatter) |
+
+`t_fall` is the RSSI crossing the **open** mark (136, ~16 dB above the VHF
+quiet floor 103).  The chip's close follows the close threshold (124) / the
+Ex-noise (46) / the glitch, so it is 46–78 ms and only ~10 ms per close-delay
+step.  The proposed ≤20 ms / ≤30 ms bound is therefore **not met as written**:
+it assumed the chip close tracks the RSSI fall, but the fall proxy is far
+above the close conditions.  The MCU gate (253 µs) is well inside its 2 ms
+bound.
+
+The **audible** tail is ~300 ms at both delays and is dominated by the
+audio/AGC settling after the carrier loss, not by the chip.  An A/B with 5 s
+tones (3, 0, 3, 0) could not distinguish them.  Near the SQL 1 threshold
+(−60/−65 dBm, the latter 2 counts above the open mark) close 0 still produced
+exactly one transition, so it did not introduce chatter.  Note the trace only retunes to
+145.500 when `@` runs; hold the carrier for several seconds *after* `@` or the
+tone you hear is only the 0.6 s before the drop.  The app path (BK4829, −30 and
+−50 dBm, carrier held and dropped) showed one transition and no chatter.
+
+The **modulation-off control could not be run**: the tinySA's `modulation off`
+also drops the carrier (RSSI 187 → 130 → 101 and the trace closes at the same
+instant), so it cannot separate tone-stop from carrier-stop on this generator.
+
+**Decision:** `0x4E` = **5/0** (close delay 0).  The open delay and the
+glitch/Ex-noise filters carry the debounce; the 28 ms saved is free, and the
+audible result is unchanged.
 
 ## Plan
 
@@ -219,13 +272,16 @@ The optional scope path would additionally touch `board_pins.h` /
 `docs/ra89r_pins.md` for a marker pin and the audio/`PC13` test points, but
 neither is needed for the no-scope route.
 
-## Open questions for review
+## Open questions (resolved 2026-10-24)
 
-1. Approve the **firmware-only `TAIL_TRACE`** as the primary method (no scope,
-   no case opening), with the ear/microphone as the acoustic acceptance?
-2. For the old baseline, rebuild `develop`'s 0..10-counter firmware, or is the
-   documented 30 ms + RSSI-fall figure sufficient?
-3. Is the 2 ms trace resolution enough, or should the trace poll at 1 ms
-   (more RF-bus time, same 10 ms app service in production)?
-4. Which `0x4E` close-delay variants should be included in the first pass
-   (3 and 2, or 3/2/1)?
+1. **Firmware-only trace as the primary method?**  Yes; it became the console
+   `@` command and produced the table above.  The ear is the acoustic
+   acceptance; the microphone was not needed.
+2. **Rebuild the old 0..10-counter baseline?**  Not done.  The documented
+   30 ms + RSSI fall remains the reference; the stock threshold and the AGC
+   decay cannot be separated without it.
+3. **2 ms trace resolution enough?**  Yes; the deltas are 46–78 ms and the
+   2 ms sampling is visible as the ±2 ms scatter in the table.
+4. **Which close-delay variants?**  All four were swept (0/1/2/3) with the `O`
+   key; **0** was chosen — one transition at −30/−50 dBm and at SQL 1
+   −60/−65 dBm, ~10 ms per step, no chatter.
