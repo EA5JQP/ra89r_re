@@ -60,7 +60,8 @@ Known/measured so far:
 | CAT `STATUS` polling | 150 ms frame gap | rejected — far too coarse |
 | current microphone, 48 kHz, 5 ms windows | ~5 ms | insufficient; good for quiet/tone/hiss only |
 | high-rate microphone/USB audio, 192 kHz, 1 ms windows | ~0.5–1 ms | viable fallback; includes room noise and speaker acoustics |
-| direct audio tap + `PC13` on a scope/logic analyser | ~0.1–1 ms | **preferred**; measures the electrical gate and the audio envelope |
+| direct audio tap + `PC13` on a scope/logic analyser | ~0.1–1 ms | **preferred with a scope**; measures the electrical gate and the audio envelope |
+| firmware trace at 2 ms (`systick_micros`, `REG_0C`/`0x67`) | ~2 ms | **preferred without a scope**; electrical tail only, no acoustic |
 | firmware timestamps over UART (`systick_micros`) | tens of µs | good for `t_service` only; cannot see the chip or the speaker |
 
 ## Proposed measurement
@@ -105,6 +106,47 @@ same events acoustically (1 ms windows) but cannot separate `t_service` from
 - **Old baseline** — the `develop`/pre-hybrid 0..10 counter build on the same
   bench, so the hybrid is compared with the gate it replaced.
 
+### Firmware-only path (no scope, no case opening)
+
+The console UART plus SysTick are enough for the **electrical** tail.  Add a
+blocking `TAIL_TRACE` command in `driver/rx.c` (the same shape as the `!`
+probe: the app loop is blocked and the trace owns the audio for its duration):
+
+1. Save the app's gate/AF state, set `0x47` AF FM and `PC13` high, mute the
+   BK4815, and leave the BK4829 thresholds as the app has programmed them.
+2. Loop every ~2 ms for ~500 ms: read `0x67` and `REG_0C<1>` with
+   `systick_micros()` timestamps.
+3. Record the first sample where the RSSI falls below the current open mark
+   (`t_fall`), the first `REG_0C<1>` 1→0 (`t_close`), and, on that close, set
+   `s_squelch_open = false`, call `rx_apply_audio_gate()` and record `t_gate`.
+4. Print `t_fall`, `t_close`, `t_gate`, `t_close - t_fall` and
+   `t_gate - t_close`, then restore the app state.
+
+The RSSI fall is the RF/AGC-quieting proxy; the `REG_0C<1>` close is the chip's
+squelch result; the `rx_apply_audio_gate()` call is the MCU mute.  The 2 ms
+poll bounds `t_service`; the chip's `0x4E` delay and the RSSI/AGC are included
+in `t_close - t_fall`.  The acoustic decay after `PC13` is not in this trace;
+it is the same speaker/amplifier as the stock and is accepted by ear (or by the
+existing 48 kHz microphone, which already shows one short burst and no
+sustained tail).
+
+What the K1/stock firmware contributes here:
+
+* the K1's `BK4819_SetupSquelch()` programs the same `0x4E` 5/3 delay and the
+  same `0x4D`/`0x4F`/`0x78` comparator structure on the same BK4829; its
+  `CheckRadioInterrupts()`/`g_SquelchLost` is the same chip result.  The K1
+  has no timestamped tail measurement of its own;
+* the stock's counter (`FUN_0801D3F0`, close below 3 of 0..10) is three 10 ms
+  ticks = **30 ms** plus the RSSI fall — the old baseline this hybrid replaced;
+* the stock's AF mute (chip AF registers + PA14/PC13) is the mute path the port
+  still uses; the speaker/amplifier are the same hardware.
+
+So the no-scope acceptance can be a **bound**: the chip result must reach
+`REG_0C<1>` within ~20 ms of the RSSI fall, the gate within ~2 ms of that, the
+total must not exceed the stock's 30 ms + RSSI fall, and the ear/microphone must
+show no sustained tail.  Changing `0x4E` close 3→2/1 is the lever if the bound
+is missed; 0/0 is excluded by the earlier chatter.
+
 ### Matrix
 
 | band / lane | SQL | level | notes |
@@ -132,45 +174,58 @@ Each case: carrier off, 10 captures; report median and worst case for
 - **Modulation-off control:** the gate must stay open, i.e. the tail is a
   carrier-loss effect, not an audio-level artifact.
 - **No chatter** at SQL 1 on a quiet channel after any `0x4E` change.
+- **Firmware trace bound (no scope):** `t_close − t_fall` ≤ 20 ms and
+  `t_gate − t_close` ≤ 2 ms; the RSSI fall is the RF/AGC-quieting proxy.
+- **Acoustic:** no sustained tail by ear (the microphone already shows one
+  short burst and no sustained tail); the speaker/amplifier are the stock
+  hardware.
 
 If the electrical total exceeds 30 ms, the first lever is the `0x4E` close
-delay (3 → 2 → 1), then a faster service path (the SQL IRQ or a dedicated
-5 ms poll) only if the chip is not the dominant term.  The chip AF mute is not
-a candidate on this board; it is already known not to gate the AF.
+delay (3 → 2 → 1), then a faster service path (a dedicated faster poll) only if
+the chip is not the dominant term.  The chip AF mute is not a candidate on this
+board; it is already known not to gate the AF.
 
 ## Plan
 
-1. **Bench preparation** — identify a free GPIO and the audio/`PC13` test
-   points; confirm probe grounding and attenuation.
-2. **Firmware marker** — add a `TAIL_TEST` compile-time block in
-   `driver/rx.c` that toggles the spare pin at the `REG_0C<1>` decision and
-   after `rx_apply_audio_gate()`.  No production change; default off.
-3. **Capture harness** — a small host script (or manual scope captures) that
-   drives the tinySA tone on/off with the MCP and records the audio/`PC13`/
-   marker.  The MCP command latency is irrelevant because the scope triggers
-   on the tone/marker, not on the host clock.
-4. **Measure the matrix** — current hybrid, then the `0x4E` 3/2/1 and mute-path
-   variants, then the old baseline.
-5. **Decide** — keep the current config if the acceptance is met; otherwise
-   change the close delay or the service path and re-measure.  Record the
-   result in `docs/ra89r_squelch.md` and, if a code change is made, keep it on
-   `driver/squelch-k1` until the same bench accepts it.
+1. **Firmware trace** — add the blocking `TAIL_TRACE` console command in
+   `driver/rx.c` (the `!`-probe shape) with `systick_micros`, 2 ms `0x67` /
+   `REG_0C<1>` reads, the `t_fall`/`t_close`/`t_gate` timestamps and the
+   on-close `rx_apply_audio_gate()`.  No production path; default off.  No
+   spare pin or audio tap is needed for this path.
+2. **Bench harness** — a host script (or manual console runs) that arms the
+   trace and drives the tinySA tone/carrier off; the trace prints the bound.
+   The MCP command latency does not matter: the trace timestamps the radio's
+   own RSSI/`REG_0C` events.
+3. **Measure the matrix** — current hybrid, then `0x4E` 3/2/1, then the old
+   `develop` 0..10-counter baseline.  The K1's `0x4E` 5/3 and the stock's
+   30 ms counter are the references.
+4. **Decide** — keep the current config if the bound is met; otherwise change
+   the close delay and re-measure.  Record the result in
+   `docs/ra89r_squelch.md`; keep any change on `driver/squelch-k1` until the
+   bench accepts it.
+5. **Optional scope path** — if a scope becomes available later, the
+   audio/`PC13` capture in this proposal gives the exact electrical/acoustic
+   split; it is not required to close the item.
 
 ## Files touched by the proposal (when approved)
 
-- `firmware/App/driver/rx.c` — `TAIL_TEST` marker only; no production path.
-- `firmware/App/board_pins.h` / `docs/ra89r_pins.md` — the chosen free pin.
-- `firmware/App/main.c` — an optional bench command for the marker/capture.
+- `firmware/App/driver/rx.c` — the `TAIL_TRACE` command; no production path.
+- `firmware/App/main.c` — the console key that calls it (if kept outside
+  `rx.c`).
 - `docs/ra89r_squelch.md` — the measured table and the final delay choice.
 - `docs/superpowers/specs/2026-10-24-squelch-tail-measurement.md` — this file.
 
+The optional scope path would additionally touch `board_pins.h` /
+`docs/ra89r_pins.md` for a marker pin and the audio/`PC13` test points, but
+neither is needed for the no-scope route.
+
 ## Open questions for review
 
-1. Is a scope/logic analyser available on the bench, or should the 192 kHz
-   microphone fallback be the primary method?
-2. Which free pin is physically accessible on this board for the marker (the
-   `docs/ra89r_pins.md` free list vs the QFP pads)?
-3. Is the amplifier input or the speaker terminal the preferred audio tap, and
-   is the output bridged (grounding caution)?
-4. Should the old 0..10-counter build be rebuilt from `develop` for the
-   baseline, or is the documented 30 ms + RSSI-fall figure sufficient?
+1. Approve the **firmware-only `TAIL_TRACE`** as the primary method (no scope,
+   no case opening), with the ear/microphone as the acoustic acceptance?
+2. For the old baseline, rebuild `develop`'s 0..10-counter firmware, or is the
+   documented 30 ms + RSSI-fall figure sufficient?
+3. Is the 2 ms trace resolution enough, or should the trace poll at 1 ms
+   (more RF-bus time, same 10 ms app service in production)?
+4. Which `0x4E` close-delay variants should be included in the first pass
+   (3 and 2, or 3/2/1)?
