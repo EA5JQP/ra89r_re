@@ -97,6 +97,9 @@ bool     rx_squelch_quiet(uint8_t polls) { (void)polls; return true; }
 uint16_t rx_squelch_open_mark_now(void) { return 0u; }
 void     bk4815_set_band(uint16_t band) { (void)band; }
 
+/* The preview stubs the receiver, so the software gate owns the squelch. */
+bool     rx_squelch_chip_owner(void) { return false; }
+
 /* driver/rx.c's gate driver: the preview stubs the receiver, so this is inert. */
 void     rx_apply_audio_gate(void) { }
 

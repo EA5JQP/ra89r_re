@@ -474,8 +474,6 @@ void RADIO_ConfigureSquelchAndOutputPower(VFO_Info_t *pInfo)
     // squelch
 
     FREQUENCY_Band_t Band = FREQUENCY_GetBand(pInfo->pRX->Frequency);
-    // 0x1E60 : 0x1E00
-    uint32_t Base = (Band < BAND4_174MHz) ? 0x010060 : 0x010000;
 
     if (gEeprom.SQUELCH_LEVEL == 0)
     {   // squelch == 0 (off)
@@ -488,52 +486,32 @@ void RADIO_ConfigureSquelchAndOutputPower(VFO_Info_t *pInfo)
         pInfo->SquelchOpenGlitchThresh  = 255;   // 255 ~ 0
     }
     else
-    {   // squelch >= 1
-        Base += gEeprom.SQUELCH_LEVEL;           // my eeprom squelch-1
-                                                 // VHF   UHF
-        uint8_t *sq_ptrs[6] = {
-            &pInfo->SquelchOpenRSSIThresh,       //  50    10
-            &pInfo->SquelchCloseRSSIThresh,      //  40     5
-            &pInfo->SquelchOpenNoiseThresh,      //  65    90
-            &pInfo->SquelchCloseNoiseThresh,     //  70   100
-            &pInfo->SquelchCloseGlitchThresh,    //  90    90
-            &pInfo->SquelchOpenGlitchThresh      // 100   100
-        };
+    {   /* The K1's calibration table at 0x010000/0x010060 is blank (0xFF) on
+         * this radio, so the K1 import programmed 255/127/255 and the chip's
+         * squelch never fired.  Use the values measured on this board instead
+         * (docs/ra89r_calibration.md, 2026-10-24):
+         *
+         *   quiet RSSI   ~55 UHF / ~100 VHF / ~63 AM
+         *   quiet ExNoise 47, carrier 8
+         *   quiet glitch  57, carrier 0
+         *
+         * The open marks scale with the SQL level; the close marks sit at the
+         * noise floor.  The chip's 0x4E 5/3 delays supply the time hysteresis.
+         * The RSSI split is this board's RF path (280 MHz), not the K1's
+         * 174 MHz calibration split. */
+        const uint8_t level = (gEeprom.SQUELCH_LEVEL > 9u) ? 9u : gEeprom.SQUELCH_LEVEL;
+        const bool    am    = (pInfo->Modulation == MODULATION_AM);
+        const bool    uhf   = (pInfo->pRX->Frequency >= 28000000u);
+        const uint16_t rssi_floor = am ? 63u : (uhf ? 55u : 100u);
+        const uint16_t rssi_open  = (uint16_t)(rssi_floor + 6u + 6u * level);
+        const uint16_t noise_open = (uint16_t)(42u - 3u * (level - 1u));
 
-        for(uint8_t i = 0; i < 6; i++) {
-            PY25Q16_ReadBuffer(Base + (i * 0x10), sq_ptrs[i], 1);
-        }
-
-        uint16_t noise_open   = pInfo->SquelchOpenNoiseThresh;
-        uint16_t noise_close  = pInfo->SquelchCloseNoiseThresh;
-
-#if ENABLE_SQUELCH_MORE_SENSITIVE
-        uint16_t rssi_open    = pInfo->SquelchOpenRSSIThresh;
-        uint16_t rssi_close   = pInfo->SquelchCloseRSSIThresh;
-        uint16_t glitch_open  = pInfo->SquelchOpenGlitchThresh;
-        uint16_t glitch_close = pInfo->SquelchCloseGlitchThresh;
-        // make squelch more sensitive
-        // note that 'noise' and 'glitch' values are inverted compared to 'rssi' values
-        rssi_open   = (rssi_open   * 1) / 2;
-        noise_open  = (noise_open  * 2) / 1;
-        glitch_open = (glitch_open * 2) / 1;
-
-        // ensure the 'close' threshold is lower than the 'open' threshold
-        if (rssi_close == rssi_open && rssi_close >= 2)
-            rssi_close -= 2;
-        if (noise_close == noise_open && noise_close  <= 125)
-            noise_close += 2;
-        if (glitch_close == glitch_open && glitch_close <= 253)
-            glitch_close += 2;
-
-        pInfo->SquelchOpenRSSIThresh    = MIN(rssi_open,    255);
-        pInfo->SquelchCloseRSSIThresh   = MIN(rssi_close,   255);
-        pInfo->SquelchOpenGlitchThresh  = MIN(glitch_open,  255);
-        pInfo->SquelchCloseGlitchThresh = MIN(glitch_close, 255);
-#endif
-
-        pInfo->SquelchOpenNoiseThresh   = MIN(noise_open,   127);
-        pInfo->SquelchCloseNoiseThresh  = MIN(noise_close,  127);
+        pInfo->SquelchOpenRSSIThresh    = (uint8_t)MIN(rssi_open, 255u);
+        pInfo->SquelchCloseRSSIThresh   = (uint8_t)MIN((uint16_t)(rssi_open - 12u), 255u);
+        pInfo->SquelchOpenNoiseThresh   = (uint8_t)MIN(noise_open, 127u);
+        pInfo->SquelchCloseNoiseThresh  = 46u;
+        pInfo->SquelchCloseGlitchThresh = 55u;
+        pInfo->SquelchOpenGlitchThresh  = 45u;
     }
 
     // *******************************

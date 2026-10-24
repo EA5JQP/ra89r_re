@@ -414,13 +414,20 @@ void rx_poll(void)
         }
 
         {
-            const uint16_t open_mark  = rx_squelch_open_mark_now();
-            const uint16_t close_mark = rx_squelch_close_mark_now();
-            const bool     present    = (s_rssi >= open_mark);
-            const bool     absent     = (s_rssi < close_mark);
-
-            rx_squelch_step(&s_sq, present, absent, squelch_off);
-            s_squelch_open = s_sq.open;
+            /* The BK4829 lane is decided by the chip's own squelch comparator
+             * (0x4F/0x78/0x4D/0x4E, programmed by
+             * RADIO_ConfigureSquelchAndOutputPower()).  REG_0C<1> is its
+             * result: 1 = link/open, 0 = loss/closed.  The chip does not gate
+             * the AF on this board (measured 2026-10-24: the AF hisses through
+             * sqlFound with 0x3B20 and 0x3B18), so the MCU still drives the
+             * audio gate -- the K1 decision, the stock's mute.
+             *
+             * The RSSI floor/marks above are kept for the scanner and the
+             * S-meter, but they no longer decide this gate. */
+            if (squelch_off)
+                s_squelch_open = true;
+            else
+                s_squelch_open = (BK4819_ReadRegister(BK4819_REG_0C) & 0x0002u) != 0u;
 
             if (s_squelch_open)
                 s_closed_polls = 0u;
@@ -454,6 +461,17 @@ bool rx_squelch_quiet(uint8_t polls)
 bool rx_audio_is_4815(void)
 {
     return s_audio_4815;
+}
+
+/* True when the BK4829's own squelch result is the owner of g_SquelchLost and
+ * the status LED.  The K1's CheckRadioInterrupts() path is only meaningful on
+ * the lane that is actually being heard, outside a scan (the scanner retunes
+ * the chip under the poller). */
+bool rx_squelch_chip_owner(void)
+{
+    return s_ready && !s_audio_4815 &&
+           gScanStateDir == SCAN_OFF &&
+           s_scan_source == RX_SCAN_SOURCE_DEFAULT;
 }
 
 uint16_t rx_rssi(void)
@@ -531,9 +549,14 @@ void rx_service(void)
     if (rx_ready() && rx_squelch_open() != squelch_open) {
         squelch_open = rx_squelch_open();
 
-        g_SquelchLost = squelch_open;
-        if (!tx_active())
-            led_set(squelch_open ? LED_GREEN : LED_OFF);
+        if (rx_squelch_chip_owner()) {
+            /* CheckRadioInterrupts() owns g_SquelchLost and the LED on the
+             * BK4829 lane; the MCU audio gate above only follows REG_0C<1>. */
+        } else {
+            g_SquelchLost = squelch_open;
+            if (!tx_active())
+                led_set(squelch_open ? LED_GREEN : LED_OFF);
+        }
         gUpdateDisplay = true;
         gUpdateStatus  = true;
     }

@@ -1068,17 +1068,19 @@ static void CheckRadioInterrupts(void)
         }
 #endif
 
-        if (interrupts.sqlLost) {
-            g_SquelchLost = true;
-            BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, true);
-            #ifdef ENABLE_FEAT_F4HWN_RX_TX_TIMER
-                gRxTimerCountdown_500ms = 7200;
-            #endif
-        }
+        if (rx_squelch_chip_owner()) {
+            if (interrupts.sqlLost) {
+                g_SquelchLost = true;
+                BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, true);
+                #ifdef ENABLE_FEAT_F4HWN_RX_TX_TIMER
+                    gRxTimerCountdown_500ms = 7200;
+                #endif
+            }
 
-        if (interrupts.sqlFound) {
-            g_SquelchLost = false;
-            BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, false);
+            if (interrupts.sqlFound) {
+                g_SquelchLost = false;
+                BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, false);
+            }
         }
 
 #if defined(ENABLE_AIRCOPY) || defined(ENABLE_FEAT_F4HWN_BEAM)

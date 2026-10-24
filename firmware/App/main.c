@@ -27,6 +27,7 @@
 #include "driver/rf_dual.h"
 #include "driver/rx.h"
 #include "functions.h"
+#include "radio.h"
 #include "driver/clock.h"
 #include "driver/fault.h"
 #include "driver/gpio.h"
@@ -332,6 +333,7 @@ static void print_help(void)
               "          R probe RF ids   W configure both   X verify config\n"
               "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
               "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
+              "          ! K1 chip-squelch probe: 0x4D/0x4E/0x4F/0x78 + 0x02/0x0C\n"
               "          j BK1080 FM: init, id probe, tune 100.0 MHz, read status\n"
               "          a FM audio route: toggle the BK4829 AF mute (0x47) under FM\n"
               "          n BK4815 (PB13): dump all registers, boot config, tune, meters\n"
@@ -1567,6 +1569,176 @@ static void rf_verify(void)
     rf_verify_block();
 }
 
+/* Console '!': the K1 chip-squelch probe.
+ *
+ * The port normally owns the squelch in software (driver/rx.c).  This command
+ * deliberately parks that gate (the app loop is blocked, so rx_poll() does not
+ * run) and programs the BK4829's own comparators:
+ *
+ *   0x4F  ExNoise open (low 7 bits) / close (bits 14:8)
+ *   0x78  RSSI open (high byte) / close (low byte)
+ *   0x4D  glitch close, 0x4E glitch open + open/close delays
+ *
+ * It then reads the SQL interrupt status (0x02, cleared through the same
+ * register) and the three meters while the carrier is keyed.  What it settles:
+ *
+ *   - does the chip raise SQL found/lost at these thresholds?
+ *   - does the chip gate the AF itself?  The AF stays in FM (0x47) and the
+ *     amplifier stays on for the whole run, so if the audio mutes it is the
+ *     chip doing it -- the MCU is not writing a mute;
+ *   - does the 0x4E delay pair change the tail?
+ *
+ * The phases use the measured RA89R values (quiet ExNoise 47, carrier 8;
+ * quiet RSSI ~55 UHF / ~100 VHF; quiet glitch 57), not the K1's blank table.
+ */
+static void squelch_k1_probe_phase(const char *name,
+                                   uint8_t rssi_open, uint8_t rssi_close,
+                                   uint8_t noise_open, uint8_t noise_close,
+                                   uint8_t glitch_open, uint8_t glitch_close,
+                                   uint8_t open_delay, uint8_t close_delay,
+                                   unsigned seconds, uint16_t reg50)
+{
+    uint32_t t0;
+    unsigned n = 0;
+
+    BK4819_SetupSquelch(rssi_open, rssi_close, noise_open, noise_close,
+                        glitch_close, glitch_open);
+
+    /* BK4819_SetupSquelch writes the stock's 5/3 delays.  Overwrite them so
+     * the phases differ only in that field; bit 8 stays 1 as in the stock. */
+    BK4819_WriteRegister(BK4819_REG_4E,
+        (1u << 14) | ((uint16_t)(open_delay & 7u) << 11) |
+        ((uint16_t)(close_delay & 3u) << 9) | (1u << 8) |
+        (uint16_t)glitch_open);
+
+    /* The probe owns the audio: AF in FM, amp on, the other chip muted.  The
+     * software gate is not running, so nothing here is an MCU mute. */
+    bk4815_set_af(false);
+    BK4819_SetAF(BK4819_AF_FM);
+    audio_path_drive(1);
+
+    /* The K1's bk4829.c writes 0x3B18 (ExitTxMute); this port/stock writes
+     * 0x3B20 on RX entry.  Bit 5 differs.  Phases that pass 0xFFFF leave the
+     * current value alone; the phase that passes 0x3B18 tests whether the chip
+     * then soft-mutes the AF on squelch, as the K1 relies on. */
+    if (reg50 != 0xFFFFu)
+        BK4819_WriteRegister(BK4819_REG_50, reg50);
+
+    /* Arm the SQL bits explicitly: the selected VFO may not be the BK4829's. */
+    {
+        uint16_t mask = BK4819_ReadRegister(BK4819_REG_3F);
+        mask |= BK4819_REG_3F_SQUELCH_FOUND | BK4819_REG_3F_SQUELCH_LOST;
+        BK4819_WriteRegister(BK4819_REG_3F, mask);
+    }
+    BK4819_WriteRegister(BK4819_REG_02, 0);
+
+    uart_printf("\n--- %s: RSSI %u/%u  ExNoise %u/%u  glitch %u/%u  "
+                "delays %u/%u  0x50=%04X ---\n"
+                "    key the carrier on/off now; %u s\n",
+                name, rssi_open, rssi_close, noise_open, noise_close,
+                glitch_open, glitch_close, open_delay, close_delay, reg50,
+                seconds);
+
+    t0 = systick_millis();
+    while ((uint32_t)(systick_millis() - t0) < seconds * 1000u) {
+        const uint16_t status  = BK4819_ReadRegister(BK4819_REG_02);
+        const uint16_t glitch  = BK4819_ReadRegister(BK4819_REG_63);
+        const uint16_t exnoise = BK4819_ReadRegister(BK4819_REG_65);
+        const uint16_t rssi    = BK4819_ReadRegister(BK4819_REG_67);
+        const uint16_t voice   = BK4819_GetVoiceAmplitudeOut();
+
+        if (status != 0u) {
+            BK4819_WriteRegister(BK4819_REG_02, 0);
+            uart_printf("[SQL %5u ms] status 0x%04X  lost %u found %u  "
+                        "63=%u 65=%u 67=%u 64=0x%04X\n",
+                        (unsigned)(systick_millis() - t0), status,
+                        (unsigned)((status >> BK4819_REG_3F_SHIFT_SQUELCH_LOST) & 1u),
+                        (unsigned)((status >> BK4819_REG_3F_SHIFT_SQUELCH_FOUND) & 1u),
+                        glitch, exnoise & 0x7Fu, rssi & 0x1FFu, voice);
+        }
+
+        if ((n++ % 10u) == 0u) {
+            uart_printf("  t=%5u ms  63=%3u 65=%3u 67=%3u 64=0x%04X  "
+                        "0C=%u 47=0x%04X\n",
+                        (unsigned)(systick_millis() - t0),
+                        glitch, exnoise & 0x7Fu, rssi & 0x1FFu, voice,
+                        BK4819_ReadRegister(BK4819_REG_0C) & 1u,
+                        BK4819_ReadRegister(BK4819_REG_47));
+        }
+        systick_delay_ms(50);
+    }
+}
+
+static void squelch_k1_probe(void)
+{
+    const uint32_t f = gRxVfo->freq_config_RX.Frequency;
+    uint8_t rssi_open, rssi_close;
+
+    if (rx_audio_is_4815()) {
+        uart_puts("\nBK4829 is not the audio source.  Select a BK4829 VFO "
+                  "('8'/'9' to pick the VFO, 'I' to cycle its transceiver), "
+                  "then run '!' again.\n");
+        return;
+    }
+
+    if (gRxVfo->Modulation == MODULATION_AM) {
+        rssi_open = 75; rssi_close = 69;
+    } else if (f >= PA_BAND_SPLIT) {
+        rssi_open = 67; rssi_close = 61;
+    } else {
+        rssi_open = 112; rssi_close = 106;
+    }
+
+    uart_printf("\nK1 chip-squelch probe: VFO %u  %u.%05u MHz  %s  SQL %u\n",
+                (unsigned)gEeprom.RX_VFO,
+                (unsigned)(f / 100000u), (unsigned)(f % 100000u),
+                (gRxVfo->Modulation == MODULATION_AM) ? "AM" : "FM",
+                (unsigned)gEeprom.SQUELCH_LEVEL);
+    uart_printf("  before: 3F=0x%04X 47=0x%04X 4D=0x%04X 4E=0x%04X "
+                "4F=0x%04X 78=0x%04X 50=0x%04X 0C=0x%04X 02=0x%04X\n",
+                BK4819_ReadRegister(BK4819_REG_3F),
+                BK4819_ReadRegister(BK4819_REG_47),
+                BK4819_ReadRegister(BK4819_REG_4D),
+                BK4819_ReadRegister(BK4819_REG_4E),
+                BK4819_ReadRegister(BK4819_REG_4F),
+                BK4819_ReadRegister(BK4819_REG_78),
+                BK4819_ReadRegister(BK4819_REG_50),
+                BK4819_ReadRegister(BK4819_REG_0C),
+                BK4819_ReadRegister(BK4819_REG_02));
+
+    /* Phase 1: the nicFW-style ExNoise pair, fastest delays. */
+    squelch_k1_probe_phase("fast delays (0/0)", rssi_open, rssi_close,
+                           42, 46, 45, 55, 0, 0, 12, 0xFFFFu);
+
+    /* Phase 2: same thresholds, the K1/stock delays. */
+    squelch_k1_probe_phase("stock delays (5/3)", rssi_open, rssi_close,
+                           42, 46, 45, 55, 5, 3, 12, 0xFFFFu);
+
+    /* Phase 3: no ExNoise close -- do RSSI/glitch alone close the gate? */
+    squelch_k1_probe_phase("no ExNoise close (127)", rssi_open, rssi_close,
+                           42, 127, 45, 55, 0, 0, 8, 0xFFFFu);
+
+    /* Phase 4: the K1's 0x3B18 (its bk4829.c ExitTxMute word) instead of the
+     * stock/port 0x3B20.  If bit 5 is the chip's soft-mute enable, the AF now
+     * goes quiet on sqlFound and reopens on sqlLost, which the earlier phases
+     * show it does not do with 0x3B20. */
+    squelch_k1_probe_phase("0x50=0x3B18 (K1)", rssi_open, rssi_close,
+                           42, 46, 45, 55, 5, 3, 12, 0x3B18u);
+
+    /* Put the VFO's own thresholds back and let the software gate resume. */
+    BK4819_SetupSquelch(gRxVfo->SquelchOpenRSSIThresh,
+                        gRxVfo->SquelchCloseRSSIThresh,
+                        gRxVfo->SquelchOpenNoiseThresh,
+                        gRxVfo->SquelchCloseNoiseThresh,
+                        gRxVfo->SquelchCloseGlitchThresh,
+                        gRxVfo->SquelchOpenGlitchThresh);
+    BK4819_WriteRegister(BK4819_REG_02, 0);
+    BK4819_WriteRegister(BK4819_REG_50, TX_REG50_UNMUTE);
+    BK4819_SetAF(BK4819_AF_FM);
+    rx_apply_audio_gate();
+    uart_puts("\nrestored the VFO squelch, 0x50=0x3B20 and the software gate\n");
+}
+
 /* ------------------------------------------------------------------- main */
 
 int main(void)
@@ -2019,6 +2191,9 @@ int main(void)
             case 'Q':
                 rf_squelch_autodetect();
                 break;
+            case '!':
+                squelch_k1_probe();
+                break;
             case 'j':
                 fm_bench();
                 break;
@@ -2059,8 +2234,11 @@ int main(void)
                 break;
             }
             case '7':
-                /* Automation: cycle the squelch level 0..9. */
+                /* Automation: cycle the squelch level 0..9.  Ask for a VFO
+                 * reconfigure so RADIO_ConfigureSquelchAndOutputPower() writes
+                 * the new thresholds into the BK4829, not just gEeprom. */
                 gEeprom.SQUELCH_LEVEL = (uint8_t)((gEeprom.SQUELCH_LEVEL + 1u) % 10u);
+                gVfoConfigureMode = VFO_CONFIGURE;
                 uart_printf("\nSQL level %u   marks now open %u close %u\n",
                             (unsigned)gEeprom.SQUELCH_LEVEL,
                             (unsigned)rx_squelch_open_mark_now(),
