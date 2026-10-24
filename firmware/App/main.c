@@ -1606,8 +1606,8 @@ static void squelch_k1_probe_phase(const char *name,
     BK4819_SetupSquelch(rssi_open, rssi_close, noise_open, noise_close,
                         glitch_close, glitch_open);
 
-    /* BK4819_SetupSquelch writes the stock's 5/3 delays.  Overwrite them so
-     * the phases differ only in that field; bit 8 stays 1 as in the stock. */
+    /* BK4819_SetupSquelch writes the app's 5/0 delays.  Overwrite them so the
+     * phases differ only in that field; bit 8 stays 1 as in the stock. */
     BK4819_WriteRegister(BK4819_REG_4E,
         (1u << 14) | ((uint16_t)(open_delay & 7u) << 11) |
         ((uint16_t)(close_delay & 3u) << 9) | (1u << 8) |

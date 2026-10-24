@@ -496,7 +496,9 @@ void RADIO_ConfigureSquelchAndOutputPower(VFO_Info_t *pInfo)
          *   quiet glitch  57, carrier 0
          *
          * The open marks scale with the SQL level; the close marks sit at the
-         * noise floor.  The chip's 0x4E 5/3 delays supply the time hysteresis.
+         * noise floor.  The chip's 0x4E 5/0 delays (open/close) supply the
+         * time hysteresis; the close delay is 0 because it only added ~10 ms
+         * per step of chip tail and 0 stayed at one transition on the bench.
          * The RSSI split is this board's RF path (280 MHz), not the K1's
          * 174 MHz calibration split. */
         const uint8_t level = (gEeprom.SQUELCH_LEVEL > 9u) ? 9u : gEeprom.SQUELCH_LEVEL;
