@@ -150,7 +150,8 @@ Still open:
 * **Tail duration.**  The 5 ms microphone windows around a CW carrier-off show
   one short high-band burst and then the floor; the tail is below the
   microphone's resolution at this volume.  The design bound is the chip's 5/3
-  close plus one 10 ms service tick.
+  close plus one 10 ms service tick.  Measurement/acceptance proposal:
+  [`superpowers/specs/2026-10-24-squelch-tail-measurement.md`](superpowers/specs/2026-10-24-squelch-tail-measurement.md).
 
 The `!` bench probe and its fourth phase are development tooling; the shipped
 path is the hybrid above.
