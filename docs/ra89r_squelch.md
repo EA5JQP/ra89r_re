@@ -120,14 +120,28 @@ Firmware cannot change that routing.  The portable half is the **decision**.
 * FAST BOTH scan with no carrier: 672 probes/s (the pre-hybrid measurement was
   671/s), so the extra `REG_0C` read is not a scan regression; the live scan
   runs and stops.
+* BK4815 lane (VFO B, 446.28125, SQL 5): carrier at -38 dBm raises `0x44` to
+  50, `squelch open`, the tone is heard; the software `0x44` gate is unchanged.
+* Scan hit: FAST BOTH armed ±500 kHz stops on the 446.00625 carrier
+  (`audio source BK4815`, `squelch open`, `0x44` 30).  LISTEN (`SetScn=3`)
+  pauses on the carrier with `audio source BK4829`, RSSI 205 and the AF
+  unmuted (`0x47=0x6142`).
 * Chip status/SQL polarity and the 5/3 delay behaviour measured.
 * `0x50=0x3B20` kept; the K1 `0x3B18` value does not gate the AF here.
 
-Open: VHF FM / AM airband, the BK4815 lane, the tail duration and the
-scan-hit/LISTEN pause.  The first three were blocked when the tinySA stopped
-answering (write timeout) during the VHF/AM/frequency changes; they need a
-generator power-cycle before they count.  The threshold table's VHF/AM
-ExNoise/glitch values are assumed from the UHF measurement until measured.
+Open: **VHF FM / AM airband** — the tinySA's low-output path is not reaching
+the radio in this bench setup: at 145.5 MHz even −6 dBm moves the BK4829 RSSI
+only 100→104 and the BK4815 `0x44` only 10→13, while the same generator's UHF
+high output gives 205/50.  The radio's VHF front end is alive (noise floor
+~100); the low-output cable/port needs checking before the VHF/AM threshold
+table can be measured.  The BK4815 VHF lane shows the same 3-count rise, so it
+is the bench path, not the BK4829.
+
+Also open: the **tail duration** — the 5 ms microphone windows around a CW
+carrier-off show one short high-band burst and then the floor, i.e. the tail is
+below the microphone's resolution at this volume; the design bound is the
+chip's 5/3 close plus one 10 ms service tick.  The threshold table's VHF/AM
+ExNoise/glitch values remain assumed from UHF until measured.
 
 The `!` bench probe and its fourth phase are development tooling; the shipped
 path is the hybrid above.
