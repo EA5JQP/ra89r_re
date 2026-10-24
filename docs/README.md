@@ -29,6 +29,7 @@ notes and quoted addresses use a shifted coordinate system.
 | [`ra89r_rfpath.md`](ra89r_rfpath.md) | the RF path the two share: the bit-banged bus, boot bring-up order, what powers the RF section, the transmit chain |
 | [`ra89r_rffeatures.md`](ra89r_rffeatures.md) | the stock's feature routines above the part: AF, AGC, the CTCSS/CDCSS/DTMF/scramble/VOX group, sleep/idle/mode-restore, by register |
 | [`ra89r_noisereduction.md`](ra89r_noisereduction.md) | the noise reduction ("denoise"): the CPS's Noise Cancellation side-key, the compander (`0x28`) and the noise/SNR detectors (`0x63`/`0x65`) |
+| [`ra89r_squelch.md`](ra89r_squelch.md) | the receive squelch: the K1 chip comparator (`0x4D`/`0x4E`/`0x4F`/`0x78`, `REG_0C<1>`), why the chip does not gate the AF on this board, and the hybrid chip-decision + MCU-mute implementation |
 | [`ra89r_port.md`](ra89r_port.md) | the K1/F4HWN port itself: what the RA89R side provides, the fixes and missing modules, the board facts to re-point, and the order to do it in |
 | [`ra89r_scan.md`](ra89r_scan.md) | the scanner and the dual-transceiver (`SetScn` `FAST BOTH`) mode: the shared candidate stream, the lane rule, per-lane RSSI, the RX scan-source override, and what is still radio-gated |
 | [`ra89r_cat.md`](ra89r_cat.md) | FT-817 CAT on the USB-C serial port (USART1), the feature view: why Look4Sat, the parser/actions, `ENABLE_CAT`, the stand-in script, and what is open |

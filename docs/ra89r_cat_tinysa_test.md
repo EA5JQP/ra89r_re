@@ -155,20 +155,23 @@ server does.
 ## On-radio result
 
 First bench run, 2026-10-23.  Radio on the USB-C CH340 port, tinySA on the
-**low output** (-30 dBm, no external pad, `--samples 7`).  The S-meter column is
-the CAT `SM` byte (raw RSSI clamped to 255); `STATUS` reported the unclamped
-9-bit RSSI (quiet ~101-103, carrier ~188-190 on VHF).
+**low output** for VHF/air and the **high output** for UHF (-30 dBm low,
+-38 dBm high, no external pad, `--samples 7`).  The S-meter column is the CAT
+`SM` byte (raw RSSI clamped to 255); `STATUS` reported the unclamped 9-bit RSSI
+(quiet ~57-103, carrier ~85-205 depending on band).
 
 | band | level | pad | quiet | on | after | delta | verdict |
 |---|---|---|---|---|---|---|---|
 | 145.5000 FM | -30 dBm | 0 | 103 | 190 | 103 | +87 | **PASS** |
-| 446.00625 FM | -38 dBm | 0 | — | — | — | — | not run: needs the high output |
+| 446.00625 FM | -38 dBm | 0 | 57 | 205 | 56 | +148 | **PASS** |
 | 118.0000 AM | -30 dBm | 0 | 63 | 85 | 63 | +22 | **PASS** |
 
 `READ` returned the exact set frequency and the expected mode byte (0x08 FM,
-0x04 AM) every time.  The first VHF run had a lower post-carrier reading (102
-quiet, 188 on, 64 off) and still passed; a repeat gave the table above, so the
-delta is stable while the absolute level moves with the radio's AGC/noise
+0x04 AM) every time.  The UHF carrier is the strongest of the three (the high
+output's floor is -38 dBm, close to the VHF/air levels, but the radio's UHF
+front end has more gain).  The first VHF run had a lower post-carrier reading
+(102 quiet, 188 on, 64 off) and still passed; a repeat gave the table above, so
+the delta is stable while the absolute level moves with the radio's AGC/noise
 floor -- which is why the test asserts deltas.
 
 ## Files
