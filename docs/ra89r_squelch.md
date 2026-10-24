@@ -128,7 +128,6 @@ Firmware cannot change that routing.  The portable half is the **decision**.
   unmuted (`0x47=0x6142`).
 * Chip status/SQL polarity and the 5/3 delay behaviour measured.
 * `0x50=0x3B20` kept; the K1 `0x3B18` value does not gate the AF here.
-
 * **VHF FM, 145.500 MHz, BK4829, SQL 5:** the tinySA low output at −30 dBm
   raises the RSSI 100→187; `squelch open`; the NFM tone is heard (1 kHz
   10^10–10^11 in the mic).  The VHF table (100 floor, 42/46 ExNoise, 45/55
@@ -137,17 +136,17 @@ Firmware cannot change that routing.  The portable half is the **decision**.
   modulation raises the RSSI to 195; `demod 0x31` bit 0 = AM, airband rule on;
   `squelch open`, `0x47=0x6142`, and the AM tone is heard.  `H` shows function
   4 while the carrier is present.
+* **BK4815 VHF, 145.500 MHz (TrVfoA=4815):** the low output raises the BK4815
+  meter and the audio gate opens; `H` reports `lane 4815`, `squelch open`,
+  function 4 and `0x47=0x6142`; the tone is heard.  Set the frequency **after**
+  the `9` transceiver switch: the `J` diagnostic's scan benchmark reloads the
+  saved channel and reverts an unsaved CAT edit, so this check used `H`.
 * Host tests: the `check_all.sh` suite passes in a rootless `podman` `gcc:13`
   container (104 + 16 + 12 + 86 checks, scan/CAT, preview 0 failures); the ARM
   target build passes on the host.  The host itself has no `gcc` installed.
 
 Still open:
 
-* **BK4815 VHF lane.**  The BK4815 is the stock's > 134 MHz path, but the CAT
-  `set_freq` targets the VFO pointer the app has selected, and switching VFOs
-  reloads the saved channel; the unsaved 145.5 change on VFO B reverts to
-  446.28125.  The BK4815 UHF lane is validated (446.28125, `0x44` 50); the 2 m
-  BK4815 case needs a saved channel or a VFO-assignment edit on the radio.
 * **Tail duration.**  The 5 ms microphone windows around a CW carrier-off show
   one short high-band burst and then the floor; the tail is below the
   microphone's resolution at this volume.  The design bound is the chip's 5/3
