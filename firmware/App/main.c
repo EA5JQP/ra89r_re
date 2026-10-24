@@ -334,7 +334,8 @@ static void print_help(void)
               "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
               "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
               "          ! K1 chip-squelch probe: 0x4D/0x4E/0x4F/0x78 + 0x02/0x0C\n"
-              "          @ tail trace: RSSI fall / REG_0C close / audio gate (5 s, BK4829)\n"
+              "          @ tail trace: RSSI fall / REG_0C close / audio gate (30 s, BK4829)\n"
+              "          O step the 0x4E<10:9> close delay 0/1/2/3 for the next '@'\n"
               "          j BK1080 FM: init, id probe, tune 100.0 MHz, read status\n"
               "          a FM audio route: toggle the BK4829 AF mute (0x47) under FM\n"
               "          n BK4815 (PB13): dump all registers, boot config, tune, meters\n"
@@ -2198,6 +2199,19 @@ int main(void)
             case '@':
                 rx_tail_trace();
                 break;
+            case 'O': {
+                /* Tail sweep: the chip's 0x4E<10:9> close delay.  The '@'
+                 * trace reapplies the app's 3/5 pair first, then patches this
+                 * value in, so the sweep needs one flash and four '@' runs. */
+                static const uint8_t steps[] = { 0u, 1u, 2u, 3u };
+                static unsigned step;
+
+                rx_tail_set_close_delay((int)steps[step]);
+                uart_printf("\nBK4829 squelch close delay -> %u (0x4E<10:9>); "
+                            "next '@' uses it\n", (unsigned)steps[step]);
+                step = (step + 1u) % (sizeof(steps) / sizeof(steps[0]));
+                break;
+            }
             case 'j':
                 fm_bench();
                 break;

@@ -366,9 +366,13 @@ uint16_t rx_squelch_floor(void);
 bool rx_audio_is_4815(void);
 
 /* Console '@': bounded electrical tail trace for the BK4829 hybrid.  Blocking
- * for ~5 s and owns the audio; prints RSSI fall/chip close/gate timestamps and
- * the transition count.  No scope, no marker pin. */
+ * for up to 30 s and owns the audio; prints RSSI fall/chip close/gate
+ * timestamps, the meter timeline and the transition count.  No scope, no
+ * marker pin. */
 void rx_tail_trace(void);
+
+/* Console 'O': override the 0x4E<10:9> close delay (0..3) for the next '@'. */
+void rx_tail_set_close_delay(int delay);
 
 /* Diagnostic (console 'A'): force the BK4815's AF open, bypassing the squelch,
  * so the audio path can be judged separately from the squelch. */

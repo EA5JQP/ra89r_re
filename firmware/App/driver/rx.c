@@ -18,6 +18,7 @@
 
 static bool s_ready;
 static bool s_squelch_open;
+static int8_t s_tail_close_delay = -1;  /* console 'O': 0..3, -1 = the app's 3 */
 static rx_squelch_t s_sq;       /* the stock's 0..10 counter; see rx.h */
 /* Consecutive polls with the gate closed.  The LISTEN sweep waits for a few
  * before probing: one corrupted reading used to be enough to start it. */
@@ -489,13 +490,20 @@ static void rx_tail_restore_vfo(void)
  * t_close - t_fall: chip comparator + AGC/quieting + the 2 ms sample loop.
  * t_gate - t_close: the MCU mute (0x47 + PC13), a couple of bus writes.
  */
+void rx_tail_set_close_delay(int delay)
+{
+    if (delay < 0 || delay > 3)
+        delay = 3;
+    s_tail_close_delay = (int8_t)delay;
+}
+
 void rx_tail_trace(void)
 {
     enum {
         TAIL_SAMPLE_US   = 2000u,
         TAIL_DURATION_MS = 30000u
     };
-    uint32_t t0, deadline, next, close_at = 0u;
+    uint32_t t0, deadline, next, close_at = 0u, last_diag = 0u;
     uint32_t t_fall = 0u, t_close = 0u, t_gate = 0u;
     uint16_t open_mark;
     uint16_t rssi;
@@ -523,6 +531,13 @@ void rx_tail_trace(void)
     gRxVfo->Modulation              = MODULATION_FM;
     RADIO_ConfigureSquelchAndOutputPower(gRxVfo);
     RADIO_SetupRegisters(false);
+    if (s_tail_close_delay >= 0) {
+        uint16_t r4e = BK4819_ReadRegister(BK4819_REG_4E);
+
+        r4e = (uint16_t)((r4e & ~(3u << 9)) |
+                         ((uint16_t)s_tail_close_delay << 9));
+        BK4819_WriteRegister(BK4819_REG_4E, r4e);
+    }
     rx_set_frequency(14550000u);
     systick_delay_ms(60);
 
@@ -591,6 +606,12 @@ void rx_tail_trace(void)
             if (!first_fall && rssi < open_mark) {
                 first_fall = true;
                 t_fall     = now - t0;
+                last_diag  = now;
+                uart_printf("tail: fall +%u ms rssi %u noise %u glitch %u "
+                            "reg0c 0x%04X\n",
+                            (unsigned)(t_fall / 1000u), rssi,
+                            BK4819_GetExNoiceIndicator(),
+                            BK4819_GetGlitchIndicator(), reg0c);
             }
 
             if (was_open && !open) {
@@ -602,9 +623,27 @@ void rx_tail_trace(void)
                     s_squelch_open = false;
                     rx_apply_audio_gate();
                     t_gate        = systick_micros() - t0;
+                    uart_printf("tail: close +%u ms rssi %u noise %u "
+                                "glitch %u reg0c 0x%04X\n",
+                                (unsigned)(t_close / 1000u), rssi,
+                                BK4819_GetExNoiceIndicator(),
+                                BK4819_GetGlitchIndicator(), reg0c);
                 }
             }
             was_open = open;
+
+            /* Why the chip waited: print the meters every 200 ms between the
+             * RSSI fall and the close.  The 0x4E close delay, the RSSI close
+             * threshold and the Ex-noise filter are the three candidates. */
+            if (first_fall && !first_close &&
+                (int32_t)(now - last_diag) >= 200000) {
+                last_diag = now;
+                uart_printf("tail: +%u ms rssi %u noise %u glitch %u "
+                            "reg0c 0x%04X\n",
+                            (unsigned)((now - t0) / 1000u), rssi,
+                            BK4819_GetExNoiceIndicator(),
+                            BK4819_GetGlitchIndicator(), reg0c);
+            }
             if (first_close &&
                 (int32_t)(systick_micros() - close_at) > 200000) {
                 break;      /* 200 ms after the close is enough for chatter */
