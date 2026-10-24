@@ -109,16 +109,24 @@ Firmware cannot change that routing.  The portable half is the **decision**.
 
 ## Validation so far
 
-* UHF FM, 446.00625 MHz, SQL 5, BK4829 audio source, tone-modulated carrier:
+* UHF FM, 446.00625 MHz, BK4829 audio source, tone-modulated carrier:
   no carrier → the microphone's 1.5–3 kHz band sits at the software-gate floor;
   tone → 1 kHz at 10^10–10^11.  The software gate is driven by the chip's
   `REG_0C<1>` (no RSSI counter involved).
+* UHF SQL 1, 5 and 9: no carrier closed/quiet; tone opens (`H`: `0x47=0x6142`,
+  `PC13`/speaker on, `squelch open`, function 4).  SQL 0 with no carrier:
+  `squelch open`, function 4, audio open — the earlier missing-open-edge is
+  fixed by `rx_service()` owning the flag.
+* FAST BOTH scan with no carrier: 672 probes/s (the pre-hybrid measurement was
+  671/s), so the extra `REG_0C` read is not a scan regression; the live scan
+  runs and stops.
 * Chip status/SQL polarity and the 5/3 delay behaviour measured.
 * `0x50=0x3B20` kept; the K1 `0x3B18` value does not gate the AF here.
 
-Open: VHF FM / AM airband, SQL 1 and 9, the BK4815 lane, scan/LISTEN and the
-LISTEN hand-back, the audible tail against the old 0..10 counter, and the
-`g_SquelchLost`/LED/INCOMING path on the K1 app.  The threshold table's VHF/AM
+Open: VHF FM / AM airband, the BK4815 lane, the tail duration and the
+scan-hit/LISTEN pause.  The first three were blocked when the tinySA stopped
+answering (write timeout) during the VHF/AM/frequency changes; they need a
+generator power-cycle before they count.  The threshold table's VHF/AM
 ExNoise/glitch values are assumed from the UHF measurement until measured.
 
 The `!` bench probe and its fourth phase are development tooling; the shipped
