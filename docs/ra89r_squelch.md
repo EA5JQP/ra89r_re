@@ -129,19 +129,29 @@ Firmware cannot change that routing.  The portable half is the **decision**.
 * Chip status/SQL polarity and the 5/3 delay behaviour measured.
 * `0x50=0x3B20` kept; the K1 `0x3B18` value does not gate the AF here.
 
-Open: **VHF FM / AM airband** — the tinySA's low-output path is not reaching
-the radio in this bench setup: at 145.5 MHz even −6 dBm moves the BK4829 RSSI
-only 100→104 and the BK4815 `0x44` only 10→13, while the same generator's UHF
-high output gives 205/50.  The radio's VHF front end is alive (noise floor
-~100); the low-output cable/port needs checking before the VHF/AM threshold
-table can be measured.  The BK4815 VHF lane shows the same 3-count rise, so it
-is the bench path, not the BK4829.
+* **VHF FM, 145.500 MHz, BK4829, SQL 5:** the tinySA low output at −30 dBm
+  raises the RSSI 100→187; `squelch open`; the NFM tone is heard (1 kHz
+  10^10–10^11 in the mic).  The VHF table (100 floor, 42/46 ExNoise, 45/55
+  glitch) closes on no carrier and opens on the carrier.
+* **AM airband, 118.000 MHz, BK4829, SQL 5:** the low output with `am`
+  modulation raises the RSSI to 195; `demod 0x31` bit 0 = AM, airband rule on;
+  `squelch open`, `0x47=0x6142`, and the AM tone is heard.  `H` shows function
+  4 while the carrier is present.
+* Host tests: the `check_all.sh` suite passes in a rootless `podman` `gcc:13`
+  container (104 + 16 + 12 + 86 checks, scan/CAT, preview 0 failures); the ARM
+  target build passes on the host.  The host itself has no `gcc` installed.
 
-Also open: the **tail duration** — the 5 ms microphone windows around a CW
-carrier-off show one short high-band burst and then the floor, i.e. the tail is
-below the microphone's resolution at this volume; the design bound is the
-chip's 5/3 close plus one 10 ms service tick.  The threshold table's VHF/AM
-ExNoise/glitch values remain assumed from UHF until measured.
+Still open:
+
+* **BK4815 VHF lane.**  The BK4815 is the stock's > 134 MHz path, but the CAT
+  `set_freq` targets the VFO pointer the app has selected, and switching VFOs
+  reloads the saved channel; the unsaved 145.5 change on VFO B reverts to
+  446.28125.  The BK4815 UHF lane is validated (446.28125, `0x44` 50); the 2 m
+  BK4815 case needs a saved channel or a VFO-assignment edit on the radio.
+* **Tail duration.**  The 5 ms microphone windows around a CW carrier-off show
+  one short high-band burst and then the floor; the tail is below the
+  microphone's resolution at this volume.  The design bound is the chip's 5/3
+  close plus one 10 ms service tick.
 
 The `!` bench probe and its fourth phase are development tooling; the shipped
 path is the hybrid above.
