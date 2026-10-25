@@ -790,8 +790,18 @@ void rx_service(void)
     if (rx_ready())
         rx_poll();
 
-    if (rx_ready() && rx_squelch_open() != squelch_open) {
-        squelch_open = rx_squelch_open();
+    /* The scan/display flag follows the raw level on the airband: its filtered
+     * gate needs ~160 ms plus the 7/3 counter, and a fast memory scan leaves
+     * the channel long before that, so using the filtered result here made the
+     * scan skip 120.1 entirely.  The audio gate still uses the filtered result
+     * (rx_poll), which then settles on the parked channel. */
+    {
+    const bool app_squelch = rx_lane_am()
+        ? (s_rssi >= rx_squelch_open_mark_now())
+        : rx_squelch_open();
+
+    if (rx_ready() && app_squelch != squelch_open) {
+        squelch_open = app_squelch;
 
         g_SquelchLost = squelch_open;
         if (!tx_active())
@@ -803,6 +813,7 @@ void rx_service(void)
         }
         gUpdateDisplay = true;
         gUpdateStatus  = true;
+    }
     }
 }
 
