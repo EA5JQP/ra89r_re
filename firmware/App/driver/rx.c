@@ -25,6 +25,8 @@ static rx_squelch_t s_sq;       /* the stock's 0..10 counter; see rx.h */
 static uint8_t s_closed_polls;
 static bool s_fm_active;        /* the FM feature owns the audio; see rx_set_fm_active() */
 static uint16_t s_rssi;
+static uint16_t s_rssi_f;       /* the airband's ~160 ms filtered 0x67 */
+static bool     s_rssi_f_valid;
 static uint32_t s_freq_10hz;    /* what the BK4829 was last tuned to */
 
 /* Retune settling.  The first RSSI reads after a retune are the AGC/PLL
@@ -404,10 +406,33 @@ void rx_poll(void)
             s_rssi = raw;
     }
 
+    /* The airband's carrier is only ~5 dB over the noise and the raw 0x67 moves
+     * by ~10 counts sample to sample.  Filter it over ~160 ms and debounce it
+     * with the stock's 7/3 counter; that is what makes SQL 3 usable there.
+     * The FM bands keep the chip's comparator (REG_0C<1>) below. */
+    if (rx_lane_am()) {
+        if (!s_rssi_f_valid) {
+            s_rssi_f       = s_rssi;
+            s_rssi_f_valid = true;
+        } else {
+            const int32_t d = (int32_t)s_rssi - (int32_t)s_rssi_f;
+
+            s_rssi_f = (uint16_t)((int32_t)s_rssi_f + d / 16);
+        }
+    } else {
+        s_rssi_f_valid = false;
+    }
+
     {
         const bool     squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
 
-        {
+        if (rx_lane_am()) {
+            /* A carrier inside the hysteresis would be learned as noise and
+             * push the opening mark above the signal; learn only while the
+             * gate is closed. */
+            if (gScanStateDir == SCAN_OFF && !s_squelch_open)
+                (void)rx_floor_update(0u, rx_lane_uhf(), s_rssi_f, true);
+        } else {
             const uint16_t open_now  = rx_squelch_open_mark_now();
             const bool     weak_open = s_squelch_open &&
                 s_rssi < (uint16_t)(open_now + rx_squelch_margin(false, rx_lane_am(), gEeprom.SQUELCH_LEVEL));
@@ -431,7 +456,14 @@ void rx_poll(void)
              * S-meter, but they no longer decide this gate. */
             if (squelch_off)
                 s_squelch_open = true;
-            else
+            else if (rx_lane_am()) {
+                const uint16_t open_mark  = rx_squelch_open_mark_now();
+                const uint16_t close_mark = rx_squelch_close_mark_now();
+
+                rx_squelch_step(&s_sq, s_rssi_f >= open_mark,
+                                s_rssi_f < close_mark, false);
+                s_squelch_open = s_sq.open;
+            } else
                 s_squelch_open = (BK4819_ReadRegister(BK4819_REG_0C) & 0x0002u) != 0u;
 
             if (s_squelch_open)
@@ -750,6 +782,8 @@ void rx_service(void)
         if (airband != was_airband) {
             was_airband = airband;
             rx_floor_invalidate();
+            rx_squelch_reset(&s_sq);
+            s_rssi_f_valid = false;
         }
     }
 
