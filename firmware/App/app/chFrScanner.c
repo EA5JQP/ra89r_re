@@ -824,6 +824,7 @@ static scan_fast_result_t ScanRangeFastPrecheckListen(void)
         uint16_t       rssi;
         bool           is_hit;
         const uint16_t mark4815 = rx_squelch_open_mark_from_floor(true, listen_uhf,
+                                                                 false,
                                                                  gEeprom.SQUELCH_LEVEL, 0u);
 
         {

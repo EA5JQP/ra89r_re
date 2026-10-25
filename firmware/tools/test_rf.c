@@ -536,8 +536,12 @@ static void test_pa_rx_path(void)
     log_reset();
     BK4819_Init();
     log_reset();
-    pa_select_band(11800000u);      /* 118.0 MHz */
-    check_hex(last_reg33(), 0x9040, "BK4829 lane at 118 MHz is the same path state");
+    pa_select_band(11800000u);      /* 118.0 MHz, the airband */
+    /* The airband takes the stock receive path (pin 0 clear, 0x9000); the K1
+     * RX_ENABLE cost 37 dB at 120.1 (docs/ra89r_airband.md). */
+    check_hex(last_reg33(), 0x9000, "BK4829 lane at 118 MHz uses the stock airband path");
+    pa_select_band(14550000u);      /* back to 145.5 MHz */
+    check_hex(last_reg33(), 0x9040, "BK4829 lane at 145.5 MHz keeps the K1 path");
 }
 
 /* The K1's power ladder reaches 0x36 (its SetupPowerAmplifier) and, with the

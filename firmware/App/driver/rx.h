@@ -78,13 +78,22 @@
  * counts, while still opening on the measured carriers (32-58). */
 #define RX_SQUELCH_MARGIN_BASE_4815   4u
 #define RX_SQUELCH_MARGIN_STEP_4815   2u
+/* The airband (AM, the stock receive path) has only ~5 dB of carrier over the
+ * noise at 120.1, so its margin must be small: SQL 1 = 6 counts (3 dB) and the
+ * close sits 3 counts below the open.  The FM margins above would never open. */
+#define RX_SQUELCH_MARGIN_BASE_AM     4u
+#define RX_SQUELCH_MARGIN_STEP_AM     2u
+#define RX_SQUELCH_OPEN_MARK_AM      150u
 #define RX_SQUELCH_HYST_4829          12u
 #define RX_SQUELCH_HYST_4815          4u
 
 /* The margin above the learned floor, monotone in the squelch level. */
-static inline uint16_t rx_squelch_margin(bool use_4815, uint8_t level)
+static inline uint16_t rx_squelch_margin(bool use_4815, bool am, uint8_t level)
 {
     const uint8_t lv = (level > 9u) ? 9u : level;
+
+    if (am)
+        return (uint16_t)(RX_SQUELCH_MARGIN_BASE_AM + RX_SQUELCH_MARGIN_STEP_AM * lv);
 
     return (uint16_t)(use_4815
                           ? (RX_SQUELCH_MARGIN_BASE_4815 + RX_SQUELCH_MARGIN_STEP_4815 * lv)
@@ -94,25 +103,29 @@ static inline uint16_t rx_squelch_margin(bool use_4815, uint8_t level)
 /* The opening mark for a lane whose floor is `floor`.  The old fixed pairs are
  * used as a *lower* bound only when the floor is not known yet (floor 0).
  */
-static inline uint16_t rx_squelch_open_mark_from_floor(bool use_4815, bool uhf,
+static inline uint16_t rx_squelch_open_mark_from_floor(bool use_4815, bool uhf, bool am,
                                                        uint8_t level, uint16_t floor)
 {
-    if (floor == 0u)
-        return use_4815 ? (uhf ? RX4815_SQUELCH_OPEN_MARK : RX4815_SQUELCH_OPEN_MARK_VHF)
-                        : RX_SQUELCH_OPEN_MARK;
+    if (floor == 0u) {
+        if (use_4815)
+            return uhf ? RX4815_SQUELCH_OPEN_MARK : RX4815_SQUELCH_OPEN_MARK_VHF;
+        return am ? (uint16_t)(RX_SQUELCH_OPEN_MARK_AM +
+                               rx_squelch_margin(false, true, level))
+                  : RX_SQUELCH_OPEN_MARK;
+    }
 
-    return (uint16_t)(floor + rx_squelch_margin(use_4815, level));
+    return (uint16_t)(floor + rx_squelch_margin(use_4815, am, level));
 }
 
-static inline uint16_t rx_squelch_close_mark_from_floor(bool use_4815, bool uhf,
+static inline uint16_t rx_squelch_close_mark_from_floor(bool use_4815, bool uhf, bool am,
                                                         uint8_t level, uint16_t floor)
 {
-    const uint16_t open   = rx_squelch_open_mark_from_floor(use_4815, uhf, level, floor);
+    const uint16_t open   = rx_squelch_open_mark_from_floor(use_4815, uhf, am, level, floor);
     /* The hysteresis must sit *below* the margin, or at SQL 1 (margin 12) the
      * close mark lands exactly on the floor and a reading at the noise level
      * never closes the gate -- radio 2026-10-22: floor 83, open 95, close 83,
      * 0x67 = 83, squelch open for as long as the level held. */
-    const uint16_t hyst   = (uint16_t)(rx_squelch_margin(use_4815, level) / 2u);
+    const uint16_t hyst   = (uint16_t)(rx_squelch_margin(use_4815, am, level) / 2u);
 
     return (uint16_t)((open > hyst) ? (uint16_t)(open - hyst) : 0u);
 }
@@ -257,7 +270,9 @@ static inline uint16_t rx_squelch_close_mark(bool use_4815, bool uhf, uint8_t le
 #define RX_FLOOR_PRIOR_4829_FM_UHF  55u
 #define RX_FLOOR_PRIOR_4829_FM_VHF 100u
 #define RX_FLOOR_PRIOR_4829_AM_UHF  55u
-#define RX_FLOOR_PRIOR_4829_AM_VHF  63u
+/* The airband's stock receive path (0x33 pin 0 clear) is ~37 dB hotter than
+ * the old path: the noise floor at 120.1 measures 150-155, not 63. */
+#define RX_FLOOR_PRIOR_4829_AM_VHF 150u
 #define RX_FLOOR_PRIOR_4815         15u
 
 typedef struct {

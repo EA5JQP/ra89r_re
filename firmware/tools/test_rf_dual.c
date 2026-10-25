@@ -135,18 +135,18 @@ int main(void)
     /* The live gate: a lane's marks are its learned floor plus a level-derived
      * margin, so a fixed pair cannot hide weak signals (radio 2026-10-21: the
      * 4829 floors were 96-103 VHF / 76-79 UHF, the stock pair is 207/180). */
-    check(rx_squelch_open_mark_from_floor(false, false, 4u, 80u) ==
-              (uint16_t)(80u + rx_squelch_margin(false, 4u)),
+    check(rx_squelch_open_mark_from_floor(false, false, false, 4u, 80u) ==
+              (uint16_t)(80u + rx_squelch_margin(false, false, 4u)),
           "BK4829 floor 80 at SQL 4 opens 80 + margin");
-    check(rx_squelch_open_mark_from_floor(false, false, 8u, 80u) >
-              rx_squelch_open_mark_from_floor(false, false, 4u, 80u),
+    check(rx_squelch_open_mark_from_floor(false, false, false, 8u, 80u) >
+              rx_squelch_open_mark_from_floor(false, false, false, 4u, 80u),
           "a higher SQL level opens later above the same floor");
-    check(rx_squelch_margin(false, 0u) < rx_squelch_margin(false, 4u) &&
-              rx_squelch_margin(false, 4u) < rx_squelch_margin(false, 9u),
+    check(rx_squelch_margin(false, false, 0u) < rx_squelch_margin(false, false, 4u) &&
+              rx_squelch_margin(false, false, 4u) < rx_squelch_margin(false, false, 9u),
           "the BK4829 margin is monotone in the level");
-    check(rx_squelch_margin(true, 4u) < rx_squelch_margin(false, 4u),
+    check(rx_squelch_margin(true, false, 4u) < rx_squelch_margin(false, false, 4u),
           "the BK4815's 7-bit scale keeps its margins smaller");
-    check(rx_squelch_open_mark_from_floor(false, false, 4u, 0u) == 0xCFu,
+    check(rx_squelch_open_mark_from_floor(false, false, false, 4u, 0u) == 0xCFu,
           "an unknown floor falls back to the stock pair");
 
     /* The floor tracker itself (its bugs were found on the radio). */

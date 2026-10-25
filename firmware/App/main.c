@@ -990,10 +990,12 @@ static void dual_rf_diag(void)
                 (unsigned)rx_squelch_floor(),
                 (unsigned)rx_squelch_open_mark_from_floor(true,
                                                           gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
+                                                          false,
                                                           gEeprom.SQUELCH_LEVEL,
                                                           (uint16_t)(bk4815_read_reg(0x44) & 0x7fu)),
                 (unsigned)rx_squelch_close_mark_from_floor(true,
                                                            gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
+                                                           false,
                                                            gEeprom.SQUELCH_LEVEL,
                                                            (uint16_t)(bk4815_read_reg(0x44) & 0x7fu)));
 

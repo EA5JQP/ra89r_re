@@ -170,12 +170,14 @@ uint16_t rx_squelch_floor(void)
 uint16_t rx_squelch_open_mark_now(void)
 {
     return rx_squelch_open_mark_from_floor(s_audio_4815, rx_lane_uhf(),
+                                           rx_lane_am(),
                                            gEeprom.SQUELCH_LEVEL, rx_active_floor());
 }
 
 uint16_t rx_squelch_close_mark_now(void)
 {
     return rx_squelch_close_mark_from_floor(s_audio_4815, rx_lane_uhf(),
+                                            rx_lane_am(),
                                             gEeprom.SQUELCH_LEVEL, rx_active_floor());
 }
 
@@ -345,7 +347,7 @@ void rx_poll(void)
         {
             const uint16_t open_now  = rx_squelch_open_mark_now();
             const bool     weak_open = s_squelch_open &&
-                s_rssi < (uint16_t)(open_now + rx_squelch_margin(true, gEeprom.SQUELCH_LEVEL));
+                s_rssi < (uint16_t)(open_now + rx_squelch_margin(true, rx_lane_am(), gEeprom.SQUELCH_LEVEL));
 
             if (gScanStateDir == SCAN_OFF && (!s_squelch_open || weak_open))
                 (void)rx_floor_update(1u, rx_lane_uhf(), s_rssi, true);
@@ -408,7 +410,7 @@ void rx_poll(void)
         {
             const uint16_t open_now  = rx_squelch_open_mark_now();
             const bool     weak_open = s_squelch_open &&
-                s_rssi < (uint16_t)(open_now + rx_squelch_margin(false, gEeprom.SQUELCH_LEVEL));
+                s_rssi < (uint16_t)(open_now + rx_squelch_margin(false, rx_lane_am(), gEeprom.SQUELCH_LEVEL));
 
             /* See the BK4815 branch: a weak open level (within two margins of
              * the floor) is noise and is learned, a real signal is not. */
@@ -734,6 +736,21 @@ void rx_service(void)
             s_scan_source_freq    = f;
         }
         rx_set_audio_source(use_4815);
+    }
+
+    /* The airband's stock receive path (0x33 pin 0 clear) changes the RSSI
+     * scale by ~37 dB.  A floor learned on the other path would leave the gate
+     * open on noise, so drop the estimates on entering or leaving 108-137 MHz
+     * and let them re-learn from the new scale. */
+    {
+        static bool was_airband;
+        const uint32_t f = s_audio_4815 ? s_4815_freq : s_freq_10hz;
+        const bool     airband = (f >= 10800000u && f < 13700000u);
+
+        if (airband != was_airband) {
+            was_airband = airband;
+            rx_floor_invalidate();
+        }
     }
 
     if (rx_ready())

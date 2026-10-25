@@ -501,19 +501,37 @@ void RADIO_ConfigureSquelchAndOutputPower(VFO_Info_t *pInfo)
          * per step of chip tail and 0 stayed at one transition on the bench.
          * The RSSI split is this board's RF path (280 MHz), not the K1's
          * 174 MHz calibration split. */
-        const uint8_t level = (gEeprom.SQUELCH_LEVEL > 9u) ? 9u : gEeprom.SQUELCH_LEVEL;
-        const bool    am    = (pInfo->Modulation == MODULATION_AM);
-        const bool    uhf   = (pInfo->pRX->Frequency >= 28000000u);
-        const uint16_t rssi_floor = am ? 63u : (uhf ? 55u : 100u);
-        const uint16_t rssi_open  = (uint16_t)(rssi_floor + 6u + 6u * level);
-        const uint16_t noise_open = (uint16_t)(42u - 3u * (level - 1u));
+        const uint8_t level   = (gEeprom.SQUELCH_LEVEL > 9u) ? 9u : gEeprom.SQUELCH_LEVEL;
+        const bool    am      = (pInfo->Modulation == MODULATION_AM);
+        const bool    uhf     = (pInfo->pRX->Frequency >= 28000000u);
+        const bool    airband = FREQUENCY_IsAirband(pInfo->pRX->Frequency);
+        /* The airband now takes the stock receive path (0x33 pin 0 clear,
+         * `pa.c`), which is ~37 dB hotter: the floor at 120.1 is ~150, not 63,
+         * and the carrier is only ~5 dB above the noise.  So its margin is
+         * small and the close sits half a margin below the open.  The Ex-noise
+         * and glitch indicators at 120.1 read 54-65 / 51-166, far above the FM
+         * thresholds, so they are disabled there and the RSSI decides alone. */
+        const uint16_t rssi_floor = airband ? 150u : (am ? 63u : (uhf ? 55u : 100u));
+        const uint16_t margin     = airband ? (uint16_t)(4u + 2u * level)
+                                            : (uint16_t)(6u + 6u * level);
+        const uint16_t rssi_open  = (uint16_t)(rssi_floor + margin);
+        const uint16_t rssi_close = (uint16_t)(rssi_open - (airband ? (margin / 2u) : 12u));
 
         pInfo->SquelchOpenRSSIThresh    = (uint8_t)MIN(rssi_open, 255u);
-        pInfo->SquelchCloseRSSIThresh   = (uint8_t)MIN((uint16_t)(rssi_open - 12u), 255u);
-        pInfo->SquelchOpenNoiseThresh   = (uint8_t)MIN(noise_open, 127u);
-        pInfo->SquelchCloseNoiseThresh  = 46u;
-        pInfo->SquelchCloseGlitchThresh = 55u;
-        pInfo->SquelchOpenGlitchThresh  = 45u;
+        pInfo->SquelchCloseRSSIThresh   = (uint8_t)MIN(rssi_close, 255u);
+        if (airband) {
+            pInfo->SquelchOpenNoiseThresh   = 127u;
+            pInfo->SquelchCloseNoiseThresh  = 127u;
+            pInfo->SquelchCloseGlitchThresh = 255u;
+            pInfo->SquelchOpenGlitchThresh  = 255u;
+        } else {
+            const uint16_t noise_open = (uint16_t)(42u - 3u * (level - 1u));
+
+            pInfo->SquelchOpenNoiseThresh   = (uint8_t)MIN(noise_open, 127u);
+            pInfo->SquelchCloseNoiseThresh  = 46u;
+            pInfo->SquelchCloseGlitchThresh = 55u;
+            pInfo->SquelchOpenGlitchThresh  = 45u;
+        }
     }
 
     // *******************************
