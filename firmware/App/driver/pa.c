@@ -224,6 +224,17 @@ void pa_select_band(uint32_t freq_10hz)
     bk4815_set_band(s_uhf ? 0x0Au : 0x11u);
 
     pa_apply_chip_path();
+
+    /* The airband's carrier is only ~5-10 dB over the noise at 120.1, so SQL 3
+     * flapped on voice fades.  Give the chip's close comparator a 3-step
+     * (~30 ms) delay there; the FM bands keep 0, whose 28 ms of tail was
+     * measured and deliberately removed (docs/ra89r_squelch.md). */
+    {
+        uint16_t r4e = BK4819_ReadRegister(BK4819_REG_4E);
+
+        r4e = (uint16_t)((r4e & ~(3u << 9)) | (s_airband ? (3u << 9) : 0u));
+        BK4819_WriteRegister(BK4819_REG_4E, r4e);
+    }
 }
 
 void pa_init(void)
