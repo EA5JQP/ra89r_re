@@ -1945,9 +1945,13 @@ static void NextMemChannel(void)
                                       FREQUENCY_GetBand(prev_f) != FREQUENCY_GetBand(new_f));
 
         if (band_change)
-            /* The AGC takes ~1.4 s to recover after the band switch (measured:
-             * 0x67 67 at 1 s vs 100 settled at PMR 1); 1 s was marginal. */
-            gScanPauseDelayIn_10ms = (uint16_t)(scan_pause_delay_in_5_10ms * 2u);
+            /* The AGC takes ~2.5 s to recover after the band switch (measured:
+             * 0x67 27 at 1 s, 67 at 2 s, ~100 settled at PMR 1). */
+            gScanPauseDelayIn_10ms = (uint16_t)(scan_pause_delay_in_5_10ms * 3u);
+        else if (FREQUENCY_IsAirband(new_f))
+            /* The airband's filtered gate needs ~160 ms + the 30 ms counter;
+             * 90/200 ms per channel left the scan before it could open. */
+            gScanPauseDelayIn_10ms = scan_pause_delay_in_4_10ms;   /* 300 ms */
         else
 #ifdef ENABLE_FASTER_CHANNEL_SCAN
             gScanPauseDelayIn_10ms = 9;  // 90ms .. <= ~60ms it misses signals (squelch response and/or PLL lock time) ?
