@@ -15,6 +15,7 @@ static uint16_t s_compare;
  * >134 MHz transceiver split. */
 static bool s_uhf;
 static bool s_main;
+static bool s_airband;   /* 108.0-137.0 MHz: the stock's receive path, pin 0 clear */
 
 /* Which transceiver is the audio lane (see pa_set_rx_lane()).  The stock's
  * receive-path pin (0x33 bit 4) follows it. */
@@ -189,10 +190,17 @@ static void pa_apply_chip_path(void)
              * The lane, not "a VFO names the BK4815", decides: s_rx_lane_4815
              * is set from the selected RX VFO's transceiver by rx_set_audio_
              * source().  BK4819_ToggleGpioOut read-modify-writes the driver's
-             * output shadow, so the 0x9000 bits BK4819_Init() set survive, and
-             * pin 0 (RX_ENABLE), which RADIO_SetupRegisters sets, is preserved.
-             * See docs/ra89r_rfpath.md. */
-            BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, !s_rx_lane_4815);
+             * output shadow, so the 0x9000 bits BK4819_Init() set survive.
+             * Pin 0 (the K1's RX_ENABLE) is set only outside the airband: the
+             * stock's receive clears it, and the airband is 37 dB down with it
+             * set on this board.  See docs/ra89r_rfpath.md. */
+            /* The airband needs the stock's receive path, not the K1's
+             * RX_ENABLE: on 120.100 the K1 rule (`0x40` set) put the noise
+             * floor at 0x67 ~88 and heard nothing of an S9 carrier; clearing
+             * bit 0 lifted it to 153-174 (peak 179).  Above/outside the
+             * airband the validated K1 rule stays. */
+            BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE,
+                                 !s_rx_lane_4815 && !s_airband);
             BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, s_rx_lane_4815);
             BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, false);
             break;
@@ -205,6 +213,9 @@ void pa_select_band(uint32_t freq_10hz)
 {
     s_uhf  = pa_is_uhf(freq_10hz);
     s_main = pa_is_main(freq_10hz);
+    /* 108.0 <= f < 137.0 MHz in the codec's 10 Hz units (same test as
+     * FREQUENCY_IsAirband()); this band takes the stock's receive path. */
+    s_airband = (freq_10hz >= 10800000u && freq_10hz < 13700000u);
 
     pa_band_path();
 
