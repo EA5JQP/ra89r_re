@@ -1934,11 +1934,25 @@ static void NextMemChannel(void)
         gUpdateDisplay = true;
     }
 
+    /* The first channel after a band switch starts with the BK4829's AGC
+     * still recovering: 120.1 -> 446.00625 read 0x67 ~29 for ~1 s instead of
+     * the 55 floor, so the scan skipped PMR 1 (and the first airband channel
+     * after the PMR block).  Give that one channel a 1 s dwell. */
+    {
+        const uint32_t prev_f = SETTINGS_FetchChannelFrequency(prev_chan);
+        const uint32_t new_f  = gRxVfo->pRX->Frequency;
+        const bool     band_change = (prev_f != 0u && new_f != 0u &&
+                                      FREQUENCY_GetBand(prev_f) != FREQUENCY_GetBand(new_f));
+
+        if (band_change)
+            gScanPauseDelayIn_10ms = scan_pause_delay_in_5_10ms;   /* 1 s */
+        else
 #ifdef ENABLE_FASTER_CHANNEL_SCAN
-    gScanPauseDelayIn_10ms = 9;  // 90ms .. <= ~60ms it misses signals (squelch response and/or PLL lock time) ?
+            gScanPauseDelayIn_10ms = 9;  // 90ms .. <= ~60ms it misses signals (squelch response and/or PLL lock time) ?
 #else
-    gScanPauseDelayIn_10ms = scan_pause_delay_in_3_10ms;
+            gScanPauseDelayIn_10ms = scan_pause_delay_in_3_10ms;
 #endif
+    }
 
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
     AdvanceMemScanList(enabled);
