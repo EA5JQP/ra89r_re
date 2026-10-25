@@ -95,5 +95,7 @@ bool storage_write_test(uint32_t *bad_offset);
 #define K1_IMAGE_END       0x20000u
 bool storage_writable(uint32_t addr, uint32_t size);
 void storage_import_k1(void);
+/* Console '%': program the PMR/AIR channel table into the K1 image. */
+void storage_program_pmr_air(void);
 
 #endif

@@ -442,3 +442,90 @@ void storage_import_k1(void)
     spi_flash_program(K1_IMAGE_MAGIC_ADDR, magic, sizeof magic);
     spi_flash_program(K1_IMAGE_CAL_BASE, cal, sizeof cal);
 }
+
+/* ---------------------------------------------------------------------------
+ * The PMR/AIR channel table (console '%')
+ *
+ * Program the K1 image's channels/names/attributes with the PMR446 set (scan
+ * list 1) and the Valencia airband set (scan list 2), so the K1's memory scan
+ * can sweep each group.  Only the image area 0x04000-0x09FFF is erased and
+ * rewritten; the stock codeplug, its calibration window and the image's own
+ * calibration/magic at 0x10000 are untouched.
+ * ------------------------------------------------------------------------- */
+typedef struct {
+    uint32_t       freq;        /* 10 Hz units */
+    const char    *name;
+    uint8_t        am;          /* 1 = airband AM (and TX inhibited) */
+    uint8_t        scanlist;    /* the K1's scan list: 1 = PMR, 2 = AIR */
+    STEP_Setting_t step;
+    uint8_t        narrow;
+} pmr_air_channel_t;
+
+static const pmr_air_channel_t s_pmr_air[] = {
+    /* PMR446, 12.5 kHz, the eight analogue channels */
+    { 44600625u, "PMR 1",  0u, 1u, STEP_12_5kHz, 1u },
+    { 44601875u, "PMR 2",  0u, 1u, STEP_12_5kHz, 1u },
+    { 44603125u, "PMR 3",  0u, 1u, STEP_12_5kHz, 1u },
+    { 44604375u, "PMR 4",  0u, 1u, STEP_12_5kHz, 1u },
+    { 44605625u, "PMR 5",  0u, 1u, STEP_12_5kHz, 1u },
+    { 44606875u, "PMR 6",  0u, 1u, STEP_12_5kHz, 1u },
+    { 44608125u, "PMR 7",  0u, 1u, STEP_12_5kHz, 1u },
+    { 44609375u, "PMR 8",  0u, 1u, STEP_12_5kHz, 1u },
+    /* Valencia (LEVC/VLC) airband, AM, scan list 2 */
+    { 12107000u, "VLC ATIS",  1u, 2u, STEP_25kHz, 0u },
+    { 12107500u, "VLC ATI2",  1u, 2u, STEP_25kHz, 0u },
+    { 11855000u, "VLC TWR",   1u, 2u, STEP_25kHz, 0u },
+    { 12547000u, "VLC TWR2",  1u, 2u, STEP_25kHz, 0u },
+    { 12170000u, "VLC GND",   1u, 2u, STEP_25kHz, 0u },
+    { 12187000u, "VLC GND2",  1u, 2u, STEP_25kHz, 0u },
+    { 12010000u, "VLC APP",   1u, 2u, STEP_25kHz, 0u },
+    { 11907000u, "VLC APP2",  1u, 2u, STEP_25kHz, 0u },
+    { 12475000u, "VLC APP3",  1u, 2u, STEP_25kHz, 0u },
+    { 12357000u, "VLC CLR",   1u, 2u, STEP_25kHz, 0u },
+    { 12150000u, "VLC EMER",  1u, 2u, STEP_25kHz, 0u },
+};
+
+void storage_program_pmr_air(void)
+{
+    uint32_t sector;
+    unsigned i;
+
+    spi_flash_init();
+
+    for (sector = K1_IMAGE_NAME_BASE; sector < 0xA000u;
+         sector += SPI_FLASH_SECTOR_SIZE)
+        spi_flash_sector_erase(sector);
+
+    for (i = 0u; i < (unsigned)(sizeof(s_pmr_air) / sizeof(s_pmr_air[0])); i++) {
+        const pmr_air_channel_t *e = &s_pmr_air[i];
+        ChannelScanDisplayInfo_t info;
+        uint8_t  raw[16];
+        uint8_t  nraw[16];
+        uint16_t attr;
+        size_t   n;
+
+        memset(&info, 0, sizeof info);
+        info.rx.Frequency     = e->freq;
+        info.modulation       = e->am ? MODULATION_AM : MODULATION_FM;
+        info.channelBandwidth = e->narrow;
+        info.outputPower      = OUTPUT_POWER_HIGH;
+        info.txLock           = e->am;
+        info.stepSetting      = e->step;
+
+        codeplug_channel_pack(&info, raw);
+        spi_flash_program(K1_IMAGE_CH_BASE + (uint32_t)i * 16u, raw, sizeof raw);
+
+        memset(nraw, ' ', sizeof nraw);
+        for (n = 0u; n < 10u && e->name[n] != '\0'; n++)
+            nraw[n] = (uint8_t)e->name[n];
+        spi_flash_program(K1_IMAGE_NAME_BASE + (uint32_t)i * 16u,
+                          nraw, sizeof nraw);
+
+        attr = (uint16_t)((FREQUENCY_GetBand(e->freq) & 0x07u) |
+                          ((uint16_t)e->scanlist << 8));
+        spi_flash_program(K1_IMAGE_ATTR_BASE + (uint32_t)i * 2u,
+                          (const uint8_t *)&attr, sizeof attr);
+    }
+
+    MR_InitChannelAttributesCache();
+}

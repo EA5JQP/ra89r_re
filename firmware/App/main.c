@@ -336,6 +336,7 @@ static void print_help(void)
               "          ! K1 chip-squelch probe: 0x4D/0x4E/0x4F/0x78 + 0x02/0x0C\n"
               "          @ tail trace: RSSI fall / REG_0C close / audio gate (30 s, BK4829)\n"
               "          O step the 0x4E<10:9> close delay 0/1/2/3 for the next '@'\n"
+              "          % program the PMR/AIR channel table (scan lists 1/2)\n"
               "          j BK1080 FM: init, id probe, tune 100.0 MHz, read status\n"
               "          a FM audio route: toggle the BK4829 AF mute (0x47) under FM\n"
               "          n BK4815 (PB13): dump all registers, boot config, tune, meters\n"
@@ -2200,6 +2201,11 @@ int main(void)
                 break;
             case '@':
                 rx_tail_trace();
+                break;
+            case '%':
+                uart_puts("\nprogramming the PMR/AIR channel table into the K1 image...\n");
+                storage_program_pmr_air();
+                uart_puts("done: 8 PMR (scan list 1) + 11 AIR (scan list 2); power-cycle to reload\n");
                 break;
             case 'O': {
                 /* Tail sweep: the chip's 0x4E<10:9> close delay.  The '@'
