@@ -27,6 +27,7 @@
 #include "audio.h"
 #include "dcs.h"
 #include "driver/bk4819.h"
+#include "driver/pa.h"
 #include "driver/rx.h"
 #include "driver/py25q16.h"
 #include "driver/gpio.h"
@@ -845,6 +846,13 @@ void RADIO_SetupRegisters(bool switchToForeground)
 
     // what does this in do ?
     BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, true);
+
+    /* The K1 line above always sets pin 0.  The port's rule must be the last
+     * word: clear it on the airband (the stock receive path; 37 dB at 120.1)
+     * and on a BK4815 lane.  RADIO_SetupRegisters() runs on every VFO switch
+     * and SQL reconfiguration, which is exactly when the K1 line was undoing
+     * the airband path. */
+    pa_select_band(Frequency);
 
     // AF RX Gain and DAC
     //BK4819_WriteRegister(BK4819_REG_48, 0xB3A8);  // 1011 00 111010 1000
