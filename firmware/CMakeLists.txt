@@ -167,5 +167,22 @@ else()
                     "`python3 tools/ra89r.py mkicf ${PROJECT_NAME}.bin ${PROJECT_NAME}.icf`")
 endif()
 
+# ---------------------------------------------------------------------------
+# the F4HWN fresh port (branch port2) -- see
+# docs/superpowers/plans/2026-10-26-f4hwn-fresh-port.md
+#
+# An independent target in the same project: only Core (startup), the linker
+# script, the PY32F403 SDK paths and the mkicf POST_BUILD step are shared.  Its
+# sources live in f4hwn/App (the upstream snapshot) + f4hwn/board (the
+# validated register-level shim) + f4hwn/compat (header forwards).
+# ---------------------------------------------------------------------------
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/f4hwn/App/external/printf/printf.h")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/f4hwn/CMakeLists.txt)
+else()
+    message(WARNING "firmware/f4hwn/App snapshot missing -- skipping the f4hwn_fw "
+                    "target (it is optional while the old port exists)")
+endif()
+
 # firmware/tools/extract_fonts.py regenerates the stock font tables from a
 # decoded .icf image; it is a host tool and not part of the firmware build.
