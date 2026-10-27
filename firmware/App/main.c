@@ -2235,6 +2235,12 @@ int main(void)
             case 'J':
                 dual_rf_diag();
                 break;
+            case '#':
+                uart_printf("\nscan probe retune: %s\n",
+                            CHFRSCANNER_TogglePlainTune()
+                                ? "plain 0x38/0x39 write"
+                                : "REG_30 restart (K1)");
+                break;
             case 'A':
                 rx_force_bk4815_af(!rx_force_bk4815_af_on());
                 uart_printf("\nBK4815 AF forced %s\n",

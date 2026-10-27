@@ -33,6 +33,9 @@ void CHFRSCANNER_Stop(void);
 void CHFRSCANNER_Start(const bool storeBackupSettings, const int8_t scan_direction);
 void CHFRSCANNER_ManualResume(const int8_t scan_direction);
 void CHFRSCANNER_ContinueScanning(void);
+/* Console '#': BK4829 probe retune, plain 0x38/0x39 write (true) or the K1's
+ * REG_30 restart (false).  Returns the new state. */
+bool CHFRSCANNER_TogglePlainTune(void);
 
 /* The ordered candidate stream the dual-lane scanner draws from.  See the
  * definition in chFrScanner.c; it preserves the K1 range/list order. */

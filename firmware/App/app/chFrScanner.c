@@ -420,35 +420,41 @@ static void ScanFastResetNoiseFloor(void)
 
 /* The BK4829's 0x67 right after ScanFastTune()'s REG_30 restart is not the
  * channel: the meter restarts low and climbs while the AGC recovers.  Radio,
- * 2026-10-27 (console '#'), PMR + airband list, keyed carrier on PMR1:
+ * 2026-10-27 (a per-probe trace), PMR + airband list, keyed carrier on PMR1:
  *   - read at once (the K1's glitch guard never waited -- the indicator is
  *     low right after the restart): 14-15 on every channel, carrier included;
  *   - read at the first value over 28 (~1.1-1.6 ms): 30-39, PMR1 only 43.
  * A live receiver sits at 49-61 UHF / 96-103 VHF, and a carrier far above.
- * So follow the ramp: keep reading (~135 us per read on this bus) until no
- * new maximum for SCAN_FAST_PLATEAU_READS reads.  The result is the *mean* of
- * those plateau reads, not the peak: the peak of 8-40 noisy reads put plain
- * noise at 90-110 UHF / 80-90 VHF, above the receive gate's single-read marks
- * (75-81), and every pass started with false hits (radio, same session); a
- * keyed carrier read 222 there either way.  The cap keeps a dead chip from
- * stalling the scan. */
+ * So follow the meter (~135 us per read on this bus) until it holds still:
+ * SCAN_FAST_PLATEAU_READS reads in a row within SCAN_FAST_PLATEAU_TOL of a
+ * reference reading, which restarts whenever a read leaves that band -- a ramp
+ * up after a restart, or a fall from the previous channel's level after a
+ * plain retune.  The result is the *mean* of the plateau reads: the peak of
+ * 8-40 noisy reads put plain noise at 90-110 UHF / 80-90 VHF, above the
+ * receive gate's single-read marks (75-81), and every pass started with false
+ * hits (radio, same session); a keyed carrier read 222 either way.  The cap
+ * keeps a dead chip from stalling the scan. */
 #define SCAN_FAST_PLATEAU_READS     8u
+#define SCAN_FAST_PLATEAU_TOL       6u
 #define SCAN_FAST_SETTLE_MAX_US 20000u
 
 static uint16_t ScanFastReadRssi(void)
 {
     const uint32_t t0 = systick_micros();
-    uint16_t peak  = BK4819_GetRSSI();
-    uint8_t  flat  = 0;
-    uint32_t sum   = 0;    /* the reads since the last new maximum */
+    uint16_t ref  = BK4819_GetRSSI();
+    uint16_t last = ref;
+    uint8_t  flat = 0;
+    uint32_t sum  = 0;    /* the reads inside the band around `ref` */
 
     while (flat < SCAN_FAST_PLATEAU_READS &&
            (uint32_t)(systick_micros() - t0) < SCAN_FAST_SETTLE_MAX_US)
     {
-        const uint16_t r = BK4819_GetRSSI();
+        const uint16_t r    = BK4819_GetRSSI();
+        const uint16_t diff = (r > ref) ? (uint16_t)(r - ref) : (uint16_t)(ref - r);
 
-        if (r > peak) {
-            peak = r;
+        last = r;
+        if (diff > SCAN_FAST_PLATEAU_TOL) {
+            ref  = r;
             flat = 0;
             sum  = 0;
         } else {
@@ -456,8 +462,36 @@ static uint16_t ScanFastReadRssi(void)
             sum += r;
         }
     }
-    /* Timed out still rising: the last maximum is the best estimate. */
-    return flat ? (uint16_t)((sum + flat / 2u) / flat) : peak;
+
+    /* Timed out still moving: the latest reading is the best estimate. */
+    return flat ? (uint16_t)((sum + flat / 2u) / flat) : last;
+}
+
+/* REG_30 as the chip holds it (read at each batch's seed), so the plain-write
+ * tune below only rewrites it when the AF DAC mute is not applied yet. */
+static uint16_t scanFastReg30Chip;
+
+/* Seed the probe's REG_30: the chip's current value with the AF DAC cleared, so
+ * the sweep is silent.  ScanFastTune() writes 0 and then this value in the
+ * restart mode, so without the seed the chip would be left disabled. */
+static void ScanFastSeedReg30(void)
+{
+    scanFastReg30Chip = BK4819_ReadRegister(BK4819_REG_30);
+    scanFastReg30     = scanFastReg30Chip & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
+}
+
+/* How a probe retunes the BK4829.  The K1 restarts the receiver
+ * (REG_30 = 0, then the old value) after the 0x38/0x39 write; on this board the
+ * meter then restarts at ~0 and climbs for 1-14 ms (docs/ra89r_scan.md), which
+ * ScanFastReadRssi() has to wait out.  The plain write -- what the LISTEN probe
+ * already does -- only moves the synthesizer and leaves the AGC running.
+ * Console '#' switches back to the restart for an A/B with `J`. */
+static bool scanFastPlainTune = true;
+
+bool CHFRSCANNER_TogglePlainTune(void)
+{
+    scanFastPlainTune = !scanFastPlainTune;
+    return scanFastPlainTune;
 }
 
 static void ScanFastTune(uint32_t frequency)
@@ -472,8 +506,19 @@ static void ScanFastTune(uint32_t frequency)
     scanFastPrevFrequency = frequency;
     scanFastMarkFreq      = frequency;
     BK4819_SetFrequency(frequency);
+
+    if (scanFastPlainTune) {
+        /* Only the AF DAC mute, once per batch; no restart. */
+        if (scanFastReg30Chip != scanFastReg30) {
+            BK4819_WriteRegister(BK4819_REG_30, scanFastReg30);
+            scanFastReg30Chip = scanFastReg30;
+        }
+        return;
+    }
+
     BK4819_WriteRegister(BK4819_REG_30, 0);
     BK4819_WriteRegister(BK4819_REG_30, scanFastReg30);
+    scanFastReg30Chip = scanFastReg30;
 }
 
 const VFO_Info_t *CHFRSCANNER_GetScanDisplayVfo(void)
@@ -767,7 +812,7 @@ static scan_fast_result_t ScanRangeFastPrecheck(void)
     // Mute AF DAC during the precheck sweep: avoids audio glitches and
     // saves a few uA on each silent step. The bit is restored on the real
     // tune by RADIO_SetupRegisters() in NextFreqChannel().
-    scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
+    ScanFastSeedReg30();
 
     for (uint8_t i = 0; i < SCAN_FAST_PRECHECK_STEPS; ++i)
     {
@@ -995,7 +1040,7 @@ static bool MemChannelFastPrecheck(uint16_t channel)
         ScanFastApplyChannelShape(modulation);
 
         // Mute AF DAC for the same reason as in ScanRangeFastPrecheck().
-        scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
+        ScanFastSeedReg30();
         ScanFastTune(frequency);
 
         rssi = ScanFastReadCandidateRssi();
@@ -1220,7 +1265,7 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
     /* Seed the BK4829 control register the way ScanRangeFastPrecheck does, with
      * the AF DAC bit cleared: ScanFastTune() writes 0 and then this value, so
      * without it the chip would be left with 0x30 = 0 (disabled). */
-    scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
+    ScanFastSeedReg30();
     scanBothState.selected_hit = SCAN_LANE_NONE;
 
     {
@@ -1291,7 +1336,7 @@ static scan_fast_result_t ScanBothFastPrecheck(void)
                  (gScanStateDir < 0 && c[k].frequency_10hz > scanBothPrevFrequency)))
             {
                 ScanBothReset();
-                scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
+                ScanFastSeedReg30();
             }
             scanBothPrevFrequency = c[k].frequency_10hz;
 
