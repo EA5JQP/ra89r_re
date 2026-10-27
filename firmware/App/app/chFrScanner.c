@@ -306,15 +306,6 @@ static void CHFRSCANNER_AbortActiveReception(void)
 #define SCAN_FAST_FINE_REFINE_MAX    80
 #define SCAN_FAST_FINE_RSSI_DROP      8
 #define SCAN_FAST_RSSI_MAX          65535u
-// Settle loop guard: at most this many 1us waits while the BK4819 glitch
-// indicator stays above SCAN_FAST_GLITCH_THRESHOLD. Caps the worst-case
-// settling time per step at ~50us before we read the RSSI anyway.
-/* A noisy band (the airband) keeps the glitch indicator above the threshold, so
- * waiting up to SCAN_FAST_GLITCH_GUARD_MAX times costs ~15 ms per candidate
- * (each probe is a bit-banged RF-bus read) and makes a whole scan step ~90 ms --
- * which starves the UI and the keys.  A few samples settle it just as well. */
-#define SCAN_FAST_GLITCH_GUARD_MAX  4
-#define SCAN_FAST_GLITCH_THRESHOLD  200
 // HF/VHF boundary in Hz: BK4819_PickRXFilterPathBasedOnFrequency() switches
 // the front-end filter path here, so we only re-run that (relatively
 // expensive) call when we actually cross the boundary.
@@ -327,6 +318,9 @@ typedef enum {
 } scan_fast_result_t;
 
 static uint16_t scanFastReg30;
+/* The frequency the BK4829 was last probed on: the scanner's mark is taken for
+ * that band (rx_squelch_open_mark_for()), not for wherever the receiver sat. */
+static uint32_t scanFastMarkFreq;
 static uint16_t scanFastNoiseFloor   = SCAN_FAST_RSSI_MAX;
 static uint32_t scanFastPrevFrequency;
 /* The LISTEN sweep's cursor.  The walk advances gRxVfo's frequency, but gRxVfo
@@ -335,6 +329,11 @@ static uint32_t scanFastPrevFrequency;
  * the receiver ended a scan 75 kHz off its channel). 0 = start from the listen
  * frequency. */
 static uint32_t scanListenCursor;
+/* The listen VFO's own record while a LISTEN hit is shown in gRxVfo: the hit is
+ * received on the scan lane's chip (the listener is never moved), and the next
+ * batch puts the record back before it walks. */
+static FREQ_Config_t scanListenHome;
+static bool          scanListenHomeValid;
 static bool     scanFastLastFullTuneCandidate;
 static VFO_Info_t scanFastDisplayVfo;
 static bool       scanFastDisplayVfoValid;
@@ -408,6 +407,7 @@ static void ScanFastResetState(void)
     scanFastNoiseFloor            = SCAN_FAST_RSSI_MAX;
     scanFastPrevFrequency         = 0;
     scanListenCursor              = 0;
+    scanListenHomeValid           = false;
     scanFastLastFullTuneCandidate = false;
     scanFastDisplayVfoValid       = false;
     ScanBothReset();
@@ -418,17 +418,46 @@ static void ScanFastResetNoiseFloor(void)
     scanFastNoiseFloor = SCAN_FAST_RSSI_MAX;
 }
 
+/* The BK4829's 0x67 right after ScanFastTune()'s REG_30 restart is not the
+ * channel: the meter restarts low and climbs while the AGC recovers.  Radio,
+ * 2026-10-27 (console '#'), PMR + airband list, keyed carrier on PMR1:
+ *   - read at once (the K1's glitch guard never waited -- the indicator is
+ *     low right after the restart): 14-15 on every channel, carrier included;
+ *   - read at the first value over 28 (~1.1-1.6 ms): 30-39, PMR1 only 43.
+ * A live receiver sits at 49-61 UHF / 96-103 VHF, and a carrier far above.
+ * So follow the ramp: keep reading (~135 us per read on this bus) until no
+ * new maximum for SCAN_FAST_PLATEAU_READS reads.  The result is the *mean* of
+ * those plateau reads, not the peak: the peak of 8-40 noisy reads put plain
+ * noise at 90-110 UHF / 80-90 VHF, above the receive gate's single-read marks
+ * (75-81), and every pass started with false hits (radio, same session); a
+ * keyed carrier read 222 there either way.  The cap keeps a dead chip from
+ * stalling the scan. */
+#define SCAN_FAST_PLATEAU_READS     8u
+#define SCAN_FAST_SETTLE_MAX_US 20000u
+
 static uint16_t ScanFastReadRssi(void)
 {
-    uint8_t guard = SCAN_FAST_GLITCH_GUARD_MAX;
-    while (guard-- && BK4819_GetGlitchIndicator() >= SCAN_FAST_GLITCH_THRESHOLD)
-    {
-        SYSTICK_DelayUs(1);
-    }
+    const uint32_t t0 = systick_micros();
+    uint16_t peak  = BK4819_GetRSSI();
+    uint8_t  flat  = 0;
+    uint32_t sum   = 0;    /* the reads since the last new maximum */
 
-    // Discard first read: after fast tuning the RSSI/AGC value may still be stale.
-    BK4819_GetRSSI();
-    return BK4819_GetRSSI();
+    while (flat < SCAN_FAST_PLATEAU_READS &&
+           (uint32_t)(systick_micros() - t0) < SCAN_FAST_SETTLE_MAX_US)
+    {
+        const uint16_t r = BK4819_GetRSSI();
+
+        if (r > peak) {
+            peak = r;
+            flat = 0;
+            sum  = 0;
+        } else {
+            flat++;
+            sum += r;
+        }
+    }
+    /* Timed out still rising: the last maximum is the best estimate. */
+    return flat ? (uint16_t)((sum + flat / 2u) / flat) : peak;
 }
 
 static void ScanFastTune(uint32_t frequency)
@@ -441,6 +470,7 @@ static void ScanFastTune(uint32_t frequency)
     }
 
     scanFastPrevFrequency = frequency;
+    scanFastMarkFreq      = frequency;
     BK4819_SetFrequency(frequency);
     BK4819_WriteRegister(BK4819_REG_30, 0);
     BK4819_WriteRegister(BK4819_REG_30, scanFastReg30);
@@ -530,7 +560,10 @@ static uint16_t ScanFastGetNoiseTrigger(void)
  * so the scanner and the audio agree on what "a signal" is. */
 static uint16_t ScanFastReceiveMark(void)
 {
-    return rx_squelch_open_mark_now();
+    /* The BK4829's own scale, at the probed band: the *active* lane's mark is
+     * on the BK4815's 7-bit scale when the VFO is on that chip, and on the
+     * receiver's band rather than the probe's. */
+    return rx_squelch_open_mark_for(false, scanFastMarkFreq);
 }
 
 /* Squelch off (level 0) keeps the K1's rule: no fast precheck at all. */
@@ -599,6 +632,41 @@ static bool ScanFastIsCandidate(uint16_t rssi)
         scanFastNoiseFloor = (uint16_t)((7u * scanFastNoiseFloor + rssi + 4u) >> 3);
 
     return false;
+}
+
+/* The single-lane FAST precheck probes the chip the full tune will land on --
+ * the selected VFO's transceiver (rx_scan_commit()).  It used to probe the
+ * BK4829 unconditionally: with the VFO on the BK4815 that chip's receive-path
+ * pins are set for the BK4815 lane (~16 dB down on the BK4829 at VHF) and the
+ * mark was on the other chip's scale. */
+static bool ScanFastLaneIs4815(void)
+{
+    return SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815;
+}
+
+/* One BK4815 probe: tune + band, the fixed settle, a discarded first read. */
+static uint16_t ScanFast4815Read(uint32_t frequency)
+{
+    bk4815_set_frequency(frequency, false);
+    bk4815_set_band((frequency >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+    SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
+    bk4815_read_rssi();
+    return (uint16_t)(bk4815_read_rssi() & 0x7fu);
+}
+
+/* A BK4815-lane candidate: at or over the lane's mark on two probes.  The
+ * confirmation is the one LISTEN and FAST BOTH already use -- a single noisy
+ * sample would otherwise cost a full tune.  `display` gets the reading scaled
+ * into the 9-bit sparkline range. */
+static bool ScanFast4815Probe(uint32_t frequency, uint16_t *display)
+{
+    const uint16_t mark = rx_squelch_open_mark_for(true, frequency);
+    const uint16_t raw  = ScanFast4815Read(frequency);
+
+    if (display)
+        *display = (uint16_t)(raw * SCAN_FAST4815_RSSI_SCALE);
+
+    return raw >= mark && ScanFast4815Read(frequency) >= mark;
 }
 
 static void ScanFastApplyChannelShape(ModulationMode_t modulation)
@@ -719,6 +787,20 @@ static scan_fast_result_t ScanRangeFastPrecheck(void)
             ScanFastResetState();
         }
 
+        if (ScanFastLaneIs4815())
+        {
+            uint16_t display = 0;
+            const bool hit = ScanFast4815Probe(freq, &display);
+
+            scan_candidate_rate_add(&scanCandidateRate, 1u);
+#ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
+            ScanRssiSparklinePush(display);
+#endif
+            if (hit)
+                return SCAN_FAST_CANDIDATE;
+            continue;
+        }
+
         ScanFastTune(freq);
 
         const uint16_t rssi = ScanFastReadCandidateRssi();
@@ -760,6 +842,7 @@ static uint16_t ScanListenProbe(uint32_t freq, bool listen4815, bool listen_uhf)
 {
     if (listen4815) {
         /* Scan lane: the BK4829. */
+        scanFastMarkFreq = freq;
         BK4819_SetFrequency(freq);
         return ScanFastReadRssi();
     }
@@ -790,6 +873,12 @@ static scan_fast_result_t ScanRangeFastPrecheckListen(void)
      * channel after one scan, carrier lost (0x67 269 -> 95, squelch closed).
      * Save the record and put it back when the batch finds nothing; a hit is
      * left in place for the caller's full tune. */
+    if (scanListenHomeValid) {
+        gRxVfo->freq_config_RX = scanListenHome;
+        RADIO_ApplyOffset(gRxVfo);
+        scanListenHomeValid = false;
+    }
+
     const FREQ_Config_t saved_rx = gRxVfo->freq_config_RX;
     bool hit = false;
 
@@ -863,6 +952,13 @@ static scan_fast_result_t ScanRangeFastPrecheckListen(void)
                     (unsigned)(scanListenCursor / 100000u),
                     (unsigned)(scanListenCursor % 100000u),
                     listen4815 ? "BK4829" : "BK4815");
+        /* Receive the hit on the chip that found it -- the scan lane -- so the
+         * listener keeps its channel (RADIO_SetupRegisters() and the commit
+         * follow the override, see rx_bk4829_is_receiver()). */
+        scanListenHome      = saved_rx;
+        scanListenHomeValid = true;
+        rx_set_scan_source_override(listen4815 ? RX_SCAN_SOURCE_BK4829
+                                               : RX_SCAN_SOURCE_BK4815);
         gRxVfo->freq_config_RX.Frequency = scanListenCursor;
         RADIO_ApplyOffset(gRxVfo);
         return SCAN_FAST_CANDIDATE;
@@ -888,19 +984,31 @@ static bool MemChannelFastPrecheck(uint16_t channel)
         return true;
     }
 
-    ScanFastApplyChannelShape(modulation);
+    bool     hit;
+    uint16_t rssi = 0;
+    if (ScanFastLaneIs4815())
+    {
+        hit = ScanFast4815Probe(frequency, &rssi);
+    }
+    else
+    {
+        ScanFastApplyChannelShape(modulation);
 
-    // Mute AF DAC for the same reason as in ScanRangeFastPrecheck().
-    scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
-    ScanFastTune(frequency);
+        // Mute AF DAC for the same reason as in ScanRangeFastPrecheck().
+        scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
+        ScanFastTune(frequency);
 
-    const uint16_t rssi = ScanFastReadCandidateRssi();
+        rssi = ScanFastReadCandidateRssi();
+        hit  = ScanFastIsCandidate(rssi);
+    }
+
+
     scan_candidate_rate_add(&scanCandidateRate, 1u);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
     ScanRssiSparklinePush(rssi);
 #endif
 
-    if (ScanFastIsCandidate(rssi))
+    if (hit)
     {
         scanFastLastFullTuneCandidate = true;
         return true;  // signal detected: let the full tune path follow
@@ -1498,9 +1606,6 @@ void CHFRSCANNER_ContinueScanning(void)
 
 void CHFRSCANNER_ContinueScanning(void)
 {
-    /* A resumed scan is a fresh pass: drop any paused-hit receive override so
-     * the receiver follows the saved VFO route again until the next hit. */
-    rx_clear_scan_source_override();
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
     if (scanFastLastFullTuneCandidate &&
         gCurrentFunction != FUNCTION_INCOMING &&
@@ -1516,10 +1621,17 @@ void CHFRSCANNER_ContinueScanning(void)
     if (gCurrentFunction == FUNCTION_INCOMING &&
         (IS_FREQ_CHANNEL(gNextMrChannel) || gCurrentCodeType == CODE_TYPE_OFF))
     {
+        /* The hit is being received: keep its route (the override names the
+         * chip a dual-lane hit was found on).  Dropping it here used to hand
+         * the receiver back to the VFO's chip at the moment the reception
+         * started. */
         APP_StartListening(gMonitor ? FUNCTION_MONITOR : FUNCTION_RECEIVE);
     }
     else
     {
+        /* Moving on is a fresh pass: drop the paused-hit override so the
+         * receiver follows the saved VFO route again until the next hit. */
+        rx_clear_scan_source_override();
         IS_FREQ_CHANNEL(gNextMrChannel) ? NextFreqChannel() : NextMemChannel();
     }
 
@@ -1765,6 +1877,8 @@ static void NextFreqChannel(void)
     RADIO_ApplyOffset(gRxVfo);
     RADIO_ConfigureSquelchAndOutputPower(gRxVfo);
     RADIO_SetupRegisters(true);
+    /* Put the receiving chip on the candidate (see rx_scan_commit()). */
+    rx_scan_commit(gRxVfo->pRX->Frequency);
 
 #ifdef ENABLE_FASTER_CHANNEL_SCAN
     gScanPauseDelayIn_10ms = 9;   // 90ms
@@ -1929,6 +2043,8 @@ static void NextMemChannel(void)
 
         RADIO_ConfigureChannel(gEeprom.RX_VFO, VFO_CONFIGURE_RELOAD);
         RADIO_SetupRegisters(true);
+        /* Put the receiving chip on the channel (see rx_scan_commit()). */
+        rx_scan_commit(gRxVfo->pRX->Frequency);
 
         gUpdateDisplay = true;
     }

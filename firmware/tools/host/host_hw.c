@@ -19,6 +19,7 @@
 #include "functions.h"
 #include "driver/keypad.h"
 #include "driver/spi_flash.h"
+#include "settings.h"
 
 uint32_t SystemCoreClock = 8000000u;
 
@@ -95,6 +96,20 @@ bool     rx_squelch_quiet(uint8_t polls) { (void)polls; return true; }
 /* The FAST BOTH scan path reads the live open mark and sets the BK4815 band;
  * the preview does not execute a scan sweep, so these are inert. */
 uint16_t rx_squelch_open_mark_now(void) { return 0u; }
+uint16_t rx_squelch_open_mark_for(bool use_4815, uint32_t freq_10hz)
+{
+    (void)use_4815;
+    (void)freq_10hz;
+    return 0u;
+}
+
+/* The scan's receive route: the preview has no chips, so the commit is inert
+ * and the BK4829 follows the selected VFO as RADIO_SetupRegisters() expects. */
+void     rx_scan_commit(uint32_t freq_10hz) { (void)freq_10hz; }
+bool     rx_bk4829_is_receiver(void)
+{
+    return SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) != RF_XCVR_BK4815;
+}
 void     bk4815_set_band(uint16_t band) { (void)band; }
 
 /* driver/rx.c's gate driver: the preview stubs the receiver, so this is inert. */

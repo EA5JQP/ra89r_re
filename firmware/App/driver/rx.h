@@ -403,10 +403,11 @@ void rf_dual_refresh(void);
  * frequency. */
 void rf_dual_reapply(void);
 
-/* A temporary scan-hit receive route.  While set, the receiver follows the scan
- * hit's chip and frequency instead of the selected VFO's transceiver; clearing
- * it restores the saved per-VFO route.  Used by the dual-transceiver scan while
- * a hit is paused.  Never persisted. */
+/* A temporary scan-hit receive route.  While set, the scanner's next commit
+ * (rx_scan_commit() below) tunes the hit's chip instead of the selected VFO's
+ * transceiver; clearing it restores the saved per-VFO route.  Used by the
+ * dual-lane scans (FAST BOTH, LISTEN) for a hit found on a given chip.  Never
+ * persisted. */
 typedef enum {
     RX_SCAN_SOURCE_DEFAULT = 0,   /* the selected VFO's own transceiver */
     RX_SCAN_SOURCE_BK4829  = 1,
@@ -416,5 +417,39 @@ typedef enum {
 void             rx_set_scan_source_override(rx_scan_source_t source);
 void             rx_clear_scan_source_override(void);
 rx_scan_source_t rx_scan_source_override(void);
+
+/* ---- the scan's receive route ---------------------------------------------
+ * While a scan runs, rx_service() no longer follows the VFOs (the scanner owns
+ * the chips and walks gRxVfo as its cursor), so the scanner has to say
+ * explicitly where a full tune lands.  The route is the override when one is
+ * set (a dual-lane hit names its chip), otherwise the selected VFO's own
+ * transceiver.  Without this a BK4815 VFO was never retuned during a NORMAL or
+ * FAST scan: RADIO_SetupRegisters() skips the BK4829 for it, the coordinator
+ * yields, and the squelch kept reading the BK4815 on the pre-scan channel. */
+static inline bool rx_scan_route_is_4815(rx_scan_source_t source, bool vfo_is_4815)
+{
+    if (source == RX_SCAN_SOURCE_BK4815)
+        return true;
+    if (source == RX_SCAN_SOURCE_BK4829)
+        return false;
+    return vfo_is_4815;
+}
+
+/* Commit a scan's full tune: tune the route's chip to `freq_10hz`, select it as
+ * the audio/squelch lane and hold the gate closed for the settling window.
+ * Called by the scanner after RADIO_SetupRegisters() on every candidate it
+ * keeps; never for the precheck probes. */
+void rx_scan_commit(uint32_t freq_10hz);
+
+/* True when the BK4829 is the chip the current receive (VFO or scan route) is
+ * on, i.e. when the K1's RADIO_SetupRegisters() may retune it. */
+bool rx_bk4829_is_receiver(void);
+
+/* The opening mark for `use_4815`'s lane at `freq_10hz` (0 = the active lane's
+ * frequency), from that lane/band/modulation's learned floor -- or its measured
+ * prior when that slot has never been learned.  The scanner probes frequencies
+ * the receiver has not sat on, so the active lane's mark (or the floor-unknown
+ * 0xCF fallback) would be on the wrong scale or band there. */
+uint16_t rx_squelch_open_mark_for(bool use_4815, uint32_t freq_10hz);
 
 #endif /* DRIVER_RX_H */

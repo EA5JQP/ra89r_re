@@ -203,6 +203,105 @@ only tunes the BK4829 when the selected VFO is assigned to it).  It never
 modifies the saved `TrVfoA`/`TrVfoB` values, and it is cleared on scan start,
 resume and stop (checked in `preview_k1.c`).
 
+## The scan's receive route and the deaf BK4829 probe (2026-10-27, branch `driver/scan-route`)
+
+Symptom (radio, 2026-10-25): the memory scan does not lock a keyed PMR446
+carrier in the FAST modes; integration of the two transceivers during a scan is
+inconsistent.  Read out of the code, four defects:
+
+1. **A BK4815 VFO was never retuned during a scan.**  `rx_service()` yields the
+   coordinator while `gScanStateDir != SCAN_OFF`, and `RADIO_SetupRegisters()`
+   skips the BK4829 for a BK4815 VFO, so a NORMAL/FAST full tune reached
+   neither chip: the BK4815 kept its pre-scan channel and its squelch decided
+   on that.
+2. **The single-lane FAST precheck always probed the BK4829**, also for a
+   BK4815 VFO -- with the lane's receive-path pins set for the BK4815 (~16 dB
+   down on the BK4829 at VHF, `docs/ra89r_rfpath.md`) and against the
+   *active* lane's mark, which is then on the BK4815's 7-bit scale.
+3. **The precheck's mark used the receiver's band, not the probe's**, and an
+   unlearned floor slot fell back to `0xCF` (207) -- above a -30 dBm VHF
+   carrier (187).  A scan into a band or modulation the VFO had not sat on
+   (VHF from a UHF VFO, the AM airband from an FM one) was deaf.
+4. **A resumed scan dropped the hit's route at the moment the reception
+   started** (`CHFRSCANNER_ContinueScanning()` cleared the override before
+   `APP_StartListening()`), and a LISTEN hit moved the *listener* onto the hit.
+
+The shape now:
+
+* the scanner **commits** every full tune: `rx_scan_commit(f)` after
+  `RADIO_SetupRegisters()` in `NextFreqChannel()`/`NextMemChannel()` tunes the
+  route's chip (BK4815: tune + `0x75` + receive entry; BK4829: tune + band),
+  selects it as the audio/squelch lane and starts the gate closed (no settle
+  hold-off: NORMAL locked inside the 100 ms step dwell without one);
+* the route is the override if one is set (a FAST BOTH or LISTEN hit names its
+  chip), else the selected VFO's transceiver -- `rx_scan_route_is_4815()`,
+  host-tested in `test_squelch`; `RADIO_SetupRegisters()` retunes the BK4829
+  only when `rx_bk4829_is_receiver()`;
+* the single-lane FAST precheck (range and memory) probes that same chip, with
+  a two-read confirmation on the BK4815 like LISTEN/FAST BOTH;
+* the scanner's marks come from `rx_squelch_open_mark_for(lane, f)`: the probed
+  lane/band/modulation's learned floor, or its measured prior;
+* a LISTEN hit is received on the scan lane's chip (override), the listen
+  record is restored by the next batch, and the override is cleared only when
+  the scan moves on.
+
+### The root cause on the radio: the BK4829 probe read before the receiver ran
+
+The four defects above were real, but with the VFO on the BK4829 the memory
+scan still raced through the list without locking.  A per-probe console trace
+(memory list: PMR1-8 + 11 airband channels, another radio keyed on PMR1, VFO on
+the BK4829, `FAST`) showed the cause:
+
+| probe read | PMR noise | airband noise | keyed PMR1 | result |
+|---|---|---|---|---|
+| at once (the K1's code) | 14-15 | 14 | **14-15** | never a hit |
+| first read over 28 (~1.1-1.6 ms) | 31-39 | 29-33 | 42-43 | never a hit |
+| plateau (no new max for 8 reads) | ~64 | 81-88 | **222-227** | **locks** |
+
+`ScanFastTune()` restarts the receiver (`REG_30 = 0`, then the old value) and
+the meter restarts low and climbs while the AGC recovers.  The K1's settle
+guard waits only while the glitch indicator is high -- and it is low right
+after the restart -- so the K1 code read the reset value: **the BK4829's fast
+probe was deaf on this board from the start** (`FAST`, and the BK4829 lane of
+`FAST BOTH`).  The earlier FAST BOTH hit in this doc came from the BK4815
+lane; the benchmark only counted probes, so it never showed this.
+
+`ScanFastReadRssi()` now reads (~135 us per read on this bus) until no new
+maximum for `SCAN_FAST_PLATEAU_READS` (8) reads, capped at 20 ms, and returns
+the **mean of the plateau reads**.  Returning the peak instead put plain noise
+at 90-110 UHF / 80-90 VHF, above the receive gate's single-read marks, and
+every pass started with false hits.
+
+**Validated on the radio (2026-10-27), VFO on the BK4829:** the PMR memory
+scan locks on keyed PMR1 in `FAST` and in `FAST BOTH` (a memory list runs the
+single-lane precheck in both, see "Scan-list scope"): `HIT`, full tune, the
+squelch opens, the reception is heard; the squelch closes when the other radio
+unkeys.  `NORMAL` was unaffected.
+
+Seen in the same runs, still open:
+
+* **Strong-carrier spill-over:** with the keyed radio close by, PMR ch4-8 read
+  100-144 and were taken as hits; the chip squelch even opened briefly on
+  ch8.  Each costs a 200 ms full tune; the scan still reaches PMR1 and locks.
+* **The settle costs speed.**  After a probe-to-probe restart, VHF channels
+  start at 0 and take 10-14 ms to plateau (UHF ~1.2 ms; ~1.2 ms on either band
+  right after a full tune).  `J`, 446.00625-447.00625, 12.5 kHz, quiet:
+
+  | | FAST | FAST BOTH | ratio |
+  |---|---|---|---|
+  | before (deaf BK4829 probe) | 401/s | 671/s | 1.67x |
+  | now | **49/s** | **373/s** | 7.61x |
+
+  FAST BOTH profile: 100 ms per 48-probe batch, of which reads 73 ms, tunes
+  27 ms.  The next experiment is retuning with a plain `0x38/0x39` write (as
+  the LISTEN probe does) instead of the `REG_30` restart, which may avoid the
+  AGC ramp altogether.
+
+**Radio gates still open:** the VFO on the BK4815 (route + BK4815 precheck);
+a FAST BOTH *range* hit on each lane; a VHF range from a UHF VFO; LISTEN keeps
+the listener audible after a hit and resume.  Until they pass, the branch
+stays off `develop`.
+
 ## Diagnostics
 
 Console `J` (`App/main.c`) now also prints the `SetScn` mode, the override state,

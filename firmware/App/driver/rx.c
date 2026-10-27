@@ -173,6 +173,31 @@ uint16_t rx_squelch_open_mark_now(void)
                                            gEeprom.SQUELCH_LEVEL, rx_active_floor());
 }
 
+uint16_t rx_squelch_open_mark_for(bool use_4815, uint32_t freq_10hz)
+{
+    const uint8_t lane = use_4815 ? 1u : 0u;
+    bool          uhf;
+    bool          am;
+    uint8_t       slot;
+
+    if (freq_10hz == 0u)
+        freq_10hz = use_4815 ? s_4815_freq : s_freq_10hz;
+
+    uhf  = (freq_10hz != 0u) && (freq_10hz >= PA_BAND_SPLIT);
+    am   = rx_lane_am();
+    slot = (uint8_t)((uhf ? 1u : 0u) | (am ? 2u : 0u));
+
+    /* An unlearned slot (a band or modulation the receiver never sat on) takes
+     * the measured prior, not the floor-unknown 0xCF fallback: on the 9-bit
+     * scale 0xCF is above a -30 dBm VHF carrier (187), so a scan into a band
+     * the VFO had not visited was deaf. */
+    return rx_squelch_open_mark_from_floor(use_4815, uhf, gEeprom.SQUELCH_LEVEL,
+                                           s_floor[lane][slot].valid
+                                               ? s_floor[lane][slot].floor
+                                               : rx_floor_clamp(rx_floor_prior(lane, uhf, am),
+                                                                use_4815));
+}
+
 uint16_t rx_squelch_close_mark_now(void)
 {
     return rx_squelch_close_mark_from_floor(s_audio_4815, rx_lane_uhf(),
@@ -208,10 +233,11 @@ static void rx_gate_hold_closed(void)
  * VFO's own transceiver; the other values pin the hit's chip until cleared. */
 static rx_scan_source_t s_scan_source = RX_SCAN_SOURCE_DEFAULT;
 
-/* The override actually applied to the chips, so rx_service() retunes only on a
- * change instead of on every loop. */
-static rx_scan_source_t s_scan_source_applied = RX_SCAN_SOURCE_DEFAULT;
-static uint32_t         s_scan_source_freq;
+/* The chip the last committed scan tune landed on (see rx_scan_commit()).
+ * Invalid until the first commit of a scan and whenever no scan runs: the
+ * receiver then stays on the selected VFO's own chip. */
+static bool s_scan_route_valid;
+static bool s_scan_route_4815;
 
 void rx_set_scan_source_override(rx_scan_source_t source)
 {
@@ -232,6 +258,10 @@ void rx_set_scan_source_override(rx_scan_source_t source)
 void rx_clear_scan_source_override(void)
 {
     s_scan_source = RX_SCAN_SOURCE_DEFAULT;
+    /* The hit's route ends with the override: until the scanner commits its
+     * next tune the receiver is the selected VFO's chip again (in LISTEN that
+     * is the listener, which a hit on the other lane never moved). */
+    s_scan_route_valid = false;
     /* A scan writes the chips under the poller, so after one stops the floor
      * learned before it may not describe this channel: start over. */
     rf_dual_reapply();      /* see rx_set_scan_source_override() */
@@ -240,6 +270,61 @@ void rx_clear_scan_source_override(void)
 rx_scan_source_t rx_scan_source_override(void)
 {
     return s_scan_source;
+}
+
+static bool rx_vfo_is_4815(void)
+{
+    return SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815;
+}
+
+static void rx_set_audio_source(bool use_4815);
+
+void rx_scan_commit(uint32_t freq_10hz)
+{
+    const bool use_4815 = rx_scan_route_is_4815(s_scan_source, rx_vfo_is_4815());
+
+    if (!s_ready || freq_10hz == 0u)
+        return;
+
+    if (use_4815) {
+        /* The BK4815's full receive entry, as rf_dual_refresh() applies it for
+         * a VFO: tune, band register, demod block + channel spacing. */
+        bk4815_set_frequency(freq_10hz, false);
+        bk4815_set_band((freq_10hz >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+        bk4815_receive_entry(gRxVfo->CHANNEL_BANDWIDTH == BANDWIDTH_WIDE);
+        s_4815_freq = freq_10hz;
+    } else {
+        /* RADIO_SetupRegisters() has tuned it already when the BK4829 is the
+         * VFO's chip; not when a dual-lane hit routes a BK4815 VFO here. */
+        BK4819_SetFrequency(freq_10hz);
+        s_freq_10hz = freq_10hz;
+        pa_select_band(freq_10hz);
+    }
+
+    s_scan_route_valid = true;
+    s_scan_route_4815  = use_4815;
+    rx_set_audio_source(use_4815);
+
+    /* A new channel starts closed: the BK4815 lane's 0..10 counter would
+     * otherwise carry the previous channel's open state over and stop the scan
+     * on a quiet one.  No settling hold-off, though: the scan's dwell is 100 ms
+     * on a frequency step (NORMAL locked inside it without one), and the hold
+     * plus the counter's 70 ms would outlast it. */
+    s_squelch_open = false;
+    s_closed_polls = 0u;
+    rx_squelch_reset(&s_sq);
+    rx_apply_audio_gate();
+}
+
+bool rx_bk4829_is_receiver(void)
+{
+    if (gScanStateDir != SCAN_OFF) {
+        if (s_scan_source != RX_SCAN_SOURCE_DEFAULT)
+            return s_scan_source == RX_SCAN_SOURCE_BK4829;
+        if (s_scan_route_valid)
+            return !s_scan_route_4815;
+    }
+    return !rx_vfo_is_4815();
 }
 
 void rx_force_bk4815_af(bool on)
@@ -696,44 +781,27 @@ void rx_service(void)
     if (s_fm_active)
         return;
 
-    /* Keep both transceivers on their own VFO.  This is now the only place the
-     * BK4829 is retuned from: the primary VFO (the BK4829 one) drives it, so
-     * with one VFO on each chip the BK4829 does not follow the receiver onto
-     * the BK4815's VFO. */
-    if (s_scan_source == RX_SCAN_SOURCE_DEFAULT) {
-        s_scan_source_applied = RX_SCAN_SOURCE_DEFAULT;
+    if (gScanStateDir == SCAN_OFF) {
+        /* Keep both transceivers on their own VFO.  This is the only place the
+         * chips follow the VFOs from: the primary VFO (the BK4829 one) drives
+         * the BK4829, so with one VFO on each chip the BK4829 does not follow
+         * the receiver onto the BK4815's VFO. */
+        s_scan_route_valid = false;
+        rf_dual_refresh();
 
-        /* While a scan runs, the scanner owns the scan lane's chip and walks
-         * gRxVfo's frequency as its cursor.  Retuning/mirroring/repairing here
-         * would fight the probes (and, in LISTEN mode, move the listening
-         * lane), so the coordinator yields for the duration and re-applies
-         * when the scan stops (CHFRSCANNER_Stop clears the override). */
-        if (gScanStateDir == SCAN_OFF) {
-            rf_dual_refresh();
-
-            /* The receive audio follows the selected VFO's transceiver, so a
-             * VFO on the BK4815 is audible through that chip's own AF. */
-            rx_set_audio_source(SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815);
-        }
+        /* The receive audio follows the selected VFO's transceiver, so a VFO
+         * on the BK4815 is audible through that chip's own AF. */
+        rx_set_audio_source(rx_vfo_is_4815());
     } else {
-        /* A paused scan hit: follow the chip that found it, not the saved VFO
-         * assignment.  The K1 receive setup only tunes the BK4829 when the
-         * selected VFO is assigned to it, so each hit's chip is retuned here
-         * (a BK4815 hit on the BK4815, a BK4829 hit on the BK4829). */
-        const bool     use_4815 = (s_scan_source == RX_SCAN_SOURCE_BK4815);
-        const uint32_t f        = gRxVfo->freq_config_RX.Frequency;
-
-        if (s_scan_source_applied != s_scan_source || s_scan_source_freq != f) {
-            if (use_4815) {
-                bk4815_set_frequency(f, false);
-                bk4815_set_band((f >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
-            } else {
-                rx_set_frequency(f);
-            }
-            s_scan_source_applied = s_scan_source;
-            s_scan_source_freq    = f;
-        }
-        rx_set_audio_source(use_4815);
+        /* While a scan runs, the scanner owns the chips and walks gRxVfo's
+         * frequency as its cursor: retuning/mirroring here would fight the
+         * probes (and, in LISTEN, move the listener).  The scanner instead
+         * commits each full tune explicitly (rx_scan_commit()), which tunes
+         * the route's chip; here the lane is only re-asserted, because the
+         * K1's own setup and the probes write the receive-path pins too.  The
+         * coordinator re-applies both lanes when the scan stops
+         * (CHFRSCANNER_Stop clears the override -> rf_dual_reapply()). */
+        rx_set_audio_source(s_scan_route_valid ? s_scan_route_4815 : rx_vfo_is_4815());
     }
 
     if (rx_ready())
@@ -766,6 +834,7 @@ static uint32_t s_dual_pri_f = 0u;
 static uint32_t s_dual_sec_f = 0u;
 static uint8_t  s_dual_rx_vfo = 0xFFu;   /* the RX_VFO the state was applied for */
 static uint32_t s_4829_mirror_f;         /* unassigned BK4829: the BK4815 tune mirrored onto it */
+static uint16_t s_band_written;          /* the BK4815 0x75 value rf_dual_refresh last wrote */
 
 void rf_dual_reapply(void)
 {
@@ -774,6 +843,10 @@ void rf_dual_reapply(void)
     s_dual_rx_vfo = 0xFFu;
     /* Force the mirror to be re-applied as well (the TX paths retune the 4829). */
     s_4829_mirror_f = 0u;
+    /* ... and the BK4815's band register: pa_select_band() rewrites 0x75 from
+     * the BK4829's frequency (a scan commit, a transmit), so the cached value
+     * no longer says what the chip holds. */
+    s_band_written = 0u;
 }
 
 void rf_dual_refresh(void)
@@ -870,8 +943,6 @@ void rf_dual_refresh(void)
     }
 
     if (roles.bk4815_vfo >= 0) {
-        static uint16_t s_band_written;
-
         {
             const uint16_t band = (f4815 >= PA_BAND_SPLIT) ? 0x0Au : 0x11u;
 
