@@ -378,12 +378,16 @@ void rx_apply_audio_gate(void)
     if (s_audio_4815) {
         bk4815_set_af(s_squelch_open);
 
-        /* While a scan runs on the other chip, keep the BK4829's AF output
-         * muted with the AF DAC alive (the stock TX-entry mute word). */
-        if (gScanStateDir != SCAN_OFF)
-            BK4819_WriteRegister(BK4819_REG_47, 0x6040u);
-        else
-            BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
+        /* The BK4815's voice reaches the speaker only through the BK4829's
+         * open AF output (0x47 = 0x6142): radio 2026-10-27, lane 4815 squelch
+         * open, 0x47 = 0x6040 gave no audio at all, 0x6142 a clean voice.  So
+         * the gate follows the squelch here too, also while a scan runs: the
+         * old scan-time 0x6040 made every FAST/FAST BOTH lock on a BK4815
+         * lane silent (a scan stays active while paused on a hit).  The
+         * stepping BK4829 cannot leak in through it: the probes run only while
+         * this lane's squelch is closed (LISTEN waits for rx_squelch_quiet(),
+         * a paused hit stops the sweep). */
+        BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
     } else {
         bk4815_set_af(false);
         BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);

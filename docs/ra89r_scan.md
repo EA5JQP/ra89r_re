@@ -115,13 +115,15 @@ come from the board, not from taste:
   BK4829's `0x33` chip path), so a probe in the other band would move the front
   end under the receiver -- `ScanRangeFastPrecheckListen()` therefore **skips
   candidates outside the listen lane's band**;
-- the **AF node is shared**: the BK4815's audio reaches the amplifier while the
-  BK4829's AF **DAC** (`0x30` bit 9) is on, and independently of the 4829's AF
-  output select (`0x47`) -- measured in the duplex runs (2026-10-19).  The
-  LISTEN precheck therefore does **not** mute the AF DAC (the FAST/FAST BOTH
-  precheck does: that is what makes today's scan silent), and `rx_poll()` holds
-  `0x47 = 0x6040` while a scan runs on the 4829 so the stepped chip's audio
-  cannot ride the node;
+- the **AF node is shared**: the BK4815's audio reaches the amplifier through
+  the BK4829's AF **DAC** (`0x30` bit 9) *and* its AF output select (`0x47`).
+  The 2026-10-19 duplex note said "independently of `0x47`"; **that is wrong**
+  -- radio 2026-10-27, lane 4815 squelch open: `0x47 = 0x6040` gave no audio at
+  all, `0x6142` a clean voice.  The LISTEN precheck does **not** mute the AF
+  DAC (the FAST/FAST BOTH precheck does), and the BK4815 lane's `0x47` follows
+  its squelch, scan or not (the old scan-time `0x6040` made every BK4815 hit
+  silent); the stepping chip cannot ride the node because the sweep runs only
+  while the listener's squelch is closed;
 - the walk still uses `gRxVfo` as its cursor (that is how the K1's range scan
   steps), so **`rx_service()` yields the coordinator while a scan is active**:
   no retune, no unassigned-4829 mirror, no band/path repair -- those read the
@@ -316,8 +318,18 @@ Seen in the same runs, still open:
   channels start at 0 and take 10-14 ms to plateau (UHF ~1.2 ms).  The plain
   write (above) removes that ramp.
 
-**Radio gates still open:** the VFO on the BK4815 (route + BK4815 precheck);
-a FAST and a FAST BOTH *range* hit on each lane with the plain write; a VHF range from a UHF VFO; LISTEN keeps
+**VFO on the BK4815, validated on the radio (2026-10-27):** the PMR memory
+scan locks on keyed PMR1 in `NORMAL`, `FAST` and `FAST BOTH` with `H` showing
+`lane 4815`, and the voice is heard -- after one more fix: `rx_apply_audio_gate()`
+held the BK4829's `0x47` at `0x6040` on a BK4815 lane whenever a scan was
+active (a paused hit included), which silences the BK4815.  The gate now
+follows the squelch as in plain receive (`0x6142` open), where the voice is
+clean with the BK4829 left running.  Tried and not needed: powering the BK4829
+down under a BK4815 reception, as the stock does (`FUN_08021844` ->
+`FUN_080187E8`: `0x30 = 0`, `0x37 = 0x9D10`; with VOX, `FUN_0801754A`).
+
+**Radio gates still open:** a FAST and a FAST BOTH *range* hit on each lane
+with the plain write; a VHF range from a UHF VFO; LISTEN keeps
 the listener audible after a hit and resume.  Until they pass, the branch
 stays off `develop`.
 
