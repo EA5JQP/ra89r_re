@@ -59,15 +59,24 @@
  * noise floor, because a fixed mark cannot work on this board: on 2026-10-21
  * the BK4829's floor measured 96-103 at 145.5 and 76-79 at 446, while the
  * BK4815's sat at 10-18, and the stock-like fixed pairs (0xCF/0xB4) then hid
- * every signal below full strength.  The stock itself compares against a
- * threshold just above its floor (its squelch page values are 23-37, on a
- * lower-noise AGC setting), so a floor + margin rule is the faithful shape.
+ * every signal below full strength.  A floor + margin rule is therefore the
+ * port's shape.  The 0x3710 page the CPS labels "squelch" is not the runtime
+ * table: the stock never reads it (only the CPS export at FUN_0801ADC4 does).
+ * The stock's runtime gate compares the 0x63/0x65 meters against four
+ * thresholds from the 0x3880 block (0x2d/0x08 narrow, 0x37/0x0b wide, scaled
+ * by the level) and that path holds instead of closing at SQL 1 on a quiet
+ * channel (measured 2026-10-23: glitch 57/noise 47 against 67/27), so copying
+ * it would reintroduce the hang this gate exists to prevent.
  *
  * `level` is gEeprom.SQUELCH_LEVEL (0 = off, handled by the caller):
  * margin = base + step * level, hysteresis below the opening mark. */
 #define RX_SQUELCH_MARGIN_BASE_4829   6u
 #define RX_SQUELCH_MARGIN_STEP_4829   6u
-#define RX_SQUELCH_MARGIN_BASE_4815   2u
+/* The BK4815's RSSI is 7-bit and its noise moves by 2-3 counts; the old base of
+ * 2 (SQL 1 margin 4, close 2) was one sample away from the noise and chattered
+ * on a quiet channel.  Base 4 gives SQL 1 a 6-count margin (3 dB) and SQL 9 22
+ * counts, while still opening on the measured carriers (32-58). */
+#define RX_SQUELCH_MARGIN_BASE_4815   4u
 #define RX_SQUELCH_MARGIN_STEP_4815   2u
 #define RX_SQUELCH_HYST_4829          12u
 #define RX_SQUELCH_HYST_4815          4u
@@ -106,6 +115,57 @@ static inline uint16_t rx_squelch_close_mark_from_floor(bool use_4815, bool uhf,
     const uint16_t hyst   = (uint16_t)(rx_squelch_margin(use_4815, level) / 2u);
 
     return (uint16_t)((open > hyst) ? (uint16_t)(open - hyst) : 0u);
+}
+
+/* ---- the gate's decision, in the stock's shape ----------------------------
+ *
+ * The stock does not open on a single RSSI sample: FUN_080052B8 returns a
+ * verdict, FUN_0801D420 feeds it to FUN_0801D3F0's 0..10 counter at
+ * `state+0x21`, and the receiver opens when that counter reaches 7 and closes
+ * when it falls below 3 (`FUN_08004C84`).  The 3..6 dead band is what keeps a
+ * noise sample from chattering the audio; the level marks above supply the
+ * amplitude hysteresis, this supplies the time one.
+ *
+ * `present` is `rssi >= open_mark`, `absent` is `rssi < close_mark`, so a
+ * reading between the marks holds the counter (the stock's verdict 2 does the
+ * same).  `force_open` is SQL 0 and the BK4815 AF override.
+ */
+#define RX_SQ_COUNT_MAX   10u
+#define RX_SQ_OPEN_AT      7u
+#define RX_SQ_CLOSE_AT     3u
+
+typedef struct {
+    uint8_t count;      /* 0..RX_SQ_COUNT_MAX */
+    bool    open;
+} rx_squelch_t;
+
+static inline void rx_squelch_reset(rx_squelch_t *s)
+{
+    s->count = 0u;
+    s->open  = false;
+}
+
+static inline void rx_squelch_step(rx_squelch_t *s, bool present, bool absent,
+                                   bool force_open)
+{
+    if (force_open) {
+        s->count = RX_SQ_COUNT_MAX;
+        s->open  = true;
+        return;
+    }
+
+    if (present) {
+        if (s->count < RX_SQ_COUNT_MAX)
+            s->count++;
+    } else if (absent) {
+        if (s->count > 0u)
+            s->count--;
+    }
+
+    if (!s->open && s->count >= RX_SQ_OPEN_AT)
+        s->open = true;
+    else if (s->open && s->count < RX_SQ_CLOSE_AT)
+        s->open = false;
 }
 
 /* Backwards-compatible wrappers for callers that only know the level (the
@@ -276,13 +336,15 @@ bool rx_ready(void);
 /* One squelch step.  Paced by the caller. */
 void rx_poll(void);
 
+/* Drive the BK4815 AF, the BK4829 AF and the amplifier (PC13) from the current
+ * gate state.  rx_poll() calls it every step; the K1 receive paths that open the
+ * audio behind the gate's back (RADIO_SetupRegisters' RADIO_SetModulation and
+ * APP_StartListening's AUDIO_AudioPathOn) call it too, so a retune cannot leak
+ * a settling burst. */
+void rx_apply_audio_gate(void);
+
 bool rx_squelch_open(void);
 
-/* The gate has been closed for at least `polls` consecutive polls.  The LISTEN
- * sweep waits for this (docs/ra89r_scan.md): a single corrupted 0x67 read used
- * to be enough to start a probe batch, which then collided with the poller and
- * turned the audio into noise. */
-bool rx_squelch_quiet(uint8_t polls);
 uint16_t rx_rssi(void);
 
 /* The marks actually in force right now: the active lane's learned floor plus
@@ -297,6 +359,15 @@ uint16_t rx_squelch_floor(void);
 /* True when the receive audio is currently taken from the BK4815 (the selected
  * RX VFO's transceiver), for the console diagnostic. */
 bool rx_audio_is_4815(void);
+
+/* Console '@': bounded electrical tail trace for the BK4829 hybrid.  Blocking
+ * for up to 30 s and owns the audio; prints RSSI fall/chip close/gate
+ * timestamps, the meter timeline and the transition count.  No scope, no
+ * marker pin. */
+void rx_tail_trace(void);
+
+/* Console 'O': override the 0x4E<10:9> close delay (0..3) for the next '@'. */
+void rx_tail_set_close_delay(int delay);
 
 /* Diagnostic (console 'A'): force the BK4815's AF open, bypassing the squelch,
  * so the audio path can be judged separately from the squelch. */
@@ -327,18 +398,24 @@ void rf_dual_refresh(void);
  * frequency. */
 void rf_dual_reapply(void);
 
-/* A temporary scan-hit receive route.  While set, the receiver follows the scan
- * hit's chip and frequency instead of the selected VFO's transceiver; clearing
- * it restores the saved per-VFO route.  Used by the dual-transceiver scan while
- * a hit is paused.  Never persisted. */
-typedef enum {
-    RX_SCAN_SOURCE_DEFAULT = 0,   /* the selected VFO's own transceiver */
-    RX_SCAN_SOURCE_BK4829  = 1,
-    RX_SCAN_SOURCE_BK4815  = 2
-} rx_scan_source_t;
+/* ---- the scan's receive route ---------------------------------------------
+ * While a scan runs, rx_service() no longer follows the VFOs (the scanner owns
+ * the chips and walks gRxVfo as its cursor), so the scanner says explicitly
+ * where a full tune lands: the selected VFO's own transceiver.  Without this a
+ * BK4815 VFO was never retuned during a scan: RADIO_SetupRegisters() skips the
+ * BK4829 for it, the coordinator yields, and the squelch kept reading the
+ * BK4815 on the pre-scan channel. */
+/* Commit a scan's full tune: tune the VFO's chip to `freq_10hz`, select it as
+ * the audio/squelch lane and start the gate closed.
+ * Called by the scanner after RADIO_SetupRegisters() on every candidate it
+ * keeps; never for the precheck probes. */
+void rx_scan_commit(uint32_t freq_10hz);
 
-void             rx_set_scan_source_override(rx_scan_source_t source);
-void             rx_clear_scan_source_override(void);
-rx_scan_source_t rx_scan_source_override(void);
+/* The opening mark for `use_4815`'s lane at `freq_10hz` (0 = the active lane's
+ * frequency), from that lane/band/modulation's learned floor -- or its measured
+ * prior when that slot has never been learned.  The scanner probes frequencies
+ * the receiver has not sat on, so the active lane's mark (or the floor-unknown
+ * 0xCF fallback) would be on the wrong scale or band there. */
+uint16_t rx_squelch_open_mark_for(bool use_4815, uint32_t freq_10hz);
 
 #endif /* DRIVER_RX_H */

@@ -20,6 +20,7 @@
 #include "functions.h"
 #include "driver/keypad.h"
 #include "driver/spi_flash.h"
+#include "settings.h"
 
 uint32_t SystemCoreClock = 8000000u;
 
@@ -89,14 +90,29 @@ void     bk1080_init(void) { }
  * has to satisfy the reference. */
 void     rx_set_fm_active(bool active) { (void)active; }
 
-/* app/chFrScanner.c's LISTEN confirmation uses this; the preview does not run
- * the receiver gate, so report a quiet lane. */
-bool     rx_squelch_quiet(uint8_t polls) { (void)polls; return true; }
-
-/* The FAST BOTH scan path reads the live open mark and sets the BK4815 band;
- * the preview does not execute a scan sweep, so these are inert. */
+/* The scanner reads the open marks; the preview does not execute a scan
+ * sweep, so these are inert. */
 uint16_t rx_squelch_open_mark_now(void) { return 0u; }
+/* Above the 9-bit 0x67 scale: no probe is a signal, so the preview's FAST scan
+ * sweeps instead of stopping on every step. */
+uint16_t rx_squelch_open_mark_for(bool use_4815, uint32_t freq_10hz)
+{
+    (void)use_4815;
+    (void)freq_10hz;
+    return 0x200u;
+}
+
+/* The scan's receive route: the preview has no chips, so the commit is inert. */
+void     rx_scan_commit(uint32_t freq_10hz) { (void)freq_10hz; }
+/* CHFRSCANNER_Stop() asks the coordinator to re-apply both lanes. */
+void     rf_dual_reapply(void) { }
+/* The scan trace (console '%') reads these; the preview never enables it. */
+uint16_t rx_rssi(void) { return 0u; }
+bool     rx_audio_is_4815(void) { return false; }
 void     bk4815_set_band(uint16_t band) { (void)band; }
+
+/* driver/rx.c's gate driver: the preview stubs the receiver, so this is inert. */
+void     rx_apply_audio_gate(void) { }
 
 /* The preview's step() advances this counter by 10 ms, matching one
  * scheduler_tick_10ms().  The target links the real SysTick implementation. */
@@ -107,8 +123,8 @@ uint32_t systick_millis(void)
     return s_host_millis;
 }
 
-/* chFrScanner.c's FAST BOTH profiling uses this; the preview's clock is coarse
- * (one ms per step), which is all the scan-policy checks need. */
+/* The scan settle/benchmark timing uses this; the preview's clock is coarse
+ * (one ms per step), which is all the scan checks need. */
 uint32_t systick_micros(void)
 {
     return s_host_millis * 1000u;
@@ -119,21 +135,13 @@ void host_systick_advance(uint32_t milliseconds)
     s_host_millis += milliseconds;
 }
 
-/* The dual-scan path in app/chFrScanner.c references the BK4815, the shared
- * band path and the RX scan-source override.  The preview does not run the RF
- * scan; these stand in so it links, and the override is recorded so a preview
- * check can confirm it is cleared on stop. */
+/* The scanner's BK4815 probe references the BK4815 and the shared band path.
+ * The preview does not run the RF scan; these stand in so it links. */
 void     pa_select_band(uint32_t freq_10hz) { (void)freq_10hz; }
 void     bk4815_set_frequency(uint32_t freq_10hz, bool tx) { (void)freq_10hz; (void)tx; }
 void     bk4815_write_reg(uint8_t reg, uint16_t value) { (void)reg; (void)value; }
 uint16_t bk4815_read_rssi(void) { return 0; }
 
-static int s_host_scan_source;
-
-void             rx_set_scan_source_override(rx_scan_source_t source) { s_host_scan_source = (int)source; }
-void             rx_clear_scan_source_override(void) { s_host_scan_source = 0; }
-rx_scan_source_t rx_scan_source_override(void) { return (rx_scan_source_t)s_host_scan_source; }
-int              host_rx_scan_source(void) { return s_host_scan_source; }
 
 /* Keypad: the RA89R reads an ADC ladder, so the host stands in with a key the
  * preview sets by hand -- that is how the port's key loop (port_gui.c) is

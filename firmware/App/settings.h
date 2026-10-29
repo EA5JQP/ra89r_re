@@ -397,8 +397,9 @@ void      SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr);
  * settings blob.  gSetting_set_scn (misc.c) holds this value at run time. */
 typedef enum {
     SCAN_MODE_NORMAL    = 0,   /* step scan, no fast precheck */
-    SCAN_MODE_FAST      = 1,   /* single-lane fast RSSI precheck */
-    SCAN_MODE_FAST_BOTH = 2,   /* both transceivers as interleaved scan lanes */
-    SCAN_MODE_LISTEN    = 3    /* listen on the selected VFO's chip, scan the other */
+    SCAN_MODE_FAST      = 1    /* fast RSSI precheck on the VFO's own chip */
+    /* 2 (FAST BOTH) and 3 (LISTEN) were removed: the two chips share one set
+     * of receive-path pins, so the chip they are not set for hears nothing
+     * (docs/ra89r_scan.md).  A saved 2 or 3 loads as FAST. */
 } scan_mode_t;
 #endif

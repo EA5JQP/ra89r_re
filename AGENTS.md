@@ -40,6 +40,10 @@ port of the F4HWN UV-K1/K5V3 application that boots into the K1 GUI on the radio
   against `tools/ra89r_bt_console_sim.py`; `tools/ra89r_bt_headset.py` makes
   this PC the earpiece (HFP + SCO/mSBC, a known mic signal, PTT) for over-air
   audio tests.  See `docs/ra89r_bt_debug.md`.
+- `tools/cat_rf_test.py` — the CAT + tinySA-MCP receive test: tunes and reads the
+  S-meter over CAT (`SM`/`STATUS`) and drives the carrier through the tinySA MCP;
+  `tools/tinysa_mcp_sim.py` is its stdio MCP test double, so `--sim` and
+  `--mcp-selftest` run without hardware.  See `docs/ra89r_cat_tinysa_test.md`.
 - `tools/BUILDING.md` — building the firmware and host tools. `tools/FLASHING.md`
   — the concrete flash procedure: hardware, entering update mode, the probe/flash
   commands, and how to go back to stock.
@@ -189,10 +193,10 @@ State (each has its own doc — read it before touching the feature):
 | audiocontrol, pa, tx, rx | merged; **transmit works** (voice heard on a second radio) — the measured chain is `driver/pa.c` + `driver/tx.c` (`docs/ra89r_rfpath.md`).  Receive gate: per-(lane, band) noise floor + level margin, driven every poll (`driver/rx.c`, `rx.h`) |
 | bk4829 | merged; the shared 3-wire bus, both transceivers, ids/config/tuning/RSSI validated (`docs/ra89r_bk4829.md`, `docs/ra89r_bk4815.md`) |
 | dual-rf (`driver/rf_dual.c`) | merged; per-VFO transceiver selection, host-tested (`test_rf_dual`) |
-| scan (`app/scan_dual.c`) | merged; dual-transceiver `FAST BOTH` scan **and `LISTEN`**, validated on the radio (`docs/ra89r_scan.md`): 671/s FAST BOTH (1.67x FAST) in both bands, LISTEN pauses the sweep while the listener hears a signal and resumes at 180-436/s |
+| scan (`app/chFrScanner.c`) | `SetScn` NORMAL / FAST on the VFO's own chip; the memory scan locks in both on either transceiver (radio 2026-10-27).  `FAST BOTH` and `LISTEN` were **removed** on `driver/scan-route`: the chips share one set of receive-path pins, so the chip they are not set for hears nothing (`docs/ra89r_scan.md`) |
 | usbc / CAT (`App/cat.c`, `cat_radio.c`) | merged; FT-817 CAT on the USB-C serial port, validated (`docs/ra89r_cat.md`, `ra89r_carserial.md`); enabled by `ENABLE_CAT` in `k1_features.h`, console kept |
 | fm (`driver/bk1080.c`, `app/fm.c`) | merged but **unvalidated on the radio** (`docs/ra89r_bk1080.md`) |
-| bluetooth (`app/bt.c`, `driver/bluetooth.c`) | merged with current `develop` on `driver/bluetooth-merge` (not yet on develop): Jieli YBT100 on USART3 `PB10`/`PB11` 115200, `PD0` as reset/enable, BT screen + service; validated on the radio on the original branch, **re-validation of the merged build pending** (`docs/ra89r_bluetooth.md`) |
+| bluetooth (`app/bt.c`, `driver/bluetooth.c`) | merged; Jieli YBT100 on USART3 `PB10`/`PB11` 115200, `PD0` as reset/enable, F+MENU BT screen + service.  **Validated on the radio (2026-10-29):** pairing/connect, BT receive audio in the earpiece, the headset PTT keys TX, and speech sent over SCO from an emulated headset (`tools/ra89r_bt_headset.py`) came through clear on a second radio.  Debug: `!` console lines + `tools/ra89r_bt.py` (`docs/ra89r_bluetooth.md`, `docs/ra89r_bt_debug.md`) |
 | airband | merged; the receive demodulation is chosen by band (108.0-137.0 MHz is AM), so an airband range scan demodulates AM; validated on the radio (clean AM tone at boot, a 108-137 scan stops on the carrier) (`docs/ra89r_airband.md`) |
 | battery | protocol decoded and implemented; the chip never answers (`docs/ra89r_battery.md`) |
 | eeprom (`py25q16.c`, `spi_flash.c`) | read + full dump validated; the write-validation test has not run (`docs/ra89r_eeprom.md`) |

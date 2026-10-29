@@ -113,8 +113,10 @@ static void keypad_init_ptt2(void);
  * level as it is now, at most one round (~740 us) old.
  *
  * 32-bit slots, as the stock's DMA (PSIZE/MSIZE = 32 bit) -- a channel is 4 bytes
- * from the next.  Channel 6 (PB1) is scanned and unused by the keypad: it is what
- * the stock's S-meter reads, and scanning it keeps the sequence the vendor's.
+ * from the next.  The sixth slot (ADC channel 9 = PB1) is the V_DET pack sense,
+ * unused by the keypad; it is scanned so the vendor's channel sequence is kept,
+ * and driver/battery.c reads it.  (An older note here called it the S-meter --
+ * the S-meter is the BK4829's register 0x67, not an ADC pin.)
  */
 #define KP_CHANNELS 6u                          /* channels per round = DMA count */
 

@@ -150,6 +150,40 @@ Observed in the dump:
 * **CPS export/test — `FUN_0801ADC4`.**  Reads `0x3000…0x3800` in `0x400`-byte
   chunks into RAM, processes each page, and builds a `0x55`/`0x87` serial packet
   — the path the alignment window uses to fetch the calibration from the radio.
+### The runtime squelch thresholds are in the 0x3880 block, not 0x3710
+
+The `0x3710`/`0x3860` page addresses appear in the stock only as the packed
+word at `0x0802604C` that the CPS export (`FUN_0801ADC4`) reads; no runtime
+routine touches those pages.  The squelch the radio actually runs is
+`FUN_080052B8`, and its thresholds come from the **48-byte block at `0x3880`**,
+which `FUN_0800DCAC` reads at boot through the address-table entry at
+`0x08026060`:
+
+| block byte | RAM field | meaning (this radio) |
+|---|---|---|
+| `0x11` | `0x20003C9C + 9` | 0x63 threshold, narrow (0x2d = 45) |
+| `0x12` | `+0xa` | 0x65 threshold, narrow (0x08 = 8) |
+| `0x13` | `+0xb` | 0x63 threshold, wide (0x37 = 55) |
+| `0x14` | `+0xc` | 0x65 threshold, wide (0x0b = 11) |
+
+`FUN_080052B8` picks the wide pair when the channel byte `config+0x91 == 2`,
+else the narrow pair; for squelch levels below 5 it adds `3 * (5 - level)` to
+the 0x63 threshold and `4 * (5 - level)` to the 0x65 one.  The verdict is:
+0x63 above its threshold -> no signal; 0x67 below the per-VFO mark -> no signal;
+0x65 above its threshold -> hold; else signal.  `FUN_0801D420` increments the
+0..10 counter on signal, decrements on no-signal and holds on the middle case
+(the counter shape the port now uses).
+
+Measured on this radio at 446.00625 (SQL 1, wide, AGC 0x3df as the stock's own
+init writes it): quiet 0x63 = 57, 0x65 = 47, 0x67 = 59; carrier (-38 dBm)
+0, 8, 217.  At SQL 1 the thresholds are 67/27, so the quiet channel lands in
+the **hold** case: the stock's gate would not close on it until the glitch
+crossed 67.  That is why the port keeps its own floor + margin + counter
+instead of copying the noise gate.
+
+The `0x3710` page (336 B) is the CPS's factory alignment table; its
+byte-to-field mapping is still open, but it does not feed the runtime squelch.
+
 * **Into the RF chips.**  The BK4815 boot writes registers `0x4c`, `0x55` and
   `0x62` from the RAM words at `0x2000449A`, `0x2000449C` and `0x2000449E`
   (`ra89r_bk4815.md`), and `0x2000449E` is filled from a parsed calibration byte
@@ -183,8 +217,11 @@ CPS page table and field labels.
 **Not settled:** the byte-to-field mapping inside each page (which row is which
 frequency, which column is which power step); the meaning of `FUN_08010550`'s
 index; whether the CTCSS/signalling/Rx-test tables are separate pages or live
-inside the `0x3000` block.  A future pass could settle these by driving the CPS's
-alignment window against a radio and diffing the dump.
+inside the `0x3000` block.  The `0x3710`/`0x3860` pages are exported to the CPS
+but are not read by the runtime (the runtime squelch thresholds are the `0x3880`
+bytes above); their CPS-side mapping remains open.  A future pass could settle
+these by driving the CPS's alignment window against a radio and diffing the
+dump.
 
 ## Preserving it
 
@@ -199,11 +236,13 @@ alignment window against a radio and diffing the dump.
 
 ## Open points
 
-1. The byte-to-field mapping per page, and the row frequencies.
+1. The byte-to-field mapping per page (CPS side; the runtime squelch bytes are
+   known), and the row frequencies.
 2. `FUN_08010550`'s index and the two offset tables.
 3. Which calibration byte the noise-reduction enable bit lives in
    (`ra89r_noisereduction.md`).
-4. The 48-byte block at `0x3880` and what the stock does with it.
+4. The 48-byte block at `0x3880`: the squelch thresholds (bytes `0x11`-`0x14`)
+   are decoded above; the remaining bytes are still open.
 5. **Resolved:** the mode-3 read addresses only the first 64 KB correctly (the
    high byte is added, not shifted -- see above), and the two bytes after
    `52 00 FF` are the reply length, big-endian.  The rest of the chip needs the

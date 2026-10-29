@@ -59,6 +59,7 @@
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
 #include "driver/keyboard.h"
+#include "driver/rx.h"
 #include "driver/st7565.h"
 #include "driver/system.h"
 #include "dtmf.h"
@@ -801,6 +802,12 @@ void APP_StartListening(FUNCTION_Type_t function)
     AUDIO_AudioPathOn();
     gEnableSpeaker = true;
 
+    /* The K1 opens the amplifier on every receive entry; the port's squelch
+     * gate owns it.  Re-apply the gate here so a frequency change cannot make
+     * the receiver audible before the new channel is evaluated (the retune
+     * burp, 2026-10-23). */
+    rx_apply_audio_gate();
+
     if (gSetting_backlight_on_tx_rx & BACKLIGHT_ON_TR_RX) {
         BACKLIGHT_TurnOn();
     }
@@ -1063,18 +1070,10 @@ static void CheckRadioInterrupts(void)
         }
 #endif
 
-        if (interrupts.sqlLost) {
-            g_SquelchLost = true;
-            BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, true);
-            #ifdef ENABLE_FEAT_F4HWN_RX_TX_TIMER
-                gRxTimerCountdown_500ms = 7200;
-            #endif
-        }
-
-        if (interrupts.sqlFound) {
-            g_SquelchLost = false;
-            BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, false);
-        }
+        /* The squelch result is level-based (REG_0C<1>) and the AF mute is on
+         * the MCU, so driver/rx.c's 10 ms service owns g_SquelchLost and the
+         * LED.  The SQL interrupt bits are not used; the handler still clears
+         * REG_02 and services CTCSS/CDCSS/DTMF/VOX below. */
 
 #if defined(ENABLE_AIRCOPY) || defined(ENABLE_FEAT_F4HWN_BEAM)
         if (interrupts.fskFifoAlmostFull || interrupts.fskRxFinied)

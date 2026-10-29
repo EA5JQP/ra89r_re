@@ -345,9 +345,9 @@ int main(void)
         if (!ok) failures++;
     }
 
-    /* SetScn is the single scan mode: NORMAL / FAST / FAST BOTH.  The row must
-     * offer exactly those labels, map the menu index to the mode, re-open
-     * showing the value, and persist. */
+    /* SetScn is the single scan mode: NORMAL / FAST (FAST BOTH and LISTEN were
+     * removed, docs/ra89r_scan.md).  The row must offer exactly those labels,
+     * map the menu index to the mode, re-open showing the value, and persist. */
     {
         bool found = false;
         unsigned mi;
@@ -366,9 +366,8 @@ int main(void)
         if (found) {
             const bool labels_ok =
                 strcmp(gSubMenu_SET_SCN[0], "NORMAL") == 0 &&
-                strcmp(gSubMenu_SET_SCN[1], "FAST") == 0 &&
-                strcmp(gSubMenu_SET_SCN[2], "FAST BOTH") == 0;
-            printf("[scan] %s SetScn offers NORMAL, FAST and FAST BOTH\n",
+                strcmp(gSubMenu_SET_SCN[1], "FAST") == 0;
+            printf("[scan] %s SetScn offers NORMAL and FAST\n",
                    labels_ok ? "ok  " : "FAIL");
             if (!labels_ok) failures++;
 
@@ -376,26 +375,25 @@ int main(void)
             gMenuCursor  = UI_MENU_GetViewPos(id);
 
             {
-                const uint8_t want[3] = { SCAN_MODE_NORMAL, SCAN_MODE_FAST,
-                                          SCAN_MODE_FAST_BOTH };
+                const uint8_t want[2] = { SCAN_MODE_NORMAL, SCAN_MODE_FAST };
                 unsigned k;
                 bool ok = true;
 
-                for (k = 0; k < 3u; k++) {
+                for (k = 0; k < 2u; k++) {
                     gSubMenuSelection = (uint8_t)k;
                     MENU_AcceptSetting();
                     if (gSetting_set_scn != want[k])
                         ok = false;
                 }
-                printf("[scan] %s SetScn index 0/1/2 selects NORMAL/FAST/FAST BOTH\n",
+                printf("[scan] %s SetScn index 0/1 selects NORMAL/FAST\n",
                        ok ? "ok  " : "FAIL");
                 if (!ok) failures++;
             }
 
-            gSubMenuSelection = SCAN_MODE_FAST_BOTH;
+            gSubMenuSelection = SCAN_MODE_NORMAL;
             MENU_ShowCurrentSetting();
             {
-                const bool ok = gSubMenuSelection == SCAN_MODE_FAST_BOTH;
+                const bool ok = gSubMenuSelection == SCAN_MODE_FAST;
                 printf("[scan] %s reopening SetScn shows its mode\n", ok ? "ok  " : "FAIL");
                 if (!ok) failures++;
             }
@@ -429,17 +427,17 @@ int main(void)
         if (!moved) failures++;
 
         {
-            scan_dual_stats_t stats;
+            scan_candidate_rate_stats_t stats;
             bool ok;
 
-            (void)CHFRSCANNER_GetScanDualStats(&stats);
-            ok = stats.rate.candidates > 0u && stats.rate.elapsed_ms >= 10u &&
-                 stats.rate.candidates_per_second > 0u;
+            CHFRSCANNER_GetScanRate(&stats);
+            ok = stats.candidates > 0u && stats.elapsed_ms >= 10u &&
+                 stats.candidates_per_second > 0u;
             printf("[scan] %s scan-rate diagnostic counts probes over elapsed time "
                    "(n=%u elapsed=%u ms rate=%u/s)\n",
-                   ok ? "ok  " : "FAIL", (unsigned)stats.rate.candidates,
-                   (unsigned)stats.rate.elapsed_ms,
-                   (unsigned)stats.rate.candidates_per_second);
+                   ok ? "ok  " : "FAIL", (unsigned)stats.candidates,
+                   (unsigned)stats.elapsed_ms,
+                   (unsigned)stats.candidates_per_second);
             if (!ok) failures++;
         }
 
@@ -447,8 +445,8 @@ int main(void)
             ACTION_Scan(false);                      /* stop */
     }
 
-    /* The dual-scan benchmark must arm one shared range, run a mode, report a
-     * probe count over elapsed time, and restore the saved scan mode. */
+    /* The FAST benchmark must arm a range, run, report a probe count over
+     * elapsed time, and restore the saved scan mode. */
     {
         const uint8_t before = gSetting_set_scn;
         const uint32_t saved_start = gScanRangeStart;
@@ -458,15 +456,14 @@ int main(void)
 
         gSetting_set_scn = SCAN_MODE_FAST;
         CHFRSCANNER_BenchmarkArm(14500000u, 14600000u);
-        CHFRSCANNER_BenchmarkRun(1u);          /* FAST BOTH */
+        CHFRSCANNER_BenchmarkRun();
         for (i = 0; i < 30u; i++)
             step();
 
-        /* While the dual-lane scan is running it must feed the RSSI sparkline
-         * too, so the graph works in FAST BOTH (not only single-lane FAST). */
+        /* A running FAST range scan feeds the RSSI sparkline. */
         {
             const bool ok = CHFRSCANNER_HasScanRssiSparkline();
-            printf("[scan] %s FAST BOTH feeds the RSSI sparkline\n", ok ? "ok  " : "FAIL");
+            printf("[scan] %s FAST feeds the RSSI sparkline\n", ok ? "ok  " : "FAIL");
             if (!ok) failures++;
         }
 
@@ -498,137 +495,6 @@ int main(void)
         printf("[scan] %s the default ScnRev resumes, not stops (SCAN_RESUME_MODE=%u)\n",
                ok ? "ok  " : "FAIL", (unsigned)gEeprom.SCAN_RESUME_MODE);
         if (!ok) failures++;
-    }
-
-    /* The dual-lane candidate source: it must preserve the K1 order and tag
-     * every item with an increasing ordinal, so the two lanes can interleave
-     * without dropping or duplicating a step. */
-    {
-        const unsigned vfo = gEeprom.RX_VFO;
-        scan_candidate_t c;
-        bool range_ok = true;
-        bool list_ok  = true;
-        unsigned i;
-
-        /* Frequency range: 145.0000 .. 145.1000 MHz in 25 kHz steps, forward.
-         * Start one step below so the first candidate is 145.0000. */
-        gEeprom.ScreenChannel[vfo] = FREQ_CHANNEL_FIRST;
-        gEeprom.FreqChannel[vfo]   = FREQ_CHANNEL_FIRST;
-        gRxVfo->freq_config_RX.Frequency = 14497500u;
-        gRxVfo->StepFrequency            = 2500u;
-        gScanRangeStart = 14500000u;
-        gScanRangeStop  = 14510000u;
-        gScanStateDir   = SCAN_FWD;
-
-        {
-            uint32_t prev     = 0;
-            uint32_t ordinal0 = 0;
-            unsigned n        = 0;
-
-            for (i = 0; i < 5u; i++) {
-                if (!CHFRSCANNER_NextCandidate(&c)) { range_ok = false; break; }
-                if (c.is_memory_channel)            { range_ok = false; break; }
-                if (i == 0u) {
-                    ordinal0 = c.ordinal;
-                    if (c.frequency_10hz != 14500000u) range_ok = false;
-                } else {
-                    if (c.frequency_10hz != prev + 2500u) range_ok = false;
-                    if (c.ordinal != ordinal0 + i)        range_ok = false;
-                }
-                if (scan_dual_assign_candidate(&c) !=
-                    ((c.ordinal & 1u) ? SCAN_LANE_BK4815 : SCAN_LANE_BK4829))
-                    range_ok = false;
-                prev = c.frequency_10hz;
-                n++;
-            }
-            if (n != 5u) range_ok = false;   /* five in-range steps */
-
-            /* The next step wraps back to the start. */
-            if (!CHFRSCANNER_NextCandidate(&c) || c.frequency_10hz != 14500000u)
-                range_ok = false;
-        }
-
-        /* Memory list: drive the same cursor in channel mode and check that
-         * each eligible channel is visited exactly once per pass, in K1 order,
-         * with the below-split channel staying on the BK4829. */
-        gScanRangeStart = 0;
-        gEeprom.SCAN_LIST_DEFAULT = MR_CHANNELS_LIST + 1;   /* ALL */
-        gEeprom.SCAN_LIST_ENABLED = false;
-        gNextMrChannel = 0;
-        gScanStateDir  = SCAN_FWD;
-
-        {
-            uint16_t seen[8];
-            unsigned n        = 0;
-            uint32_t ordinal0 = 0;
-            bool     wrapped  = false;
-
-            for (i = 0; i < 8u && !wrapped; i++) {
-                unsigned j;
-
-                if (!CHFRSCANNER_NextCandidate(&c)) { list_ok = false; break; }
-                if (!c.is_memory_channel)           { list_ok = false; break; }
-
-                for (j = 0; j < n; j++) {
-                    if (seen[j] == c.channel) { wrapped = true; break; }
-                }
-                if (wrapped)
-                    break;
-
-                if (i == 0u)
-                    ordinal0 = c.ordinal;
-                else if (c.ordinal != ordinal0 + i)
-                    list_ok = false;
-
-                if (scan_dual_assign_candidate(&c) !=
-                    (c.frequency_10hz > SCAN_DUAL_BK4815_MIN_FREQUENCY_10HZ
-                         ? ((c.ordinal & 1u) ? SCAN_LANE_BK4815 : SCAN_LANE_BK4829)
-                         : SCAN_LANE_BK4829))
-                    list_ok = false;
-
-                if (n < 8u)
-                    seen[n] = c.channel;
-                n++;
-            }
-
-            if (n != 5u) list_ok = false;   /* the fixture's five channels, once each */
-        }
-
-        printf("[scan] %s the candidate source keeps K1 range order and ordinals\n",
-               range_ok ? "ok  " : "FAIL");
-        if (!range_ok) failures++;
-        printf("[scan] %s the candidate source walks each list channel once\n",
-               list_ok ? "ok  " : "FAIL");
-        if (!list_ok) failures++;
-
-        gScanRangeStart = 0;
-        gScanStateDir   = SCAN_OFF;
-    }
-
-    /* A paused dual-scan hit pins the receive route to the chip that found it;
-     * stopping the scan must restore the saved per-VFO route. */
-    {
-        rx_set_scan_source_override(RX_SCAN_SOURCE_BK4815);
-        CHFRSCANNER_Stop();
-        {
-            const bool ok = rx_scan_source_override() == RX_SCAN_SOURCE_DEFAULT;
-            printf("[scan] %s scan stop clears the RX scan-source override\n",
-                   ok ? "ok  " : "FAIL");
-            if (!ok) failures++;
-        }
-    }
-
-    /* Resuming after a hit is also a fresh pass: the override must not leak
-     * into the next sweep. */
-    {
-        rx_set_scan_source_override(RX_SCAN_SOURCE_BK4829);
-        CHFRSCANNER_ContinueScanning();
-        {
-            const bool ok = rx_scan_source_override() == RX_SCAN_SOURCE_DEFAULT;
-            printf("[scan] %s scan resume clears the RX scan-source override\n",
-                   ok ? "ok  " : "FAIL");
-            if (!ok) failures++;
-        }
     }
 
     /* The status bar with a charged pack: the icon must show bars, and (with
@@ -700,12 +566,39 @@ int main(void)
         {
             bool ok;
 
-            gSetting_set_scn = SCAN_MODE_FAST_BOTH;
+            gSetting_set_scn = SCAN_MODE_FAST;
             SETTINGS_SaveSettings();
             gSetting_set_scn = SCAN_MODE_NORMAL;
             SETTINGS_InitEEPROM();
-            ok = gSetting_set_scn == SCAN_MODE_FAST_BOTH;
-            printf("[scan] %s SetScn FAST BOTH survives save/load\n", ok ? "ok  " : "FAIL");
+            ok = gSetting_set_scn == SCAN_MODE_FAST;
+            printf("[scan] %s SetScn FAST survives save/load\n", ok ? "ok  " : "FAIL");
+            if (!ok) failures++;
+
+            gSetting_set_scn = SCAN_MODE_NORMAL;
+            SETTINGS_SaveSettings();
+            gSetting_set_scn = SCAN_MODE_FAST;
+            SETTINGS_InitEEPROM();
+            ok = gSetting_set_scn == SCAN_MODE_NORMAL;
+            printf("[scan] %s SetScn NORMAL survives save/load\n", ok ? "ok  " : "FAIL");
+            if (!ok) failures++;
+        }
+
+        /* A blob saved with the removed FAST BOTH (2) or LISTEN (3) loads as
+         * FAST. */
+        {
+            uint8_t mode;
+            bool ok = true;
+
+            for (mode = 2u; mode <= 3u; mode++) {
+                gSetting_set_scn = mode;
+                SETTINGS_SaveSettings();
+                gSetting_set_scn = SCAN_MODE_NORMAL;
+                SETTINGS_InitEEPROM();
+                if (gSetting_set_scn != SCAN_MODE_FAST)
+                    ok = false;
+            }
+            printf("[scan] %s a saved FAST BOTH / LISTEN loads as FAST\n",
+                   ok ? "ok  " : "FAIL");
             if (!ok) failures++;
         }
 
@@ -726,7 +619,7 @@ int main(void)
 
             SETTINGS_SetVfoTransceiver(0u, RF_XCVR_BK4829);
             SETTINGS_SetVfoTransceiver(1u, RF_XCVR_BK4815);
-            gSetting_set_scn = SCAN_MODE_FAST_BOTH;
+            gSetting_set_scn = SCAN_MODE_NORMAL;
 #ifdef ENABLE_FMRADIO
             gFM_Channels[0] = 0x1234u;
             gFM_Channels[1] = 0x4321u;
@@ -768,7 +661,7 @@ int main(void)
         }
 
         /* A version-3 blob carried the old ScTrMd byte (0 Default, 1 Both) in
-         * the same slot; version 3 must map it to FAST / FAST BOTH. */
+         * the same slot; with FAST BOTH gone both map to FAST. */
         {
             uint8_t v3[STORAGE_EXTRA_MAX];
             const uint32_t v2_size = 4u + 2u + 2u + (7u * 2u * 16u)
@@ -795,8 +688,8 @@ int main(void)
 
             gSetting_set_scn = SCAN_MODE_NORMAL;
             SETTINGS_InitEEPROM();
-            ok = ok && gSetting_set_scn == SCAN_MODE_FAST_BOTH;
-            printf("[scan] %s a v3 extra blob maps old ScTrMd Both to FAST BOTH\n",
+            ok = ok && gSetting_set_scn == SCAN_MODE_FAST;
+            printf("[scan] %s a v3 extra blob maps old ScTrMd Both to FAST\n",
                    ok ? "ok  " : "FAIL");
             if (!ok) failures++;
         }

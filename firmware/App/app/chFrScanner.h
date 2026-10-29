@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "app/scan_dual.h"
+#include "app/scan_rate.h"
 #include "radio.h"
 
 // scan direction, if not equal SCAN_OFF indicates 
@@ -33,18 +33,21 @@ void CHFRSCANNER_Stop(void);
 void CHFRSCANNER_Start(const bool storeBackupSettings, const int8_t scan_direction);
 void CHFRSCANNER_ManualResume(const int8_t scan_direction);
 void CHFRSCANNER_ContinueScanning(void);
+/* Console '#': BK4829 probe retune, plain 0x38/0x39 write (true) or the K1's
+ * REG_30 restart (false).  Returns the new state. */
+bool CHFRSCANNER_TogglePlainTune(void);
+/* Console '%': the per-probe scan trace (bench diagnostic).  Toggle returns
+ * the new state. */
+bool CHFRSCANNER_ToggleTrace(void);
+bool CHFRSCANNER_TraceOn(void);
 
-/* The ordered candidate stream the dual-lane scanner draws from.  See the
- * definition in chFrScanner.c; it preserves the K1 range/list order. */
-bool CHFRSCANNER_NextCandidate(scan_candidate_t *out);
+/* Diagnostics (console 'J'): probes completed and wall time since the scan
+ * started. */
+void CHFRSCANNER_GetScanRate(scan_candidate_rate_stats_t *out);
 
-/* Diagnostics: the dual-lane snapshot (console 'J').  Returns true while a
- * "Both" scan is active. */
-bool CHFRSCANNER_GetScanDualStats(scan_dual_stats_t *out);
-
-/* A controlled Default-vs-Both range benchmark for console 'J'.  Arm once with
- * the shared range, then for each mode: Run, pump the app loop, Finish.  Disarm
- * restores the saved VFO, range and scan mode.  Host-testable (preview_k1.c). */
+/* A controlled FAST range benchmark for console 'J'.  Arm once with the range,
+ * then Run, pump the app loop, Finish.  Disarm restores the saved VFO, range
+ * and scan mode.  Host-testable (preview_k1.c). */
 typedef struct {
     uint32_t probes;
     uint32_t elapsed_ms;
@@ -52,17 +55,10 @@ typedef struct {
 } scan_bench_result_t;
 
 void CHFRSCANNER_BenchmarkArm(uint32_t start_10hz, uint32_t stop_10hz);
-void CHFRSCANNER_BenchmarkRun(uint8_t mode);          /* 0 = FAST, 1 = FAST BOTH */
+void CHFRSCANNER_BenchmarkRun(void);
 void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out);
 void CHFRSCANNER_BenchmarkDisarm(void);
 
-/* Where the dual-lane batch spends its time (console J, profiling only):
- * us[0] = candidate pull, us[1] = tunes, us[2] = RSSI reads, us[3] = the whole
- * precheck call, us[4] = the gap between one batch and the next; plus the
- * batch and probe counters.  Reset at BenchmarkArm() so each run is fresh. */
-void CHFRSCANNER_GetScanBothProfile(uint32_t us[5], uint32_t *batches,
-                                    uint32_t *probes);
-void CHFRSCANNER_ResetScanBothProfile(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 const VFO_Info_t *CHFRSCANNER_GetScanDisplayVfo(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI

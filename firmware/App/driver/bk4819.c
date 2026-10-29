@@ -767,8 +767,12 @@ void BK4819_SetupSquelch(
     // <13:11> 5 Squelch = open  Delay Setting
     //         0 ~ 7
     //
-    // <10:9>  3 Squelch = close Delay Setting
-    //         0 ~ 3
+    // <10:9>  0 Squelch = close Delay Setting
+    //         0 ~ 3.  Measured on this board: ~10 ms per step, so 3 added
+    //         ~30 ms of chip tail over 0 (~50 ms vs ~78 ms fall->close) and
+    //         made no audible difference under the audio/AGC tail.  0 stayed
+    //         at one transition from -30 to -50 dBm (SQL 5), so the open
+    //         delay and the glitch/noise filters carry the debounce.
     //
     // <8>     1 ???
     //
@@ -778,7 +782,7 @@ void BK4819_SetupSquelch(
     BK4819_WriteRegister(BK4819_REG_4E,
     (1u << 14) |                  // 1 ???
     (5u << 11) |                  // 5 squelch = open  delay .. 0 ~ 7
-    (3u <<  9) |                  // 3 squelch = close delay .. 0 ~ 3
+    (0u <<  9) |                  // 0 squelch = close delay .. 0 ~ 3
     (1u <<  8) |                  // 1 ??? (matches stock BK4829)
     SquelchOpenGlitchThresh);     // 0 ~ 255
 
