@@ -137,5 +137,14 @@ Located in stock V49 (static only, not verified on the radio):
 
 ## Open
 
-- Run `ptt-test` on the radio with the headset that fails, and record which
-  verdict it gives and the raw lines.
+- **Headset emulator after a fresh pairing (a tooling problem, not the
+  firmware).**  On the pre-merge build the emulator, through PipeWire's HF,
+  sent clear speech.  After the radio was reflashed and paired again,
+  PipeWire put the device on its A2DP `audio-gateway` profile and the
+  audio link never came up.  With PipeWire's HF role switched off and the
+  script owning HFP, the service-level setup and codec negotiation complete
+  (`+BRSF:878`, `+CIEV: 2,1`, `+BCS: 2`; the module picks mSBC even when
+  only CVSD is offered), but the module still opens no SCO.  The script now
+  listens with `BT_VOICE` transparent (`0x0003`) when mSBC is offered; that
+  change has **not been run** against the radio.  The real headset works on
+  the same build.

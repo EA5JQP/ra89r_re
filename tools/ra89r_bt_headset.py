@@ -81,6 +81,8 @@ RATES = {"cvsd": 8000, "msbc": 16000}
 MSBC_PACKET, MSBC_FRAME = 60, 57
 MSBC_SEQ = (0x08, 0x38, 0xC8, 0xF8)
 SOL_SCO, SCO_OPTIONS = 17, 1
+SOL_BLUETOOTH, BT_VOICE = 274, 11
+BT_VOICE_CVSD_16BIT, BT_VOICE_TRANSPARENT = 0x0060, 0x0003
 DEFAULT_TEXT = ("R A eighty nine R, Bluetooth headset test.  "
                 "One, two, three, four, five.  Testing, testing.")
 
@@ -173,8 +175,9 @@ class Sco:
     (one packet of ours per packet received, or by the clock when the module
     is quiet) and keep everything received."""
 
-    def __init__(self, adapter_addr):
+    def __init__(self, adapter_addr, transparent=True):
         self.addr = adapter_addr
+        self.transparent = transparent
         self.mtu = 48
         self.codec = None
         self.codec_known = threading.Event()
@@ -198,6 +201,11 @@ class Sco:
         s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET,
                           socket.BTPROTO_SCO)
         s.bind(self.addr.encode())
+        # The voice setting must be set before listen().  mSBC needs the link
+        # in transparent mode; without it this module's eSCO request is
+        # refused and SCO never comes up (no +IM_SCO_CONN).
+        voice = BT_VOICE_TRANSPARENT if self.transparent else BT_VOICE_CVSD_16BIT
+        s.setsockopt(SOL_BLUETOOTH, BT_VOICE, struct.pack("<H", voice))
         s.listen(1)
         s.settimeout(0.5)
         self.listener = s
@@ -357,8 +365,10 @@ class Rfcomm:
     """The earpiece's control channel: answer the gateway's AT traffic, run the
     HFP service-level setup when asked, send the button."""
 
-    def __init__(self, fd, kind, device):
+    def __init__(self, fd, kind, device, codecs="1"):
+        self.codecs = codecs
         self.sock = socket.socket(fileno=fd)
+        self.sock.setblocking(True)    # BlueZ hands the fd over non-blocking
         self.kind = kind
         self.device = device
         self.lines = queue.Queue()
@@ -370,7 +380,8 @@ class Rfcomm:
         while self.alive:
             try:
                 data = self.sock.recv(256)
-            except OSError:
+            except OSError as e:
+                log(self.kind, "control channel error: %s" % e)
                 break
             if not data:
                 break
@@ -389,6 +400,11 @@ class Rfcomm:
         # The gateway asking the earpiece something it must answer.
         if self.kind == "hsp" and line.startswith("AT"):
             self.send_raw("\r\nOK\r\n")
+        elif self.kind == "hfp" and line.startswith("+BCS:"):
+            # Codec selection: confirm it, then the gateway opens SCO.
+            codec = line.split(":", 1)[1].strip()
+            log(self.kind, "> AT+BCS=%s (codec %s)" % (codec, {"1": "CVSD", "2": "mSBC"}.get(codec, "?")))
+            self.send_raw("AT+BCS=%s\r" % codec)
 
     def send_raw(self, text):
         try:
@@ -413,8 +429,12 @@ class Rfcomm:
         return got
 
     def hfp_setup(self):
-        """HFP service-level connection, HF side (minimal features)."""
-        self.at("AT+BRSF=16")          # remote volume only
+        """HFP service-level connection, HF side.  This module (YBT100)
+        opens SCO only after codec negotiation, so offer it: features =
+        remote volume (0x10) + codec negotiation (0x80), codecs CVSD + mSBC
+        -- the set PipeWire offers, with which the audio link came up."""
+        self.at("AT+BRSF=144")
+        self.at("AT+BAC=" + self.codecs)
         self.at("AT+CIND=?")
         self.at("AT+CIND?")
         self.at("AT+CMER=3,0,0,1")
@@ -434,7 +454,7 @@ class Profile(dbus.service.Object):
     def NewConnection(self, device, fd, props):
         fd = fd.take()
         log(self.kind, "control channel from %s" % device)
-        self.owner.on_rfcomm(Rfcomm(fd, self.kind, device))
+        self.owner.on_rfcomm(Rfcomm(fd, self.kind, device, self.owner.a.codecs))
 
     @dbus.service.method("org.bluez.Profile1", in_signature="o", out_signature="")
     def RequestDisconnection(self, device):
@@ -783,7 +803,7 @@ class Headset:
 
     def run(self):
         self.setup_bluez()
-        self.sco = Sco(self.addr)
+        self.sco = Sco(self.addr, transparent="2" in self.a.codecs.split(","))
         self.sco.start()
         threading.Thread(target=self.sequence, daemon=True).start()
         try:
@@ -812,6 +832,9 @@ def main(argv=None):
     ap.add_argument("--adapter", help="hciN (default: the first)")
     ap.add_argument("--name", default="RA89R-TestHS", help="name the module will see")
     ap.add_argument("--hfp", action="store_true", help="also offer HFP HF (PipeWire may own it)")
+    ap.add_argument("--codecs", default="1,2",
+                    help="HFP codecs offered with AT+BAC: 1 = CVSD, 2 = mSBC.  "
+                         "This module picks mSBC whatever is offered.")
     ap.add_argument("--no-link", action="store_true",
                     help="don't drive the module; link from the radio's BT menu")
     ap.add_argument("--connect-to", metavar="ADDR",
