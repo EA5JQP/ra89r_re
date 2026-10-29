@@ -1,5 +1,6 @@
 #include "driver/tx.h"
 
+#include "app/bt.h"             /* the earpiece's PTT button */
 #include "driver/audio_path.h"
 #include "driver/bk4815.h"
 #include "driver/bk4819.h"
@@ -66,7 +67,12 @@ void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source)
     if (s_active && source == s_source)
         return;
 
-    /* The band state first (PA0/PA1, the BK4815 0x75 band and the RX path). */
+    bt_set_radio_tx_active(true);
+
+    /* The band state first (PA0/PA1, the BK4815 0x75 band and the RX path),
+     * then the TX band pin -- pa_tx_enable() applies the 0x33 band/T-R bits
+     * with the stock's masked writes, and sets 0x36 and the PB14 bias PWM from
+     * `power`. */
     pa_select_band(freq_10hz);
     /* Above 134 MHz the BK4815 is part of the transmit path (the stock's
      * `0x0C = 0x0203`, with the BK4829 as the modulator and PA control).  Put it
@@ -137,6 +143,10 @@ void tx_stop(void)
     led_set(LED_OFF);
 
     s_active = false;
+    /* Stock FUN_080177A8 re-opens BT_CALL when the radio returns to RX and the
+     * earpiece is still linked.  A SCO-disconnect event during PTT clears the
+     * call state but is not a BT device disconnect. */
+    bt_set_radio_tx_active(false);
 
     /* tx_start retuned the BK4829 (and, above 134 MHz, the BK4815) to the TX
      * frequency; ask the coordinator to put both back on their receive
@@ -155,7 +165,9 @@ tx_source_t tx_source(void) { return s_source; }
 void tx_poll_ptt(void)
 {
     const KEY_Code_t key  = KEYBOARD_GetKey();
-    const bool       down = (key == KEY_PTT) || (key == KEY_PTT2);
+    const bool       radio_ptt = (key == KEY_PTT) || (key == KEY_PTT2);
+    const bool       down = bt_ptt_source_active(radio_ptt, bt_ptt_down(),
+                                                 gEeprom.BT_PTTType);
 
     /* A console-bench transmission ('T', the chip's own DTMF tone) is not PTT:
      * it must hold until the console stops it.  Otherwise this poller sees

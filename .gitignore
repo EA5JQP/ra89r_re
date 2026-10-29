@@ -18,6 +18,7 @@ firmware/build/
 
 # agent plan/spec workspace (kept local; the write-ups index is docs/README.md)
 docs/superpowers/
+.superpowers/
 
 # editor settings
 .vscode/

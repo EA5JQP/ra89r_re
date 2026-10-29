@@ -29,7 +29,10 @@
 #define BLOB_ADDR      0x1FF000u
 #define TEST_ADDR      0x1FE000u
 #define BLOB_MAGIC     0x52393852u   /* "R89R" */
-#define BLOB_VERSION   2u
+/* 2 was the port's layout at the FM/dual-RF split, 4 the BT branch's.  The
+ * merged gEeprom carries both field sets, so bump: a blob from either line is
+ * rejected by version (and by the size check) rather than misread. */
+#define BLOB_VERSION   5u
 
 typedef struct {
     uint32_t magic;

@@ -42,6 +42,10 @@ set(APP_SOURCES
     App/driver/fault.c
     App/driver/gpio.c
     App/driver/uart.c
+    App/driver/bluetooth.c
+    App/driver/bt_capture.c
+    App/app/bt.c
+    App/app/bt_debug.c
     App/driver/systick.c
     App/driver/scheduler.c
     App/driver/lcd_st7565.c
@@ -73,6 +77,7 @@ set(APP_SOURCES
     App/ui/battery.c
     App/ui/scanner.c
     App/ui/welcome.c
+    App/ui/bt.c
     App/ui/fmradio.c
     App/driver/keyboard.c
     App/app/menu.c
@@ -89,11 +94,13 @@ set(APP_SOURCES
     App/app/generic.c
     App/app/common.c
     App/app/chFrScanner.c
-    App/app/scan_dual.c
+    App/app/scan_rate.c
     App/app/spectrum.c
     App/app/spectrum_rf.c
     App/app/dtmf.c
     App/app/scanner.c
+    App/cat.c
+    App/cat_radio.c
     App/board.c
     App/radio.c
     App/functions.c

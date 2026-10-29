@@ -15,11 +15,13 @@
 
 #include "app/app.h"
 #include "app/action.h"
+#include "app/bt.h"
 #include "app/chFrScanner.h"
 #include "app/spectrum_rf.h"
 #include "app/fm.h"
 #include "app/menu.h"
 #include "audio.h"
+#include "driver/audio_path.h"
 #include "driver/backlight.h"
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
@@ -42,9 +44,104 @@
 #include "driver/scheduler.h"
 #include "ui/menu.h"
 #include "ui/status.h"
+#include "ui/bt.h"
+#include <string.h>
 
 /* State assertions this preview checks (the panel rendering is eyeballed). */
 static int failures;
+
+static void check_bt_speaker_switch(void)
+{
+    static const uint32_t setting_address = 8224u + 9u;
+    static const struct {
+        uint8_t value;
+        bool expected;
+        const char *name;
+    } cases[] = {
+        { 0x20u, true,  "Speak Switch bit set" },
+        { 0xFFu, false, "erased Speak Switch defaults off" },
+        { 0x00u, false, "Speak Switch bit clear" }
+    };
+    unsigned i;
+
+    for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        bool got;
+
+        host_set_codeplug_byte(setting_address, cases[i].value);
+        SETTINGS_InitEEPROM();
+        got = SETTINGS_BluetoothSpeakerSwitch();
+
+        printf("[codeplug] %s %s\n", got == cases[i].expected ? "ok  " : "FAIL",
+               cases[i].name);
+        if (got != cases[i].expected)
+            failures++;
+    }
+
+    /* Restore the host's factory-erased settings block for the rest of preview. */
+    host_set_codeplug_byte(setting_address, 0xFFu);
+    SETTINGS_InitEEPROM();
+}
+
+static void check_bt_gains(void)
+{
+    /* Stock FUN_0801AE8C sends the module gains from codeplug byte 8 on connect
+     * (`FUN_080075A0`); the port seeds BT_MicGain/BT_SpkGain from it. */
+    bool ok;
+
+    host_set_codeplug_byte(8224u + 8u, 0x43u);   /* mic 4, speaker 3 */
+    SETTINGS_InitEEPROM();
+    ok = gEeprom.BT_MicGain == 4u && gEeprom.BT_SpkGain == 3u;
+    printf("[codeplug] %s byte 8 -> BT gains mic=%u spk=%u (want 4/3)\n",
+           ok ? "ok  " : "FAIL", (unsigned)gEeprom.BT_MicGain,
+           (unsigned)gEeprom.BT_SpkGain);
+    if (!ok) failures++;
+
+    host_set_codeplug_byte(8224u + 8u, 0xFFu);   /* erased -> keep defaults */
+    SETTINGS_InitEEPROM();
+    ok = gEeprom.BT_MicGain == 2u && gEeprom.BT_SpkGain == 2u;
+    printf("[codeplug] %s erased byte 8 keeps the gain defaults (2/2)\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+}
+
+static void check_bt_audio_path_policy(void)
+{
+    bool ok;
+
+    bt_set_enabled(true);
+    bt_set_speaker_switch(false);
+    bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
+    ok = !audio_path_is_on();
+    printf("[audio route] %s BT link initially mutes the local path\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+
+    /* PC13's destination is not proven to be a local-only amp.  The radio test
+     * with the BT-exclusive clamp muted both local and BT receive audio, so do
+     * not block the K1 audio feed on this line until its role is mapped. */
+    GPIO_EnableAudioPath();
+    ok = audio_path_is_on();
+    printf("[audio route] %s BT link does not clamp the shared audio-path request\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+
+    gCurrentFunction = FUNCTION_RECEIVE;
+    gEeprom.BEEP_CONTROL = true;
+    host_beeper_reset_counts();
+    AUDIO_PlayKeyBeep(BEEP_1KHZ_60MS_OPTIONAL);
+    ok = host_beeper_play_count() == 1u &&
+         host_beeper_plays_path_on() == 1u && !audio_path_is_on();
+    printf("[audio route] %s key beep uses and restores the audio path\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+
+    bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
+    ok = audio_path_is_on();
+    printf("[audio route] %s BT disconnect restores the local audio path\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+    bt_set_enabled(false);
+}
 
 /* One pass of the firmware's own loop (firmware/App/main.c): the application
  * state machine and panel, the port's transmit check, then the 10 ms slice --
@@ -104,7 +201,11 @@ static void render(const char *title)
 int main(void)
 {
     ST7565_Init();
-    SETTINGS_InitEEPROM(); SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
+    SETTINGS_InitEEPROM();
+    check_bt_speaker_switch();
+    check_bt_gains();
+    check_bt_audio_path_policy();
+    SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
 
     /* ---- the image: the import must have given the K1 real channels -------
      *
@@ -245,9 +346,9 @@ int main(void)
         if (!ok) failures++;
     }
 
-    /* SetScn is the single scan mode: NORMAL / FAST / FAST BOTH.  The row must
-     * offer exactly those labels, map the menu index to the mode, re-open
-     * showing the value, and persist. */
+    /* SetScn is the single scan mode: NORMAL / FAST (FAST BOTH and LISTEN were
+     * removed, docs/ra89r_scan.md).  The row must offer exactly those labels,
+     * map the menu index to the mode, re-open showing the value, and persist. */
     {
         bool found = false;
         unsigned mi;
@@ -266,9 +367,8 @@ int main(void)
         if (found) {
             const bool labels_ok =
                 strcmp(gSubMenu_SET_SCN[0], "NORMAL") == 0 &&
-                strcmp(gSubMenu_SET_SCN[1], "FAST") == 0 &&
-                strcmp(gSubMenu_SET_SCN[2], "FAST BOTH") == 0;
-            printf("[scan] %s SetScn offers NORMAL, FAST and FAST BOTH\n",
+                strcmp(gSubMenu_SET_SCN[1], "FAST") == 0;
+            printf("[scan] %s SetScn offers NORMAL and FAST\n",
                    labels_ok ? "ok  " : "FAIL");
             if (!labels_ok) failures++;
 
@@ -276,26 +376,25 @@ int main(void)
             gMenuCursor  = UI_MENU_GetViewPos(id);
 
             {
-                const uint8_t want[3] = { SCAN_MODE_NORMAL, SCAN_MODE_FAST,
-                                          SCAN_MODE_FAST_BOTH };
+                const uint8_t want[2] = { SCAN_MODE_NORMAL, SCAN_MODE_FAST };
                 unsigned k;
                 bool ok = true;
 
-                for (k = 0; k < 3u; k++) {
+                for (k = 0; k < 2u; k++) {
                     gSubMenuSelection = (uint8_t)k;
                     MENU_AcceptSetting();
                     if (gSetting_set_scn != want[k])
                         ok = false;
                 }
-                printf("[scan] %s SetScn index 0/1/2 selects NORMAL/FAST/FAST BOTH\n",
+                printf("[scan] %s SetScn index 0/1 selects NORMAL/FAST\n",
                        ok ? "ok  " : "FAIL");
                 if (!ok) failures++;
             }
 
-            gSubMenuSelection = SCAN_MODE_FAST_BOTH;
+            gSubMenuSelection = SCAN_MODE_NORMAL;
             MENU_ShowCurrentSetting();
             {
-                const bool ok = gSubMenuSelection == SCAN_MODE_FAST_BOTH;
+                const bool ok = gSubMenuSelection == SCAN_MODE_FAST;
                 printf("[scan] %s reopening SetScn shows its mode\n", ok ? "ok  " : "FAIL");
                 if (!ok) failures++;
             }
@@ -329,17 +428,17 @@ int main(void)
         if (!moved) failures++;
 
         {
-            scan_dual_stats_t stats;
+            scan_candidate_rate_stats_t stats;
             bool ok;
 
-            (void)CHFRSCANNER_GetScanDualStats(&stats);
-            ok = stats.rate.candidates > 0u && stats.rate.elapsed_ms >= 10u &&
-                 stats.rate.candidates_per_second > 0u;
+            CHFRSCANNER_GetScanRate(&stats);
+            ok = stats.candidates > 0u && stats.elapsed_ms >= 10u &&
+                 stats.candidates_per_second > 0u;
             printf("[scan] %s scan-rate diagnostic counts probes over elapsed time "
                    "(n=%u elapsed=%u ms rate=%u/s)\n",
-                   ok ? "ok  " : "FAIL", (unsigned)stats.rate.candidates,
-                   (unsigned)stats.rate.elapsed_ms,
-                   (unsigned)stats.rate.candidates_per_second);
+                   ok ? "ok  " : "FAIL", (unsigned)stats.candidates,
+                   (unsigned)stats.elapsed_ms,
+                   (unsigned)stats.candidates_per_second);
             if (!ok) failures++;
         }
 
@@ -347,8 +446,8 @@ int main(void)
             ACTION_Scan(false);                      /* stop */
     }
 
-    /* The dual-scan benchmark must arm one shared range, run a mode, report a
-     * probe count over elapsed time, and restore the saved scan mode. */
+    /* The FAST benchmark must arm a range, run, report a probe count over
+     * elapsed time, and restore the saved scan mode. */
     {
         const uint8_t before = gSetting_set_scn;
         const uint32_t saved_start = gScanRangeStart;
@@ -358,15 +457,14 @@ int main(void)
 
         gSetting_set_scn = SCAN_MODE_FAST;
         CHFRSCANNER_BenchmarkArm(14500000u, 14600000u);
-        CHFRSCANNER_BenchmarkRun(1u);          /* FAST BOTH */
+        CHFRSCANNER_BenchmarkRun();
         for (i = 0; i < 30u; i++)
             step();
 
-        /* While the dual-lane scan is running it must feed the RSSI sparkline
-         * too, so the graph works in FAST BOTH (not only single-lane FAST). */
+        /* A running FAST range scan feeds the RSSI sparkline. */
         {
             const bool ok = CHFRSCANNER_HasScanRssiSparkline();
-            printf("[scan] %s FAST BOTH feeds the RSSI sparkline\n", ok ? "ok  " : "FAIL");
+            printf("[scan] %s FAST feeds the RSSI sparkline\n", ok ? "ok  " : "FAIL");
             if (!ok) failures++;
         }
 
@@ -411,137 +509,6 @@ int main(void)
         if (!ok) failures++;
     }
 
-    /* The dual-lane candidate source: it must preserve the K1 order and tag
-     * every item with an increasing ordinal, so the two lanes can interleave
-     * without dropping or duplicating a step. */
-    {
-        const unsigned vfo = gEeprom.RX_VFO;
-        scan_candidate_t c;
-        bool range_ok = true;
-        bool list_ok  = true;
-        unsigned i;
-
-        /* Frequency range: 145.0000 .. 145.1000 MHz in 25 kHz steps, forward.
-         * Start one step below so the first candidate is 145.0000. */
-        gEeprom.ScreenChannel[vfo] = FREQ_CHANNEL_FIRST;
-        gEeprom.FreqChannel[vfo]   = FREQ_CHANNEL_FIRST;
-        gRxVfo->freq_config_RX.Frequency = 14497500u;
-        gRxVfo->StepFrequency            = 2500u;
-        gScanRangeStart = 14500000u;
-        gScanRangeStop  = 14510000u;
-        gScanStateDir   = SCAN_FWD;
-
-        {
-            uint32_t prev     = 0;
-            uint32_t ordinal0 = 0;
-            unsigned n        = 0;
-
-            for (i = 0; i < 5u; i++) {
-                if (!CHFRSCANNER_NextCandidate(&c)) { range_ok = false; break; }
-                if (c.is_memory_channel)            { range_ok = false; break; }
-                if (i == 0u) {
-                    ordinal0 = c.ordinal;
-                    if (c.frequency_10hz != 14500000u) range_ok = false;
-                } else {
-                    if (c.frequency_10hz != prev + 2500u) range_ok = false;
-                    if (c.ordinal != ordinal0 + i)        range_ok = false;
-                }
-                if (scan_dual_assign_candidate(&c) !=
-                    ((c.ordinal & 1u) ? SCAN_LANE_BK4815 : SCAN_LANE_BK4829))
-                    range_ok = false;
-                prev = c.frequency_10hz;
-                n++;
-            }
-            if (n != 5u) range_ok = false;   /* five in-range steps */
-
-            /* The next step wraps back to the start. */
-            if (!CHFRSCANNER_NextCandidate(&c) || c.frequency_10hz != 14500000u)
-                range_ok = false;
-        }
-
-        /* Memory list: drive the same cursor in channel mode and check that
-         * each eligible channel is visited exactly once per pass, in K1 order,
-         * with the below-split channel staying on the BK4829. */
-        gScanRangeStart = 0;
-        gEeprom.SCAN_LIST_DEFAULT = MR_CHANNELS_LIST + 1;   /* ALL */
-        gEeprom.SCAN_LIST_ENABLED = false;
-        gNextMrChannel = 0;
-        gScanStateDir  = SCAN_FWD;
-
-        {
-            uint16_t seen[8];
-            unsigned n        = 0;
-            uint32_t ordinal0 = 0;
-            bool     wrapped  = false;
-
-            for (i = 0; i < 8u && !wrapped; i++) {
-                unsigned j;
-
-                if (!CHFRSCANNER_NextCandidate(&c)) { list_ok = false; break; }
-                if (!c.is_memory_channel)           { list_ok = false; break; }
-
-                for (j = 0; j < n; j++) {
-                    if (seen[j] == c.channel) { wrapped = true; break; }
-                }
-                if (wrapped)
-                    break;
-
-                if (i == 0u)
-                    ordinal0 = c.ordinal;
-                else if (c.ordinal != ordinal0 + i)
-                    list_ok = false;
-
-                if (scan_dual_assign_candidate(&c) !=
-                    (c.frequency_10hz > SCAN_DUAL_BK4815_MIN_FREQUENCY_10HZ
-                         ? ((c.ordinal & 1u) ? SCAN_LANE_BK4815 : SCAN_LANE_BK4829)
-                         : SCAN_LANE_BK4829))
-                    list_ok = false;
-
-                if (n < 8u)
-                    seen[n] = c.channel;
-                n++;
-            }
-
-            if (n != 5u) list_ok = false;   /* the fixture's five channels, once each */
-        }
-
-        printf("[scan] %s the candidate source keeps K1 range order and ordinals\n",
-               range_ok ? "ok  " : "FAIL");
-        if (!range_ok) failures++;
-        printf("[scan] %s the candidate source walks each list channel once\n",
-               list_ok ? "ok  " : "FAIL");
-        if (!list_ok) failures++;
-
-        gScanRangeStart = 0;
-        gScanStateDir   = SCAN_OFF;
-    }
-
-    /* A paused dual-scan hit pins the receive route to the chip that found it;
-     * stopping the scan must restore the saved per-VFO route. */
-    {
-        rx_set_scan_source_override(RX_SCAN_SOURCE_BK4815);
-        CHFRSCANNER_Stop();
-        {
-            const bool ok = rx_scan_source_override() == RX_SCAN_SOURCE_DEFAULT;
-            printf("[scan] %s scan stop clears the RX scan-source override\n",
-                   ok ? "ok  " : "FAIL");
-            if (!ok) failures++;
-        }
-    }
-
-    /* Resuming after a hit is also a fresh pass: the override must not leak
-     * into the next sweep. */
-    {
-        rx_set_scan_source_override(RX_SCAN_SOURCE_BK4829);
-        CHFRSCANNER_ContinueScanning();
-        {
-            const bool ok = rx_scan_source_override() == RX_SCAN_SOURCE_DEFAULT;
-            printf("[scan] %s scan resume clears the RX scan-source override\n",
-                   ok ? "ok  " : "FAIL");
-            if (!ok) failures++;
-        }
-    }
-
     /* The status bar with a charged pack: the icon must show bars, and (with
      * gSetting_battery_text = 2) the percentage beside it. */
     UI_DisplayStatus();
@@ -570,6 +537,23 @@ int main(void)
                (unsigned)gEeprom.CHANNEL_DISPLAY_MODE);
         printf("[storage] write test=%d\n", storage_write_test(&bad));
 
+        /* BT fields round-trip through the same blob. */
+        {
+            bool ok;
+
+            gEeprom.BT_Switch = true;
+            gEeprom.BT_Mode   = 1;
+            saved = storage_save_settings();
+            gEeprom.BT_Switch = false;
+            gEeprom.BT_Mode   = 0;
+            loaded = storage_load_settings();
+
+            ok = saved && loaded && gEeprom.BT_Switch && gEeprom.BT_Mode == 1;
+            printf("[storage] bt save=%d load=%d -> switch=%d mode=%u (expected 1/1)\n",
+                   saved, loaded, (int)gEeprom.BT_Switch, (unsigned)gEeprom.BT_Mode);
+            if (!ok) failures++;
+        }
+
         /* The per-VFO RF transceiver choice is part of the port's extra blob,
          * so it needs the full save path (SETTINGS_SaveSettings), not the bare
          * gEeprom save, and a reload to read it back. */
@@ -594,12 +578,39 @@ int main(void)
         {
             bool ok;
 
-            gSetting_set_scn = SCAN_MODE_FAST_BOTH;
+            gSetting_set_scn = SCAN_MODE_FAST;
             SETTINGS_SaveSettings();
             gSetting_set_scn = SCAN_MODE_NORMAL;
             SETTINGS_InitEEPROM();
-            ok = gSetting_set_scn == SCAN_MODE_FAST_BOTH;
-            printf("[scan] %s SetScn FAST BOTH survives save/load\n", ok ? "ok  " : "FAIL");
+            ok = gSetting_set_scn == SCAN_MODE_FAST;
+            printf("[scan] %s SetScn FAST survives save/load\n", ok ? "ok  " : "FAIL");
+            if (!ok) failures++;
+
+            gSetting_set_scn = SCAN_MODE_NORMAL;
+            SETTINGS_SaveSettings();
+            gSetting_set_scn = SCAN_MODE_FAST;
+            SETTINGS_InitEEPROM();
+            ok = gSetting_set_scn == SCAN_MODE_NORMAL;
+            printf("[scan] %s SetScn NORMAL survives save/load\n", ok ? "ok  " : "FAIL");
+            if (!ok) failures++;
+        }
+
+        /* A blob saved with the removed FAST BOTH (2) or LISTEN (3) loads as
+         * FAST. */
+        {
+            uint8_t mode;
+            bool ok = true;
+
+            for (mode = 2u; mode <= 3u; mode++) {
+                gSetting_set_scn = mode;
+                SETTINGS_SaveSettings();
+                gSetting_set_scn = SCAN_MODE_NORMAL;
+                SETTINGS_InitEEPROM();
+                if (gSetting_set_scn != SCAN_MODE_FAST)
+                    ok = false;
+            }
+            printf("[scan] %s a saved FAST BOTH / LISTEN loads as FAST\n",
+                   ok ? "ok  " : "FAIL");
             if (!ok) failures++;
         }
 
@@ -620,7 +631,7 @@ int main(void)
 
             SETTINGS_SetVfoTransceiver(0u, RF_XCVR_BK4829);
             SETTINGS_SetVfoTransceiver(1u, RF_XCVR_BK4815);
-            gSetting_set_scn = SCAN_MODE_FAST_BOTH;
+            gSetting_set_scn = SCAN_MODE_NORMAL;
 #ifdef ENABLE_FMRADIO
             gFM_Channels[0] = 0x1234u;
             gFM_Channels[1] = 0x4321u;
@@ -662,7 +673,7 @@ int main(void)
         }
 
         /* A version-3 blob carried the old ScTrMd byte (0 Default, 1 Both) in
-         * the same slot; version 3 must map it to FAST / FAST BOTH. */
+         * the same slot; with FAST BOTH gone both map to FAST. */
         {
             uint8_t v3[STORAGE_EXTRA_MAX];
             const uint32_t v2_size = 4u + 2u + 2u + (7u * 2u * 16u)
@@ -689,8 +700,8 @@ int main(void)
 
             gSetting_set_scn = SCAN_MODE_NORMAL;
             SETTINGS_InitEEPROM();
-            ok = ok && gSetting_set_scn == SCAN_MODE_FAST_BOTH;
-            printf("[scan] %s a v3 extra blob maps old ScTrMd Both to FAST BOTH\n",
+            ok = ok && gSetting_set_scn == SCAN_MODE_FAST;
+            printf("[scan] %s a v3 extra blob maps old ScTrMd Both to FAST\n",
                    ok ? "ok  " : "FAIL");
             if (!ok) failures++;
         }
@@ -838,30 +849,30 @@ int main(void)
             failures++;
     }
 
-    /* The K1's boot-time key mode (helper/boot.c): PTT + SIDE1 held at power-on
-     * opens the hidden menu.  The host stands in for the keypad and PB9. */
+    /* The K1's boot-time key mode (helper/boot.c): holding PTT1 at power-on
+     * opens the hidden menu.  PTT1 is the KEY_PTT ladder window -- NOT PB9
+     * (PTT2), which is the bootloader's update-mode gate. */
     {
         bool         ok;
         BOOT_Mode_t  m;
 
-        host_set_key(KEY_SIDE1);
-        host_set_ptt2(true);
+        host_set_key(KEY_PTT);
         m = BOOT_GetMode();
         ok = (m == BOOT_MODE_F_LOCK);
-        printf("[boot] %s PTT+SIDE1 -> F-lock\n", ok ? "ok  " : "FAIL");
+        printf("[boot] %s PTT1 held -> F-lock (hidden menu)\n", ok ? "ok  " : "FAIL");
         if (!ok) failures++;
 
-        host_set_ptt2(false);
+        host_set_key(KEY_INVALID);
         m = BOOT_GetMode();
         ok = (m == BOOT_MODE_NORMAL);
-        printf("[boot] %s SIDE1 without PTT -> normal\n", ok ? "ok  " : "FAIL");
+        printf("[boot] %s no PTT -> normal\n", ok ? "ok  " : "FAIL");
         if (!ok) failures++;
 
-        host_set_key(KEY_SIDE2);
-        host_set_ptt2(true);
+        /* PTT2 must NOT open it: that line is the bootloader's gate. */
+        host_set_key(KEY_PTT2);
         m = BOOT_GetMode();
         ok = (m == BOOT_MODE_NORMAL);
-        printf("[boot] %s PTT+SIDE2 -> normal (air-copy is off here)\n", ok ? "ok  " : "FAIL");
+        printf("[boot] %s PTT2 -> normal (not the boot PTT)\n", ok ? "ok  " : "FAIL");
         if (!ok) failures++;
 
         host_set_key(KEY_INVALID);
@@ -998,6 +1009,192 @@ int main(void)
         printf("\n[beep] %s the beep drives the amp on (%u/%u plays with the path on)\n",
                ok ? "ok  " : "FAIL",
                host_beeper_plays_path_on(), host_beeper_play_count());
+        if (!ok) failures++;
+    }
+
+    /* Menu key feedback must not be suppressed merely because the receiver
+     * remains in FUNCTION_RECEIVE.  Exercise the K1's normal key loop and the
+     * BT menu's direct handler, then prove held/disabled events stay silent. */
+    {
+        bool ok;
+        unsigned int i;
+        unsigned int plays_at_press;
+
+        gCurrentFunction = FUNCTION_RECEIVE;
+        gEeprom.BEEP_CONTROL = true;
+        gScreenToDisplay = DISPLAY_MENU;
+        gRequestDisplayScreen = DISPLAY_INVALID;
+        host_set_key(KEY_INVALID);
+        for (i = 0; i < 4u; i++)
+            CheckKeys();
+        gBeepToPlay = BEEP_NONE;
+        host_beeper_reset_counts();
+        host_set_key(KEY_UP);
+        for (i = 0; i < 4u; i++)
+            CheckKeys();
+        plays_at_press = host_beeper_play_count();
+        host_set_key(KEY_INVALID);
+        for (i = 0; i < 4u; i++)
+            CheckKeys();
+        ok = plays_at_press == 1u &&
+             host_beeper_play_count() == plays_at_press &&
+             gCurrentFunction == FUNCTION_RECEIVE;
+        printf("[beep] %s normal menu press beeps once in RECEIVE (%u/%u plays, function %u)\n",
+               ok ? "ok  " : "FAIL", plays_at_press,
+               host_beeper_play_count(), (unsigned)gCurrentFunction);
+        if (!ok) failures++;
+
+        gScreenToDisplay = DISPLAY_BT;
+        host_beeper_reset_counts();
+        BT_ProcessKeys(KEY_DOWN, true, false);
+        ok = host_beeper_play_count() == 1u;
+        printf("[beep] %s BT menu key beeps in RECEIVE (%u plays)\n",
+               ok ? "ok  " : "FAIL", host_beeper_play_count());
+        if (!ok) failures++;
+
+        host_beeper_reset_counts();
+        BT_ProcessKeys(KEY_DOWN, true, true);
+        ok = host_beeper_play_count() == 0u;
+        printf("[beep] %s held BT menu key does not repeat a beep\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        gEeprom.BEEP_CONTROL = false;
+        host_beeper_reset_counts();
+        BT_ProcessKeys(KEY_DOWN, true, false);
+        ok = host_beeper_play_count() == 0u;
+        printf("[beep] %s disabled Beep setting suppresses BT menu feedback\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+        gEeprom.BEEP_CONTROL = true;
+    }
+
+    /* The Bluetooth menu: its own screen (F + MENU), so the main menu stays
+     * short.  The item table is the stock's nine entries.  Run last: pressing
+     * keys changes the backlight countdown the checks above rely on. */
+    {
+        bool ok;
+        static const char found_device[] = "A1B2C3D4E5F6,Test headset,-42";
+        uint8_t before_connecting[sizeof gFrameBuffer];
+        uint8_t before_connected[sizeof gFrameBuffer];
+        unsigned int i;
+
+        gScreenToDisplay      = DISPLAY_MAIN;
+        gRequestDisplayScreen = DISPLAY_INVALID;
+        for (i = 0; i < 4u; i++)        /* let the app settle on DISPLAY_MAIN */
+            step();
+        gWasFKeyPressed       = true;
+        gKeyInputCountdown    = key_input_timeout_500ms;
+        gBeepToPlay = BEEP_NONE;
+        gEeprom.BEEP_CONTROL = true;
+        host_beeper_reset_counts();
+        press(KEY_MENU);
+
+        ok = host_beeper_play_count() == 1u;
+        printf("[beep] %s F+MENU transition beeps once (%u plays)\n",
+               ok ? "ok  " : "FAIL", host_beeper_play_count());
+        if (!ok) failures++;
+
+        ok = (gScreenToDisplay == DISPLAY_BT);
+        printf("\n[bt] %s F+MENU -> screen %u (DISPLAY_BT = %u, not DISPLAY_MENU)\n",
+               ok ? "ok  " : "FAIL", (unsigned)gScreenToDisplay,
+               (unsigned)DISPLAY_BT);
+        if (!ok) failures++;
+
+        ok = (BT_MenuCount() == 9u) &&
+             (strcmp(BT_MenuName(0), "Switch") == 0);
+        printf("[bt] %s menu has %u items, first '%s'\n",
+               ok ? "ok  " : "FAIL", BT_MenuCount(), BT_MenuName(0));
+        if (!ok) failures++;
+
+        gScreenToDisplay = DISPLAY_BT;
+        UI_DisplayBT();
+        render("UI_DisplayBT(): the Bluetooth menu");
+
+        /* Paired (item 2) with a saved device: the K1 MEM-CH layout. */
+        strcpy(gEeprom.BT_PairedName, "Ear (stick)");
+        UI_DisplayBT();
+        render("UI_DisplayBT(): Paired (saved device)");
+
+        /* Pairing scans only with the module on; enter it (item 1) and render
+         * the scan/device screen. */
+        gEeprom.BT_Switch = true;
+        bt_set_enabled(true);
+        BT_ProcessKeys(KEY_UP, true, false);     /* cursor -> Pair from Paired */
+        UI_DisplayBT();
+        render("UI_DisplayBT(): Pair (not entered)");
+        BT_ProcessKeys(KEY_MENU, true, false);   /* enter Pairing */
+        UI_DisplayBT();
+        render("UI_DisplayBT(): Pairing (scanning)");
+
+        gUpdateDisplay = false;
+        bt_service_event(BT_EV_EARDEV, found_device,
+                         (unsigned)(sizeof found_device - 1u));
+        ok = bt_found_count() == 1u && gUpdateDisplay;
+        printf("[bt] %s found device refreshes pairing screen immediately\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+        UI_DisplayBT();
+        render("UI_DisplayBT(): found device");
+        bt_service_event(BT_EV_EARDEV, "1122334455AB,Long Headset Name,-81",
+                         (unsigned)strlen("1122334455AB,Long Headset Name,-81"));
+        BT_ProcessKeys(KEY_DOWN, true, false);   /* the second device */
+        UI_DisplayBT();
+        render("UI_DisplayBT(): second found device (long name)");
+        BT_ProcessKeys(KEY_DOWN, true, false);   /* wraps back to the first */
+        UI_DisplayBT();
+        memcpy(before_connecting, gFrameBuffer, sizeof before_connecting);
+
+        BT_ProcessKeys(KEY_MENU, true, false);   /* select and connect */
+        UI_DisplayBT();
+        ok = memcmp(before_connecting, gFrameBuffer, sizeof before_connecting) != 0;
+        printf("[bt] %s MENU selection visibly shows connection progress\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+        memcpy(before_connected, gFrameBuffer, sizeof before_connected);
+
+        bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
+        UI_DisplayBT();
+        ok = bt_connected() &&
+             memcmp(before_connected, gFrameBuffer, sizeof before_connected) != 0;
+        printf("[bt] %s successful connection visibly confirms the device "
+               "(linked=%u changed=%u)\n", ok ? "ok  " : "FAIL",
+               (unsigned)bt_connected(),
+               memcmp(before_connected, gFrameBuffer, sizeof before_connected) != 0);
+        if (!ok) failures++;
+        render("UI_DisplayBT(): connection confirmation");
+
+        /* UI_DisplayBT must stay inside gFrameBuffer[0..6]: a 7th item row
+         * would run off the end into gStatusLine, and the inverse highlight
+         * must not write before the row (the old call corrupted [0][127]). */
+        memset(gStatusLine, 0xAA, sizeof gStatusLine);
+        memset(gFrameBuffer, 0xAA, sizeof gFrameBuffer);
+        UI_DisplayBT();
+        ok = (gFrameBuffer[0][127] == 0);
+        for (i = 0; i < sizeof gStatusLine; i++)
+            if (gStatusLine[i] != 0xAA) { ok = false; break; }   /* untouched */
+        printf("[bt] %s UI_DisplayBT stays inside gFrameBuffer[0..6]\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        for (i = 0; i < BT_MenuCount(); i++)
+            (void)BT_MenuName(i);
+    }
+
+    /* The status line shows a BT indicator while the module is on. */
+    {
+        bool    ok;
+        uint8_t before[LCD_WIDTH];
+
+        bt_set_enabled(false);
+        UI_DisplayStatus();
+        memcpy(before, gStatusLine, sizeof before);
+
+        bt_set_enabled(true);
+        UI_DisplayStatus();
+        ok = (memcmp(before, gStatusLine, sizeof before) != 0);
+        printf("[bt] %s the status line shows BT when the module is on\n",
+               ok ? "ok  " : "FAIL");
         if (!ok) failures++;
     }
 

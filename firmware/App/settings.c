@@ -92,6 +92,7 @@ bool     codeplug_freq_restore(const uint8_t *src, size_t size);
 void     codeplug_shared_settings(void);
 
 EEPROM_Config_t gEeprom;
+static bool s_codeplug_bt_speaker_switch;
 
 /* The VFO objects live inside gEeprom and carry pointers into themselves, so
  * anything that replaces or clears gEeprom -- the defaults, or a blob read back
@@ -179,6 +180,7 @@ void SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr)
 void SettingsDefaults(void)
 {
     memset(&gEeprom, 0, sizeof gEeprom);
+    s_codeplug_bt_speaker_switch = false;
 
     s_rf_xcvr[0] = (uint8_t)RF_XCVR_BK4829;
     s_rf_xcvr[1] = (uint8_t)RF_XCVR_BK4829;
@@ -249,6 +251,16 @@ void SettingsDefaults(void)
     gEeprom.ROGER = ROGER_MODE_OFF;
     gEeprom.BACKLIGHT_MIN = 1;
     gEeprom.BACKLIGHT_MAX = 5;
+
+    /* Bluetooth: off by default, as the stock leaves it. */
+    gEeprom.BT_Switch  = false;
+    gEeprom.BT_Mode    = 0;
+    gEeprom.BT_Name[0] = '\0';
+    gEeprom.BT_SpkGain = 2;     /* the codeplug's default (byte 8) */
+    gEeprom.BT_MicGain = 2;
+    gEeprom.BT_PTTType = 0;
+    gEeprom.BT_HoldTime = 0;
+    gEeprom.BT_PairedName[0] = '\0';
 
 #ifdef ENABLE_FMRADIO
     /* The FM broadcast feature (app/fm.c).  The K1 loads these from its flat
@@ -331,13 +343,14 @@ void SETTINGS_InitEEPROM(void)
 #endif
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
             if (extra.version == EXTRA_VERSION) {
-                gSetting_set_scn = (extra.scan_mode <= (uint8_t)SCAN_MODE_FAST_BOTH)
+                /* The removed FAST BOTH (2) / LISTEN (3), and anything invalid,
+                 * load as FAST. */
+                gSetting_set_scn = (extra.scan_mode <= (uint8_t)SCAN_MODE_FAST)
                                        ? extra.scan_mode : (uint8_t)SCAN_MODE_FAST;
             } else {
-                /* v3 stored the old ScTrMd byte: 0 Default -> FAST,
-                 * 1 Both -> FAST BOTH. */
-                gSetting_set_scn = extra.scan_mode ? (uint8_t)SCAN_MODE_FAST_BOTH
-                                                   : (uint8_t)SCAN_MODE_FAST;
+                /* v3 stored the old ScTrMd byte (0 Default, 1 Both); both are
+                 * FAST now that FAST BOTH is gone. */
+                gSetting_set_scn = (uint8_t)SCAN_MODE_FAST;
             }
 #endif
         } else {
@@ -483,7 +496,7 @@ bool SETTINGS_FetchChannelScanInfo(const uint16_t channel, uint32_t *frequency, 
 {
     ChannelScanDisplayInfo_t info;
 
-    if (!SETTINGS_FetchChannelScanDisplayInfo(channel, &info)) {
+    if (!SETTINGS_FetchChannelScanDisplayInfo(gEeprom.RX_VFO, channel, &info)) {
         if (frequency != 0)
             *frequency = 0u;
         if (modulation != 0)
@@ -498,7 +511,7 @@ bool SETTINGS_FetchChannelScanInfo(const uint16_t channel, uint32_t *frequency, 
     return true;
 }
 
-bool SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDisplayInfo_t *info)
+bool SETTINGS_FetchChannelScanDisplayInfo(uint8_t vfo, const uint16_t channel, ChannelScanDisplayInfo_t *info)
 {
     if (info == 0)
         return false;
@@ -515,7 +528,7 @@ bool SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDis
     }
 
     if (IS_FREQ_CHANNEL(channel))
-        return codeplug_freq_get(channel, gEeprom.RX_VFO, info);
+        return codeplug_freq_get(channel, vfo, info);
 
     return false;
 }
@@ -645,7 +658,7 @@ void SETTINGS_SaveChannel(uint16_t Channel, uint8_t VFO, const VFO_Info_t *pVFO,
         info.dtmfPttIdTxMode = pVFO->DTMF_PTT_ID_TX_MODE;
 
         if (IS_FREQ_CHANNEL(Channel)) {
-            codeplug_freq_set(Channel, gEeprom.TX_VFO, &info);
+            codeplug_freq_set(Channel, VFO, &info);
         } else {
             uint8_t raw[16];
 
@@ -1207,7 +1220,35 @@ bool codeplug_freq_restore(const uint8_t *src, size_t size)
 
 void codeplug_shared_settings(void)
 {
-    /* Not mapped yet: docs/ra89r_codeplug.md records what the block contains and
-     * which of it the K1 has an equivalent for.  Until then the port's own
-     * defaults and its blob decide, and the stock's block is left alone. */
+    uint8_t byte8 = 0xFFu;
+    uint8_t byte9 = 0xFFu;
+
+    /* The stock's BT speaker switch is settings byte 9 bit 5 (CPS
+     * `ra89r_codeplug.md`, `FUN_080177A8`).  It controls PC13 while an earpiece
+     * is linked; it is not a K1 setting, so keep it as read-only shared
+     * codeplug state instead of growing the serialized gEeprom blob. */
+    PY25Q16_ReadBuffer(RA89R_CP_SETTINGS_BASE + 9u, &byte9, 1u);
+    if (byte9 != 0xFFu)
+        s_codeplug_bt_speaker_switch = (byte9 & 0x20u) != 0u;
+
+    /* Byte 8 carries the module gains the stock sends on connect
+     * (`FUN_0801AE8C` -> `FUN_080075A0`): bits 4-7 mic, bits 0-3 speaker, each
+     * an index into the stock's own gain tables.  Seed the port's BT gain
+     * levels from it; the port's own saved blob still wins if the user changed
+     * them in the BT menu, which loads after this. */
+    PY25Q16_ReadBuffer(RA89R_CP_SETTINGS_BASE + 8u, &byte8, 1u);
+    if (byte8 != 0xFFu) {
+        const uint8_t mic = (uint8_t)((byte8 >> 4) & 0x0Fu);
+        const uint8_t spk = (uint8_t)(byte8 & 0x0Fu);
+
+        if (mic <= 5u)
+            gEeprom.BT_MicGain = mic;
+        if (spk <= 5u)
+            gEeprom.BT_SpkGain = spk;
+    }
+}
+
+bool SETTINGS_BluetoothSpeakerSwitch(void)
+{
+    return s_codeplug_bt_speaker_switch;
 }

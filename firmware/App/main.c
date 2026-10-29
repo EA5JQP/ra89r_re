@@ -17,6 +17,9 @@
 #include "driver/beeper.h"
 #include "driver/bk4815.h"
 #include "driver/battery.h"
+#include "driver/bluetooth.h"
+#include "app/bt.h"
+#include "app/bt_debug.h"
 #include "driver/bk1080.h"
 #include "driver/i2c_bus.h"
 #include "helper/battery.h"
@@ -27,6 +30,7 @@
 #include "driver/rf_dual.h"
 #include "driver/rx.h"
 #include "functions.h"
+#include "radio.h"
 #include "driver/clock.h"
 #include "driver/fault.h"
 #include "driver/gpio.h"
@@ -34,10 +38,103 @@
 #include "driver/pa.h"
 #include "driver/rf_bus.h"
 #include "driver/tx.h"
+#include "driver/keyboard.h"
 #include "driver/lcd_st7565.h"
 #include "driver/st7565.h"
 #include "driver/systick.h"
 #include "driver/uart.h"
+
+/* FT-817 CAT auto-detect (App/cat.c) shares USART1 with the bring-up console.
+ *
+ * A CAT frame is a 5-byte burst -- the caller writes it in one go, so the bytes
+ * arrive back-to-back -- while console input is typed with gaps.  Bytes are
+ * buffered and then: a full, well-formed frame is applied to the radio; a pause
+ * (>20 ms) flushes whatever is buffered to the console; an invalid full window
+ * hands its oldest byte to the console.  Both features stay live and neither
+ * corrupts the other (the console is never fed a frame's bytes, so it cannot
+ * echo them or mistake a BCD byte for a command). */
+#ifdef ENABLE_CAT
+#include "cat.h"
+
+#define CAT_BURST_GAP_MS 20u
+#define CAT_Q_LEN        64u
+
+static uint8_t  cat_pend[CAT_FRAME_LEN];
+static uint8_t  cat_pend_n;
+static uint32_t cat_pend_last;
+static char     cat_q[CAT_Q_LEN];
+static uint8_t  cat_q_head;
+static uint8_t  cat_q_tail;
+
+static void cat_queue_char(char c)
+{
+    uint8_t next = (uint8_t)((cat_q_head + 1u) % CAT_Q_LEN);
+
+    if (next != cat_q_tail) {                 /* drop on overflow */
+        cat_q[cat_q_head] = c;
+        cat_q_head        = next;
+    }
+}
+
+static void cat_flush_pending(void)
+{
+    uint8_t i;
+
+    for (i = 0; i < cat_pend_n; i++)
+        cat_queue_char((char)cat_pend[i]);
+    cat_pend_n = 0;
+}
+
+static void cat_input_service(uint32_t now)
+{
+    int raw;
+
+    while ((raw = uart_getc()) >= 0) {
+        uint8_t b = (uint8_t)raw;
+        uint8_t i;
+
+        if (cat_pend_n > 0u && (uint32_t)(now - cat_pend_last) > CAT_BURST_GAP_MS)
+            cat_flush_pending();
+        cat_pend_last = now;
+
+        if (cat_pend_n < CAT_FRAME_LEN)
+            cat_pend[cat_pend_n++] = b;
+        else {
+            for (i = 1; i < CAT_FRAME_LEN; i++)
+                cat_pend[i - 1u] = cat_pend[i];
+            cat_pend[CAT_FRAME_LEN - 1u] = b;
+        }
+
+        if (cat_pend_n == CAT_FRAME_LEN) {
+            if (cat_frame_valid_bytes(cat_pend)) {
+                cat_apply(cat_pend);
+                cat_pend_n = 0;
+            } else {
+                cat_queue_char((char)cat_pend[0]);
+                for (i = 1; i < CAT_FRAME_LEN; i++)
+                    cat_pend[i - 1u] = cat_pend[i];
+                cat_pend_n = CAT_FRAME_LEN - 1u;
+            }
+        }
+    }
+
+    /* A lone typed character: flush it once the burst gap has clearly passed,
+     * so a single keystroke still reaches the console promptly. */
+    if (cat_pend_n > 0u && (uint32_t)(now - cat_pend_last) > CAT_BURST_GAP_MS)
+        cat_flush_pending();
+}
+
+static int cat_console_getc(void)
+{
+    int c;
+
+    if (cat_q_head == cat_q_tail)
+        return -1;
+    c          = (int)(uint8_t)cat_q[cat_q_tail];
+    cat_q_tail = (uint8_t)((cat_q_tail + 1u) % CAT_Q_LEN);
+    return c;
+}
+#endif
 #include "driver/py25q16.h"
 #include "app/app.h"
 #include "app/chFrScanner.h"
@@ -55,6 +152,38 @@
 #include "ui.h"
 
 #define VERSION_STRING "ra89r_fw 0.2 (uart debug)"
+
+/* The Bluetooth debug console's view of the radio (app/bt_debug.h). */
+static void     bt_dbg_out(const char *text) { uart_puts(text); }
+static uint32_t bt_dbg_millis(void) { return systick_millis(); }
+static bool     bt_dbg_radio_ptt(void)
+{
+    const KEY_Code_t key = KEYBOARD_GetKey();
+
+    return key == KEY_PTT || key == KEY_PTT2;
+}
+static uint8_t  bt_dbg_ptt_type(void) { return gEeprom.BT_PTTType; }
+static void     bt_dbg_restart(void)
+{
+    bt_set_enabled(false);
+    bt_set_enabled(true);
+}
+
+static void bt_debug_start(void)
+{
+    static const bt_debug_io_t io = {
+        .out       = bt_dbg_out,
+        .millis    = bt_dbg_millis,
+        .radio_ptt = bt_dbg_radio_ptt,
+        .tx_active = tx_active,
+        .ptt_type  = bt_dbg_ptt_type,
+        .rx_bytes  = bluetooth_rx_bytes,
+        .rx_log    = bluetooth_rx_log,
+        .restart   = bt_dbg_restart,
+    };
+
+    bt_debug_init(&io);
+}
 
 /* Ask for a screen: the K1 application repaints when gUpdateDisplay is set
  * (app/app.c calls GUI_DisplayScreen). */
@@ -230,7 +359,7 @@ static void print_help(void)
     uart_puts("\nthe K1 GUI owns the panel; these are console diagnostics\n"
               "          h help   i diagnostics   d dump screen as ASCII\n"
               "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
-              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n"
+              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40)   y toggle PA1   z toggle 0x33 pin 2 (0x10)\n          H audio chain (regs 0x30/0x47/0x48/0x50, PC13, squelch, lane)\n          o cycle SetScn   7 cycle SQL   8 switch VFO A/B   9/I cycle TrVfoA/B\n          N arm a +/-500 kHz range   E start/stop the scan   U arm the airband (108-136.975, 8.33 kHz)\n"
               "          D step the RF bus delay (find what still gives audio)\n"
               "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
@@ -240,13 +369,18 @@ static void print_help(void)
               "          R probe RF ids   W configure both   X verify config\n"
               "          K K1 bring-up + tune 145.7500   S sample reg 0x67\n"
               "          Q auto squelch: VHF 145.5000 then UHF 446.00625 (tinySA)\n"
+              "          ! K1 chip-squelch probe: 0x4D/0x4E/0x4F/0x78 + 0x02/0x0C\n"
+              "          @ tail trace: RSSI fall / REG_0C close / audio gate (30 s, BK4829)\n"
+              "          O step the 0x4E<10:9> close delay 0/1/2/3 for the next '@'\n"
               "          j BK1080 FM: init, id probe, tune 100.0 MHz, read status\n"
               "          a FM audio route: toggle the BK4829 AF mute (0x47) under FM\n"
-              "          n BK4815 (PB13): boot config, tune 145.7500, read meters\n"
+              "          n BK4815 (PB13): dump all registers, boot config, tune, meters\n"
               "          J dual-RF live state: roles, audio source, BK4815 regs/meters\n"
               "          A force the BK4815 AF open (bypass squelch) to test audio\n"
               "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
               "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
+              "          BT: F then MENU opens the BT screen (switch, pairing, gains)\n"
+              "          !? BT debug lines (!s status, !t1 trace, !a<AT>, !i<line>)\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
               "          5 save settings   6 flash write test   e flash dump\n"
@@ -351,7 +485,7 @@ static void print_profile(void)
     t0 = systick_millis();
     for (i = 0; i < 20u; i++) {
         ChannelScanDisplayInfo_t info;
-        if (SETTINGS_FetchChannelScanDisplayInfo(0, &info))
+        if (SETTINGS_FetchChannelScanDisplayInfo(gEeprom.RX_VFO, 0, &info))
             sink += info.rx.Frequency;
     }
     t1 = systick_millis();
@@ -486,11 +620,10 @@ static void rf_report(void)
 /* The K1 firmware's audio path is a GPIO of its own -- `GPIO_PIN_AUDIO_PATH` =
  * PA8 on that board, driven HIGH to enable through `AUDIO_AudioPathOn()` -- and
  * that is the call this port replaced with a callback.  On this board the line
- * the stock holds asserted is PC13 (`FUN_080177A8` raises it and its
- * `config+0x38` gate is 0 on this codeplug, so it stays HIGH), which leaves PC13
- * as the amplifier-enable candidate.  It is a *static* line: nothing in the
- * squelch path touches it, so `C` inverts it and the speaker can be listened to
- * with the line both ways.
+ * is PC13 (`FUN_080177A8`): stock holds it high while BT is off/unlinked and
+ * follows the codeplug Speak Switch while linked (low on this radio).  Its
+ * physical destination is not established; `C` manually toggles it for
+ * comparison, and the user's mic test saw no change.
  *
  * PA13/PA14 are *not* this line: they are the status LED (PA13 red, PA14 green,
  * both active high -- measured), which lives in `driver/led.c` behind the
@@ -502,9 +635,9 @@ static void audio_path_toggle(void)
     uart_printf("\nRF: PC13 (audio-path line) -> %s (IDR %s)\n",
                 audio_path_is_on() ? "high" : "low",
                 gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN) ? "high" : "low");
-    uart_puts("  the stock raises this line from its T/R path and holds it high on\n"
-              "  this codeplug; receive audio was validated with it high.  What it\n"
-              "  switches is not measured -- see docs/ra89r_rffeatures.md.\n");
+    uart_puts("  stock: high when BT is off/unlinked; when linked it follows Speak\n"
+              "  Switch (low on this codeplug). Its destination is not measured --\n"
+              "  see docs/ra89r_rffeatures.md.\n");
 }
 
 /* The console's 'K': bring the RF up and retune, reporting what landed.  The
@@ -607,6 +740,91 @@ static void fm_bench(void)
  * 0x71/0x72 synthesizer path and reads its own 0x43/0x44 meters, to see
  * whether the synth locks and it receives.  Nothing here has run on the
  * radio -- docs/ra89r_bk4815.md. */
+/* Read and print the whole BK4815 register file (0x00-0x7F) as it currently
+ * stands.  Pure reads -- nothing is written -- so this is the state capture for
+ * a misbehaving receive: dump it while the reception is good and again while it
+ * is noise, and compare against each other and against the values the stock
+ * writes (docs/ra89r_bk4815.md).  Registers the part does not drive read back
+ * as whatever is on its data bus; the known ones are listed in the key. */
+static void bk4815_dump_registers(void)
+{
+    unsigned reg;
+    /* The routing state, so the capture is self-contained: which VFO the
+     * coordinator believes it is serving, what the two VFO records hold and
+     * what frequency the part actually sits on (decoded from 0x71/0x72 with
+     * the band in 0x04).  A mismatch between the selected VFO's frequency and
+     * the decoded tune is the fault this dump exists to catch. */
+    {
+        const bool      a_4829 = SETTINGS_GetVfoTransceiver(0u) != RF_XCVR_BK4815;
+        const bool      b_4829 = SETTINGS_GetVfoTransceiver(1u) != RF_XCVR_BK4815;
+        const rf_dual_roles_t roles = rf_dual_choose(a_4829, b_4829, gEeprom.RX_VFO);
+        const uint32_t  fa = gEeprom.VfoInfo[0].freq_config_RX.Frequency;
+        const uint32_t  fb = gEeprom.VfoInfo[1].freq_config_RX.Frequency;
+        const uint16_t  w_hi = bk4815_read_reg(0x71);
+        const uint16_t  w_lo = bk4815_read_reg(0x72);
+        const uint16_t  vco  = bk4815_read_reg(0x04);
+        const uint8_t   band = (uint8_t)((vco >> 7) & 3u);
+        const uint64_t  word = ((uint64_t)w_hi << 16) | w_lo;
+        const uint64_t  f10  = word * 2600000ull /
+                               ((uint64_t)bk4815_vco_divider(band) << 24);
+
+        uart_printf("\nBK4815 state capture\n"
+                    "  RX_VFO %u  TX_VFO %u   A %u.%05u MHz  B %u.%05u MHz\n",
+                    (unsigned)gEeprom.RX_VFO, (unsigned)gEeprom.TX_VFO,
+                    (unsigned)(fa / 100000u), (unsigned)(fa % 100000u),
+                    (unsigned)(fb / 100000u), (unsigned)(fb % 100000u));
+        uart_printf("  roles: BK4829<-VFO %d   BK4815<-VFO %d   audio %s  squelch %s  rssi 0x%03X\n",
+                    (int)roles.bk4829_vfo, (int)roles.bk4815_vfo,
+                    rx_audio_is_4815() ? "BK4815" : "BK4829",
+                    rx_squelch_open() ? "open" : "closed", (unsigned)rx_rssi());
+        uart_printf("  4815 is on %u.%05u MHz (band %u, Ndiv %u, 0x04=0x%04X, 0x75=0x%04X)\n",
+                    (unsigned)(f10 / 100000u), (unsigned)(f10 % 100000u),
+                    (unsigned)band, (unsigned)bk4815_vco_divider(band),
+                    (unsigned)vco, (unsigned)bk4815_read_reg(0x75));
+        uart_printf("  audio path line (PC13): %s\n",
+                    audio_path_is_on() ? "high (amplifier on)" : "low (off)");
+    }
+
+    uart_puts("\nBK4815 register file, as it stands now (read-only):\n");
+    for (reg = 0; reg < 0x80u; reg++) {
+        if ((reg & 7u) == 0u)
+            uart_printf("  ");
+        uart_printf("%02X:%04X ", reg, (unsigned)bk4815_read_reg((uint8_t)reg));
+        if ((reg & 7u) == 7u)
+            uart_puts("\n");
+    }
+    uart_puts("  key: 00=id(4816) 01=bandwidth 04=VCO-div 0C=T/R 16/2B/6D/73=RX set\n"
+              "       22=tone 42/4C/4D/4E/56/57=compander 43=SNR 44=RSSI(bits 6:0)\n"
+              "       48/4A=AF profile 49=AF (bit15 mute, low nibble volume)\n"
+              "       70=opctrl (A000 RX / E000 TX) 71/72=frequency word 75=band\n"
+              "       7E/7F=per-band calibration\n");
+}
+
+/* Read and print the whole BK4829 register file (0x00-0x7F) as it currently
+ * stands.  The BK4815's audio reaches the speaker through the BK4829's AF
+ * stage, so a receive fault that leaves the BK4815's own registers identical
+ * (radio 2026-10-18) has to show up here -- the AF output select (0x47), the
+ * AF gain (0x48), the audio unmute (0x50) and the RX/TX block word (0x30) are
+ * the shared path's gates.  Pure reads. */
+static void bk4829_dump_registers(void)
+{
+    unsigned reg;
+
+    uart_puts("\nBK4829 register file, as it stands now (read-only):\n");
+    for (reg = 0; reg < 0x80u; reg++) {
+        if ((reg & 7u) == 0u)
+            uart_printf("  ");
+        uart_printf("%02X:%04X ", reg, (unsigned)BK4819_ReadRegister((uint8_t)reg));
+        if ((reg & 7u) == 7u)
+            uart_puts("\n");
+    }
+    uart_puts("  key: 30=RX/TX blocks (bit9 AF DAC) 33=chip GPIOs 36=PA 37=mode\n"
+              "       40=mic gain 47=AF out (bits 11:8 select, 0=mute,1=normal)\n"
+              "       48=AF gain 50=audio unmute 67=RSSI 7D=power/mic\n");
+}
+
+/* The BK4815 bench ('n'): reconfigures and tunes, so the register-file capture
+ * comes first, before anything is written. */
 static void bk4815_bench(void)
 {
     uint16_t id, vco, op, hi, lo, cal, snr, rssi;
@@ -665,19 +883,15 @@ static void bk4815_bench(void)
 /* The scan mode the SetScn menu shows (scan_mode_t). */
 static const char *scan_mode_name(void)
 {
-    switch (gSetting_set_scn) {
-        case SCAN_MODE_FAST_BOTH: return "FAST BOTH";
-        case SCAN_MODE_FAST:      return "FAST";
-        default:                  return "NORMAL";
-    }
+    return (gSetting_set_scn == (uint8_t)SCAN_MODE_FAST) ? "FAST" : "NORMAL";
 }
 
-/* A controlled Default-vs-Both range-scan comparison, run by the console's 'J'.
- * It forces the selected RX VFO onto a frequency channel over one shared range,
- * then runs each mode for SCAN_BENCH_MS, pumping the same app loop the main loop
- * runs, and reports probes over elapsed wall time.  The timing is wall-clock, so
- * the display and bit-banged bus cost are included, as they are when scanning by
- * hand.  It restores the saved VFO, range and scan mode before returning. */
+/* A controlled FAST range-scan measurement, run by the console's 'J'.  It forces
+ * the selected RX VFO onto a frequency channel over a 1 MHz range, runs FAST for
+ * SCAN_BENCH_MS, pumping the same app loop the main loop runs, and reports
+ * probes over elapsed wall time.  The timing is wall-clock, so the display and
+ * bit-banged bus cost are included, as they are when scanning by hand.  It
+ * restores the saved VFO, range and scan mode before returning. */
 #define SCAN_BENCH_MS 3000u
 
 static void scan_rate_benchmark(void)
@@ -685,11 +899,10 @@ static void scan_rate_benchmark(void)
     const uint32_t step  = gRxVfo->StepFrequency ? gRxVfo->StepFrequency : 2500u;
     const uint32_t start = FREQUENCY_RoundToStep(gRxVfo->freq_config_RX.Frequency, (uint16_t)step);
     const uint32_t stop  = start + 100000u;   /* 1 MHz, in 10 Hz units */
-    static const char *const names[2] = { "FAST     ", "FAST BOTH" };
-    scan_bench_result_t res[2];
-    unsigned m;
+    scan_bench_result_t res;
+    uint32_t t0;
 
-    uart_printf("\nscan benchmark: %u.%05u .. %u.%05u MHz, step %u.%01u kHz, %u ms per mode\n",
+    uart_printf("\nscan benchmark: %u.%05u .. %u.%05u MHz, step %u.%01u kHz, %u ms\n",
                 (unsigned)(start / 100000u), (unsigned)(start % 100000u),
                 (unsigned)(stop / 100000u), (unsigned)(stop % 100000u),
                 (unsigned)(step / 100u), (unsigned)((step % 100u) / 10u),
@@ -698,32 +911,20 @@ static void scan_rate_benchmark(void)
                 (unsigned)gEeprom.SCAN_RESUME_MODE, scan_mode_name());
 
     CHFRSCANNER_BenchmarkArm(start, stop);
-    for (m = 0; m < 2u; m++) {
-        uint32_t t0;
-
-        CHFRSCANNER_BenchmarkRun((uint8_t)m);
-        t0 = systick_millis();
-        while ((uint32_t)(systick_millis() - t0) < SCAN_BENCH_MS) {
-            APP_Update();
-            APP_TimeSlice10ms();
-        }
-        CHFRSCANNER_BenchmarkFinish(&res[m]);
-        uart_printf("  %s probes=%u elapsed=%u ms  %u probes/s\n",
-                    names[m], (unsigned)res[m].probes, (unsigned)res[m].elapsed_ms,
-                    (unsigned)res[m].probes_per_second);
+    CHFRSCANNER_BenchmarkRun();
+    t0 = systick_millis();
+    while ((uint32_t)(systick_millis() - t0) < SCAN_BENCH_MS) {
+        APP_Update();
+        APP_TimeSlice10ms();
     }
+    CHFRSCANNER_BenchmarkFinish(&res);
     CHFRSCANNER_BenchmarkDisarm();
 
-    if (res[0].probes_per_second > 0u) {
-        const uint32_t pct = (res[1].probes_per_second * 100u) / res[0].probes_per_second;
-
-        uart_printf("  FAST BOTH / FAST = %u.%02ux  (%s)\n",
-                    (unsigned)(pct / 100u), (unsigned)(pct % 100u),
-                    (res[1].probes_per_second > res[0].probes_per_second)
-                        ? "faster" : "not faster");
-    } else {
+    uart_printf("  FAST      probes=%u elapsed=%u ms  %u probes/s\n",
+                (unsigned)res.probes, (unsigned)res.elapsed_ms,
+                (unsigned)res.probes_per_second);
+    if (res.probes_per_second == 0u)
         uart_puts("  FAST measured 0 probes/s: check squelch and the range\n");
-    }
 }
 
 /* The console's 'J': the live dual-RF state, without re-tuning anything.  Shows
@@ -746,26 +947,15 @@ static void dual_rf_diag(void)
                 (unsigned)a, (unsigned)b,
                 (unsigned)gEeprom.TX_VFO, (unsigned)gEeprom.RX_VFO);
     {
-        scan_dual_stats_t st;
+        scan_candidate_rate_stats_t st;
 
-        CHFRSCANNER_GetScanDualStats(&st);
-        uart_printf("  SetScn=%s (%u)   scan-source override=%u   scan dual active=%d hit=%u\n",
+        CHFRSCANNER_GetScanRate(&st);
+        uart_printf("  SetScn=%s (%u)   scan running=%d\n",
                     scan_mode_name(), (unsigned)gSetting_set_scn,
-                    (unsigned)rx_scan_source_override(),
-                    (int)st.active, (unsigned)st.selected_hit);
+                    (int)(gScanStateDir != SCAN_OFF));
         uart_printf("  scan probes=%u elapsed=%u ms rate=%u candidates/s\n",
-                    (unsigned)st.rate.candidates, (unsigned)st.rate.elapsed_ms,
-                    (unsigned)st.rate.candidates_per_second);
-        uart_printf("    lane BK4829: cand=%u last=%u.%05u MHz rssi=%u\n",
-                    (unsigned)st.candidates[0],
-                    (unsigned)(st.last_frequency_10hz[0] / 100000u),
-                    (unsigned)(st.last_frequency_10hz[0] % 100000u),
-                    (unsigned)st.last_rssi[0]);
-        uart_printf("    lane BK4815: cand=%u last=%u.%05u MHz rssi=%u\n",
-                    (unsigned)st.candidates[1],
-                    (unsigned)(st.last_frequency_10hz[1] / 100000u),
-                    (unsigned)(st.last_frequency_10hz[1] % 100000u),
-                    (unsigned)st.last_rssi[1]);
+                    (unsigned)st.candidates, (unsigned)st.elapsed_ms,
+                    (unsigned)st.candidates_per_second);
     }
     uart_printf("  tuned: BK4829<-VFO %d   BK4815<-VFO %d   bk4815_active=%d\n",
                 (int)roles.bk4829_vfo, (int)roles.bk4815_vfo,
@@ -773,6 +963,14 @@ static void dual_rf_diag(void)
     uart_printf("  audio source: %s   squelch %s   rssi 0x%03X\n",
                 rx_audio_is_4815() ? "BK4815" : "BK4829",
                 rx_squelch_open() ? "OPEN" : "closed", (unsigned)rx_rssi());
+    uart_printf("  SQL level %u (0 = off)  lane floor %u  live marks open %u close %u\n",
+                (unsigned)gEeprom.SQUELCH_LEVEL,
+                (unsigned)rx_squelch_floor(),
+                (unsigned)rx_squelch_open_mark_now(),
+                (unsigned)rx_squelch_close_mark_now());
+    uart_printf("  RX lane path: pin 4 (0x33 bit 0x04) %s  (lane is %s)\n",
+                pa_rx_lane_is_4815() ? "SET" : "clear",
+                pa_rx_lane_is_4815() ? "BK4815" : "BK4829");
     uart_printf("  VFO A %u.%05u MHz   VFO B %u.%05u MHz\n",
                 (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency / 100000u),
                 (unsigned)(gEeprom.VfoInfo[0].freq_config_RX.Frequency % 100000u),
@@ -793,10 +991,19 @@ static void dual_rf_diag(void)
     uart_printf("          0x70=0x%04X 0x71=0x%04X 0x72=0x%04X 0x75=0x%04X\n",
                 (unsigned)bk4815_read_reg(0x70), (unsigned)bk4815_read_reg(0x71),
                 (unsigned)bk4815_read_reg(0x72), (unsigned)bk4815_read_reg(0x75));
-    uart_printf("          0x43(SNR)=0x%04X 0x44(RSSI)=0x%04X -> %u  (marks open 0x%02X close 0x%02X)\n",
+    uart_printf("          0x43(SNR)=0x%04X 0x44(RSSI)=0x%04X -> %u  "
+                "(this lane: floor %u open %u close %u)\n",
                 (unsigned)bk4815_read_reg(0x43), (unsigned)bk4815_read_reg(0x44),
                 (unsigned)(bk4815_read_reg(0x44) & 0x7fu),
-                (unsigned)RX4815_SQUELCH_OPEN_MARK, (unsigned)RX4815_SQUELCH_CLOSE_MARK);
+                (unsigned)rx_squelch_floor(),
+                (unsigned)rx_squelch_open_mark_from_floor(true,
+                                                          gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
+                                                          gEeprom.SQUELCH_LEVEL,
+                                                          (uint16_t)(bk4815_read_reg(0x44) & 0x7fu)),
+                (unsigned)rx_squelch_close_mark_from_floor(true,
+                                                           gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency >= PA_BAND_SPLIT,
+                                                           gEeprom.SQUELCH_LEVEL,
+                                                           (uint16_t)(bk4815_read_reg(0x44) & 0x7fu)));
 
     scan_rate_benchmark();
 
@@ -1100,10 +1307,12 @@ static void rf_watch(void)
 {
     uint16_t min = 0xFFFFu, max = 0, last = 0;
     unsigned i;
+    const uint16_t open  = rx_squelch_open_mark_now();
+    const uint16_t close = rx_squelch_close_mark_now();
 
-    uart_printf("\nRF: BK4829 reg 0x67 every 200 ms for 4 s "
-                "(0xB4 / 0xCF are the stock's squelch marks)\n"
+    uart_printf("\nRF: reg 0x67 / 0x44 every 200 ms for 4 s (live marks open %u close %u)\n"
                 "  RX %u.%05u MHz, %s, %s (>134 MHz split)\n",
+                (unsigned)open, (unsigned)close,
                 (unsigned)(rx_rx_frequency() / 100000u),
                 (unsigned)(rx_rx_frequency() % 100000u),
                 pa_band_is_uhf() ? "UHF" : "VHF",
@@ -1113,6 +1322,9 @@ static void rf_watch(void)
                   "  in RX and these readings will not follow a carrier.\n");
 
     for (i = 0; i < 20u; i++) {
+        /* Read the part directly: the app loop (and so rx_poll) does not run
+         * while this handler blocks, and sampling the polled value showed the
+         * same number twenty times. */
         uint16_t v = BK4819_GetRSSI();
 
         if (v < min)
@@ -1122,7 +1334,8 @@ static void rf_watch(void)
         last = v;
 
         uart_printf("  %02u: 0x%03X%4u %s\n", i, (unsigned)v, (unsigned)v,
-                    v >= 0xCFu ? "open" : (v < 0xB4u ? "quiet" : "between"));
+                    v >= rx_squelch_open_mark_now() ? "open"
+                        : (v < rx_squelch_close_mark_now() ? "quiet" : "between"));
         systick_delay_ms(200);
     }
 
@@ -1343,6 +1556,176 @@ static void rf_verify(void)
     rf_verify_block();
 }
 
+/* Console '!': the K1 chip-squelch probe.
+ *
+ * The port normally owns the squelch in software (driver/rx.c).  This command
+ * deliberately parks that gate (the app loop is blocked, so rx_poll() does not
+ * run) and programs the BK4829's own comparators:
+ *
+ *   0x4F  ExNoise open (low 7 bits) / close (bits 14:8)
+ *   0x78  RSSI open (high byte) / close (low byte)
+ *   0x4D  glitch close, 0x4E glitch open + open/close delays
+ *
+ * It then reads the SQL interrupt status (0x02, cleared through the same
+ * register) and the three meters while the carrier is keyed.  What it settles:
+ *
+ *   - does the chip raise SQL found/lost at these thresholds?
+ *   - does the chip gate the AF itself?  The AF stays in FM (0x47) and the
+ *     amplifier stays on for the whole run, so if the audio mutes it is the
+ *     chip doing it -- the MCU is not writing a mute;
+ *   - does the 0x4E delay pair change the tail?
+ *
+ * The phases use the measured RA89R values (quiet ExNoise 47, carrier 8;
+ * quiet RSSI ~55 UHF / ~100 VHF; quiet glitch 57), not the K1's blank table.
+ */
+static void squelch_k1_probe_phase(const char *name,
+                                   uint8_t rssi_open, uint8_t rssi_close,
+                                   uint8_t noise_open, uint8_t noise_close,
+                                   uint8_t glitch_open, uint8_t glitch_close,
+                                   uint8_t open_delay, uint8_t close_delay,
+                                   unsigned seconds, uint16_t reg50)
+{
+    uint32_t t0;
+    unsigned n = 0;
+
+    BK4819_SetupSquelch(rssi_open, rssi_close, noise_open, noise_close,
+                        glitch_close, glitch_open);
+
+    /* BK4819_SetupSquelch writes the app's 5/0 delays.  Overwrite them so the
+     * phases differ only in that field; bit 8 stays 1 as in the stock. */
+    BK4819_WriteRegister(BK4819_REG_4E,
+        (1u << 14) | ((uint16_t)(open_delay & 7u) << 11) |
+        ((uint16_t)(close_delay & 3u) << 9) | (1u << 8) |
+        (uint16_t)glitch_open);
+
+    /* The probe owns the audio: AF in FM, amp on, the other chip muted.  The
+     * software gate is not running, so nothing here is an MCU mute. */
+    bk4815_set_af(false);
+    BK4819_SetAF(BK4819_AF_FM);
+    audio_path_drive(1);
+
+    /* The K1's bk4829.c writes 0x3B18 (ExitTxMute); this port/stock writes
+     * 0x3B20 on RX entry.  Bit 5 differs.  Phases that pass 0xFFFF leave the
+     * current value alone; the phase that passes 0x3B18 tests whether the chip
+     * then soft-mutes the AF on squelch, as the K1 relies on. */
+    if (reg50 != 0xFFFFu)
+        BK4819_WriteRegister(BK4819_REG_50, reg50);
+
+    /* Arm the SQL bits explicitly: the selected VFO may not be the BK4829's. */
+    {
+        uint16_t mask = BK4819_ReadRegister(BK4819_REG_3F);
+        mask |= BK4819_REG_3F_SQUELCH_FOUND | BK4819_REG_3F_SQUELCH_LOST;
+        BK4819_WriteRegister(BK4819_REG_3F, mask);
+    }
+    BK4819_WriteRegister(BK4819_REG_02, 0);
+
+    uart_printf("\n--- %s: RSSI %u/%u  ExNoise %u/%u  glitch %u/%u  "
+                "delays %u/%u  0x50=%04X ---\n"
+                "    key the carrier on/off now; %u s\n",
+                name, rssi_open, rssi_close, noise_open, noise_close,
+                glitch_open, glitch_close, open_delay, close_delay, reg50,
+                seconds);
+
+    t0 = systick_millis();
+    while ((uint32_t)(systick_millis() - t0) < seconds * 1000u) {
+        const uint16_t status  = BK4819_ReadRegister(BK4819_REG_02);
+        const uint16_t glitch  = BK4819_ReadRegister(BK4819_REG_63);
+        const uint16_t exnoise = BK4819_ReadRegister(BK4819_REG_65);
+        const uint16_t rssi    = BK4819_ReadRegister(BK4819_REG_67);
+        const uint16_t voice   = BK4819_GetVoiceAmplitudeOut();
+
+        if (status != 0u) {
+            BK4819_WriteRegister(BK4819_REG_02, 0);
+            uart_printf("[SQL %5u ms] status 0x%04X  lost %u found %u  "
+                        "63=%u 65=%u 67=%u 64=0x%04X\n",
+                        (unsigned)(systick_millis() - t0), status,
+                        (unsigned)((status >> BK4819_REG_3F_SHIFT_SQUELCH_LOST) & 1u),
+                        (unsigned)((status >> BK4819_REG_3F_SHIFT_SQUELCH_FOUND) & 1u),
+                        glitch, exnoise & 0x7Fu, rssi & 0x1FFu, voice);
+        }
+
+        if ((n++ % 10u) == 0u) {
+            uart_printf("  t=%5u ms  63=%3u 65=%3u 67=%3u 64=0x%04X  "
+                        "0C=%u 47=0x%04X\n",
+                        (unsigned)(systick_millis() - t0),
+                        glitch, exnoise & 0x7Fu, rssi & 0x1FFu, voice,
+                        BK4819_ReadRegister(BK4819_REG_0C) & 1u,
+                        BK4819_ReadRegister(BK4819_REG_47));
+        }
+        systick_delay_ms(50);
+    }
+}
+
+static void squelch_k1_probe(void)
+{
+    const uint32_t f = gRxVfo->freq_config_RX.Frequency;
+    uint8_t rssi_open, rssi_close;
+
+    if (rx_audio_is_4815()) {
+        uart_puts("\nBK4829 is not the audio source.  Select a BK4829 VFO "
+                  "('8'/'9' to pick the VFO, 'I' to cycle its transceiver), "
+                  "then run '!' again.\n");
+        return;
+    }
+
+    if (gRxVfo->Modulation == MODULATION_AM) {
+        rssi_open = 75; rssi_close = 69;
+    } else if (f >= PA_BAND_SPLIT) {
+        rssi_open = 67; rssi_close = 61;
+    } else {
+        rssi_open = 112; rssi_close = 106;
+    }
+
+    uart_printf("\nK1 chip-squelch probe: VFO %u  %u.%05u MHz  %s  SQL %u\n",
+                (unsigned)gEeprom.RX_VFO,
+                (unsigned)(f / 100000u), (unsigned)(f % 100000u),
+                (gRxVfo->Modulation == MODULATION_AM) ? "AM" : "FM",
+                (unsigned)gEeprom.SQUELCH_LEVEL);
+    uart_printf("  before: 3F=0x%04X 47=0x%04X 4D=0x%04X 4E=0x%04X "
+                "4F=0x%04X 78=0x%04X 50=0x%04X 0C=0x%04X 02=0x%04X\n",
+                BK4819_ReadRegister(BK4819_REG_3F),
+                BK4819_ReadRegister(BK4819_REG_47),
+                BK4819_ReadRegister(BK4819_REG_4D),
+                BK4819_ReadRegister(BK4819_REG_4E),
+                BK4819_ReadRegister(BK4819_REG_4F),
+                BK4819_ReadRegister(BK4819_REG_78),
+                BK4819_ReadRegister(BK4819_REG_50),
+                BK4819_ReadRegister(BK4819_REG_0C),
+                BK4819_ReadRegister(BK4819_REG_02));
+
+    /* Phase 1: the nicFW-style ExNoise pair, fastest delays. */
+    squelch_k1_probe_phase("fast delays (0/0)", rssi_open, rssi_close,
+                           42, 46, 45, 55, 0, 0, 12, 0xFFFFu);
+
+    /* Phase 2: same thresholds, the K1/stock delays. */
+    squelch_k1_probe_phase("stock delays (5/3)", rssi_open, rssi_close,
+                           42, 46, 45, 55, 5, 3, 12, 0xFFFFu);
+
+    /* Phase 3: no ExNoise close -- do RSSI/glitch alone close the gate? */
+    squelch_k1_probe_phase("no ExNoise close (127)", rssi_open, rssi_close,
+                           42, 127, 45, 55, 0, 0, 8, 0xFFFFu);
+
+    /* Phase 4: the K1's 0x3B18 (its bk4829.c ExitTxMute word) instead of the
+     * stock/port 0x3B20.  If bit 5 is the chip's soft-mute enable, the AF now
+     * goes quiet on sqlFound and reopens on sqlLost, which the earlier phases
+     * show it does not do with 0x3B20. */
+    squelch_k1_probe_phase("0x50=0x3B18 (K1)", rssi_open, rssi_close,
+                           42, 46, 45, 55, 5, 3, 12, 0x3B18u);
+
+    /* Put the VFO's own thresholds back and let the software gate resume. */
+    BK4819_SetupSquelch(gRxVfo->SquelchOpenRSSIThresh,
+                        gRxVfo->SquelchCloseRSSIThresh,
+                        gRxVfo->SquelchOpenNoiseThresh,
+                        gRxVfo->SquelchCloseNoiseThresh,
+                        gRxVfo->SquelchCloseGlitchThresh,
+                        gRxVfo->SquelchOpenGlitchThresh);
+    BK4819_WriteRegister(BK4819_REG_02, 0);
+    BK4819_WriteRegister(BK4819_REG_50, TX_REG50_UNMUTE);
+    BK4819_SetAF(BK4819_AF_FM);
+    rx_apply_audio_gate();
+    uart_puts("\nrestored the VFO squelch, 0x50=0x3B20 and the software gate\n");
+}
+
 /* ------------------------------------------------------------------- main */
 
 int main(void)
@@ -1452,6 +1835,18 @@ int main(void)
     RADIO_SelectVfos();
     SETTINGS_FixupVfoPointers();
 
+    /* Bluetooth service: bring the transport up (after settings, so the saved
+     * switch/mode/name are known) and apply the saved switch.  The 10 ms slice
+     * below pumps it. */
+    bt_init();
+    bt_set_mode(gEeprom.BT_Mode);
+    bt_set_name(gEeprom.BT_Name);
+    bt_set_speaker_switch(SETTINGS_BluetoothSpeakerSwitch());
+    bt_set_gain_levels(gEeprom.BT_MicGain, gEeprom.BT_SpkGain);
+    bt_set_linked_name(gEeprom.BT_PairedName);
+    bt_set_enabled(gEeprom.BT_Switch);
+    bt_debug_start();
+
     /* Sample the pack before any screen is drawn.  The status bar (and the
      * welcome screen) would otherwise show level 0 until the first 500 ms
      * slice, which reads as the battery jumping from 0% to the real value.
@@ -1529,7 +1924,12 @@ int main(void)
 
     for (;;) {
         uint32_t now = systick_millis();
+#ifdef ENABLE_CAT
+        cat_input_service(now);
+        int c = cat_console_getc();
+#else
         int c = uart_getc();
+#endif
 
         if (c >= 0) {
             char ch = (char)c;
@@ -1541,7 +1941,12 @@ int main(void)
                 uart_printf("%c", ch);
             }
 
-            switch (ch) {
+            /* '!' lines are the Bluetooth debug console (app/bt_debug.h,
+             * tools/ra89r_bt.py): every letter here is taken, so it gets
+             * whole lines instead. */
+            if (ch == '!' || bt_debug_active()) {
+                bt_debug_feed(ch);
+            } else switch (ch) {
             case 'h':
                 print_help();
                 break;
@@ -1790,6 +2195,25 @@ int main(void)
             case 'Q':
                 rf_squelch_autodetect();
                 break;
+            case '!':
+                squelch_k1_probe();
+                break;
+            case '@':
+                rx_tail_trace();
+                break;
+            case 'O': {
+                /* Tail sweep: the chip's 0x4E<10:9> close delay.  The '@'
+                 * trace reapplies the app's 3/5 pair first, then patches this
+                 * value in, so the sweep needs one flash and four '@' runs. */
+                static const uint8_t steps[] = { 0u, 1u, 2u, 3u };
+                static unsigned step;
+
+                rx_tail_set_close_delay((int)steps[step]);
+                uart_printf("\nBK4829 squelch close delay -> %u (0x4E<10:9>); "
+                            "next '@' uses it\n", (unsigned)steps[step]);
+                step = (step + 1u) % (sizeof(steps) / sizeof(steps[0]));
+                break;
+            }
             case 'j':
                 fm_bench();
                 break;
@@ -1813,12 +2237,192 @@ int main(void)
             case 'J':
                 dual_rf_diag();
                 break;
+            case '%':
+                uart_printf("\nscan trace %s\n", CHFRSCANNER_ToggleTrace() ? "ON" : "off");
+                break;
+            case '#':
+                uart_printf("\nscan probe retune: %s\n",
+                            CHFRSCANNER_TogglePlainTune()
+                                ? "plain 0x38/0x39 write"
+                                : "REG_30 restart (K1)");
+                break;
             case 'A':
                 rx_force_bk4815_af(!rx_force_bk4815_af_on());
                 uart_printf("\nBK4815 AF forced %s\n",
                             rx_force_bk4815_af_on() ? "ON (squelch bypassed)" : "off");
                 break;
+            case 'o':
+                /* Automation: toggle SetScn NORMAL <-> FAST. */
+                gSetting_set_scn = (gSetting_set_scn == (uint8_t)SCAN_MODE_FAST)
+                                       ? (uint8_t)SCAN_MODE_NORMAL : (uint8_t)SCAN_MODE_FAST;
+                uart_printf("\nSetScn = %u (%s)\n", (unsigned)gSetting_set_scn,
+                            scan_mode_name());
+                break;
+            case '7':
+                /* Automation: cycle the squelch level 0..9.  Ask for a VFO
+                 * reconfigure so RADIO_ConfigureSquelchAndOutputPower() writes
+                 * the new thresholds into the BK4829, not just gEeprom. */
+                gEeprom.SQUELCH_LEVEL = (uint8_t)((gEeprom.SQUELCH_LEVEL + 1u) % 10u);
+                gVfoConfigureMode = VFO_CONFIGURE;
+                uart_printf("\nSQL level %u   marks now open %u close %u\n",
+                            (unsigned)gEeprom.SQUELCH_LEVEL,
+                            (unsigned)rx_squelch_open_mark_now(),
+                            (unsigned)rx_squelch_close_mark_now());
+                break;
+            case '8': {
+                /* Automation: switch the selected VFO (what EXIT does). */
+                const uint8_t vfo = (uint8_t)(gEeprom.RX_VFO ? 0u : 1u);
+
+                gEeprom.RX_VFO = vfo;
+                gEeprom.TX_VFO = vfo;
+                RADIO_ConfigureChannel(vfo, VFO_CONFIGURE_RELOAD);
+                gUpdateDisplay = true;
+                gUpdateStatus  = true;
+                uart_printf("\nVFO %c selected\n", vfo ? 'B' : 'A');
+                break;
+            }
+            case '9': {
+                /* Automation: cycle TrVfoA between the two transceivers. */
+                const rf_xcvr_t x = (SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4815)
+                                        ? RF_XCVR_BK4829 : RF_XCVR_BK4815;
+
+                SETTINGS_SetVfoTransceiver(0u, x);
+                rf_dual_reapply();
+                uart_printf("\nTrVfoA = %s\n", x == RF_XCVR_BK4815 ? "4815" : "4829");
+                break;
+            }
+            case 'I': {
+                const rf_xcvr_t x = (SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815)
+                                        ? RF_XCVR_BK4829 : RF_XCVR_BK4815;
+
+                SETTINGS_SetVfoTransceiver(1u, x);
+                rf_dual_reapply();
+                uart_printf("\nTrVfoB = %s\n", x == RF_XCVR_BK4815 ? "4815" : "4829");
+                break;
+            }
+            case 'N': {
+                /* Automation: arm a +/-500 kHz range around the current RX
+                 * frequency, in frequency mode (what F+5 does by hand). */
+                const uint32_t f  = gRxVfo->freq_config_RX.Frequency;
+                const uint8_t  rx = gEeprom.RX_VFO;
+
+                gRxVfo->Band              = (uint16_t)FREQUENCY_GetBand(f);
+                gEeprom.ScreenChannel[rx] = (uint16_t)(FREQ_CHANNEL_FIRST + gRxVfo->Band);
+                gEeprom.FreqChannel[rx]   = gEeprom.ScreenChannel[rx];
+                gRxVfo->CHANNEL_SAVE      = gEeprom.ScreenChannel[rx];
+                gScanRangeStart           = (f > 50000u) ? f - 50000u : 0u;
+                gScanRangeStop            = f + 50000u;
+                uart_printf("\nrange armed %u.%05u .. %u.%05u MHz\n",
+                            (unsigned)(gScanRangeStart / 100000u),
+                            (unsigned)(gScanRangeStart % 100000u),
+                            (unsigned)(gScanRangeStop / 100000u),
+                            (unsigned)(gScanRangeStop % 100000u));
+                break;
+            }
+            case 'U': {
+                /* Automation: arm the civil airband, 108.000-136.975 MHz, on the
+                 * 8.33 kHz channel spacing (Europe's airband grid) and tune
+                 * 118.000; the AM rule in radio.c then makes the demod AM.
+                 * Start the scan with E. */
+                const uint8_t rx = gEeprom.RX_VFO;
+
+                gRxVfo->STEP_SETTING = STEP_8_33kHz;
+                gRxVfo->StepFrequency = gStepFrequencyTable[STEP_8_33kHz];
+                gRxVfo->Band = (uint16_t)FREQUENCY_GetBand(11800000u);
+                gEeprom.ScreenChannel[rx] = (uint16_t)(FREQ_CHANNEL_FIRST + gRxVfo->Band);
+                gEeprom.FreqChannel[rx]   = gEeprom.ScreenChannel[rx];
+                gRxVfo->CHANNEL_SAVE      = gEeprom.ScreenChannel[rx];
+                gRxVfo->freq_config_RX.Frequency = 11800000u;
+                gRxVfo->freq_config_TX.Frequency = 11800000u;
+                gScanRangeStart = FREQ_AIRBAND_LO;
+                /* 136.975 is the last 8.33 kHz channel below 137.000. */
+                gScanRangeStop  = 13697500u;
+                RADIO_ApplyOffset(gRxVfo);
+                gVfoConfigureMode = VFO_CONFIGURE_RELOAD;
+                gUpdateDisplay    = true;
+                uart_printf("\nairband: 108.000-136.975 MHz, step 8.33 kHz, tuned 118.000, "
+                            "modulation %s (scan with E)\n",
+                            FREQUENCY_IsAirband(gRxVfo->pRX->Frequency) ? "AM" : "as the VFO says");
+                break;
+            }
+            case 'E':
+                /* Automation: start/stop the scan on the armed range. */
+                if (gScanStateDir == SCAN_OFF) {
+                    if (!gScanRangeStart) {
+                        uart_puts("\nno range armed -- press N first\n");
+                        break;
+                    }
+                    CHFRSCANNER_Start(true, SCAN_FWD);
+                    uart_puts("\nscan started\n");
+                } else {
+                    CHFRSCANNER_Stop();
+                    uart_puts("\nscan stopped\n");
+                }
+                break;
+            case 'H': {
+                /* Read-only: the whole audio chain as it stands.  Plain receive
+                 * and scanning can differ here (radio 2026-10-27: a BK4815 hit
+                 * was silent while scanning, 0x47 held at 0x6040). */
+                uart_printf("\naudio chain: 0x30=%04X (bit9 = AF DAC) 0x37=%04X "
+                            "0x47=%04X (bits 11:8 = AF select) 0x48=%04X 0x50=%04X "
+                            "0x67=%04X\n",
+                            (unsigned)BK4819_ReadRegister(0x30),
+                            (unsigned)BK4819_ReadRegister(0x37),
+                            (unsigned)BK4819_ReadRegister(0x47),
+                            (unsigned)BK4819_ReadRegister(0x48),
+                            (unsigned)BK4819_ReadRegister(0x50),
+                            (unsigned)BK4819_ReadRegister(0x67));
+                uart_printf("  demod: 0x31=%04X (bit0 AM) 0x42=%04X 0x2A=%04X 0x3D=%04X  "
+                            "VFO mod %u (%s) airband %d\n",
+                            (unsigned)BK4819_ReadRegister(0x31),
+                            (unsigned)BK4819_ReadRegister(0x42),
+                            (unsigned)BK4819_ReadRegister(0x2A),
+                            (unsigned)BK4819_ReadRegister(0x3D),
+                            (unsigned)gRxVfo->Modulation,
+                            gModulationStr[gRxVfo->Modulation],
+                            (int)FREQUENCY_IsAirband(gRxVfo->pRX->Frequency));
+                uart_printf("  PC13 %u (audio path helper says %s), speaker %u, "
+                            "squelch %s, lane %s, function %u, scan dir %d\n",
+                            (unsigned)(gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN) ? 1u : 0u),
+                            audio_path_is_on() ? "on" : "off",
+                            (unsigned)gEnableSpeaker,
+                            rx_squelch_open() ? "open" : "closed",
+                            rx_audio_is_4815() ? "4815" : "4829",
+                            (unsigned)gCurrentFunction,
+                            (int)gScanStateDir);
+                break;
+            }
+            case 'y':
+                /* PA1: the stock's receive entry drives it low, the port high. */
+                {
+                    static bool high = true;
+
+                    high = !high;
+                    pa_set_pa1(high);
+                    uart_printf("\nPA1 %s\n", high ? "high" : "low");
+                }
+                break;
+            case 'z':
+                pa_toggle_pin2();
+                uart_printf("\n0x33 pin 2 (0x10) toggled -> 0x%04X\n",
+                            (unsigned)BK4819_ReadRegister(BK4819_REG_33));
+                break;
+            case 'g': {
+                /* Receive-path bit 0 of 0x33 (0x40): the K1 calls it
+                 * RX_ENABLE and keeps it set, the stock's receive entry clears
+                 * it (`FUN_080093EC` -> `FUN_080137d4(3, 0)`).  Toggle it live so
+                 * the bench can tell which reading is right without a rebuild. */
+                const bool set = (BK4819_ReadRegister(BK4819_REG_33) & 0x40u) != 0u;
+
+                BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, !set);
+                uart_printf("\n0x33 bit 0 (0x40) %s -> 0x%04X\n",
+                            set ? "cleared" : "set",
+                            (unsigned)BK4819_ReadRegister(BK4819_REG_33));
+                break;
+            }
             case 'n':
+                bk4815_dump_registers();
+                bk4829_dump_registers();
                 bk4815_bench();
                 break;
             case 'e': {
@@ -1972,6 +2576,20 @@ int main(void)
             }
         } else {
             systick_delay_ms(1);
+        }
+
+        /* Drain USART3 on every pass, whatever the panel mode: the module's
+         * boot banner is ~100 bytes in ~9 ms, so a 10 ms poll lets the 1-byte
+         * receive register overrun and drops `+IM_READY`.  Only USART3 is
+         * touched, so the no-NOR rule holds.  `bt_service_tick()` (the state
+         * machine's clock) stays on the 10 ms slice in the K1-app branch. */
+        static uint32_t bt_tick10;
+
+        bt_poll();
+        if ((uint32_t)(now - bt_tick10) >= 10u) {
+            bt_tick10 = now;
+            bt_service_tick();
+            bt_debug_tick();
         }
 
         if (bench_panel) {

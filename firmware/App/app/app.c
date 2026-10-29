@@ -59,6 +59,7 @@
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
 #include "driver/keyboard.h"
+#include "driver/rx.h"
 #include "driver/st7565.h"
 #include "driver/system.h"
 #include "dtmf.h"
@@ -74,6 +75,7 @@
     #include "sram-overlay.h"
 #endif
 #include "ui/battery.h"
+#include "ui/bt.h"
 #include "ui/helper.h"
 #include "ui/inputbox.h"
 #include "ui/main.h"
@@ -110,6 +112,7 @@ void (*const ProcessKeysFunctions[])(KEY_Code_t Key, bool bKeyPressed, bool bKey
     [DISPLAY_MAIN] = &MAIN_ProcessKeys,
     [DISPLAY_MENU] = &MENU_ProcessKeys,
     [DISPLAY_SCANNER] = &SCANNER_ProcessKeys,
+    [DISPLAY_BT] = &BT_ProcessKeys,
 
 #ifdef ENABLE_FMRADIO_EMBEDDED
     [DISPLAY_FM] = &FM_ProcessKeys,
@@ -799,6 +802,12 @@ void APP_StartListening(FUNCTION_Type_t function)
     AUDIO_AudioPathOn();
     gEnableSpeaker = true;
 
+    /* The K1 opens the amplifier on every receive entry; the port's squelch
+     * gate owns it.  Re-apply the gate here so a frequency change cannot make
+     * the receiver audible before the new channel is evaluated (the retune
+     * burp, 2026-10-23). */
+    rx_apply_audio_gate();
+
     if (gSetting_backlight_on_tx_rx & BACKLIGHT_ON_TR_RX) {
         BACKLIGHT_TurnOn();
     }
@@ -1061,18 +1070,10 @@ static void CheckRadioInterrupts(void)
         }
 #endif
 
-        if (interrupts.sqlLost) {
-            g_SquelchLost = true;
-            BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, true);
-            #ifdef ENABLE_FEAT_F4HWN_RX_TX_TIMER
-                gRxTimerCountdown_500ms = 7200;
-            #endif
-        }
-
-        if (interrupts.sqlFound) {
-            g_SquelchLost = false;
-            BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, false);
-        }
+        /* The squelch result is level-based (REG_0C<1>) and the AF mute is on
+         * the MCU, so driver/rx.c's 10 ms service owns g_SquelchLost and the
+         * LED.  The SQL interrupt bits are not used; the handler still clears
+         * REG_02 and services CTCSS/CDCSS/DTMF/VOX below. */
 
 #if defined(ENABLE_AIRCOPY) || defined(ENABLE_FEAT_F4HWN_BEAM)
         if (interrupts.fskFifoAlmostFull || interrupts.fskRxFinied)
@@ -1970,7 +1971,13 @@ void APP_TimeSlice500ms(void)
         gUpdateStatus = true;
     }
 
+    /* Port adaptation: a running scan is activity.  The K1 only suspends the
+     * sleep countdown for RX and TX, and a scan runs in FUNCTION_FOREGROUND, so
+     * a sweep longer than the auto-off time put the radio to sleep mid-scan --
+     * backlight and panel off, and the red LED blinking the "asleep" pattern
+     * (radio 2026-10-22). */
     if(gCurrentFunction != FUNCTION_TRANSMIT && !FUNCTION_IsRx()
+        && gScanStateDir == SCAN_OFF
     #ifdef ENABLE_AIRCOPY
         && gScreenToDisplay != DISPLAY_AIRCOPY
     #endif
@@ -2567,7 +2574,7 @@ static void ProcessKey(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 
 Skip:
     if (gBeepToPlay != BEEP_NONE) {
-        AUDIO_PlayBeep(gBeepToPlay);
+        AUDIO_PlayKeyBeep(gBeepToPlay);
         gBeepToPlay = BEEP_NONE;
     }
 

@@ -25,6 +25,7 @@ enum GUI_DisplayType_t
     DISPLAY_MAIN = 0,
     DISPLAY_MENU,
     DISPLAY_SCANNER,
+    DISPLAY_BT,          /* the Bluetooth menu (F + MENU) */
 
 #ifdef ENABLE_FMRADIO
     DISPLAY_FM,

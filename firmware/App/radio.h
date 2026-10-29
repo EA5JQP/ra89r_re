@@ -169,6 +169,11 @@ BK4819_FilterBandwidth_t RADIO_GetAMFilterBandwidth(const VFO_Info_t *pVfo);
 void     RADIO_SetTxParameters(void);
 void     RADIO_SetupAGC(bool listeningAM, bool disable);
 void     RADIO_SetModulation(ModulationMode_t modulation);
+
+/* The airband band rule (108.0-137.0 MHz is AM): normalise the RX VFO's
+ * modulation by band before the demod is written.  Called from
+ * RADIO_SetupRegisters(); see docs/ra89r_airband.md. */
+void     RADIO_ApplyBandModulation(VFO_Info_t *vfo);
 void     RADIO_SetVfoState(VfoState_t State);
 void     RADIO_PrepareTX(void);
 void     RADIO_SendCssTail(void);

@@ -162,11 +162,11 @@
  * (`FUN_08005F90` for PA13, `FUN_0800656C`/`FUN_08006070`/`FUN_08019C58` for PA14)
  * are blinks, which is what an indicator driver looks like.
  *
- * `PC13` is the separate, static line: `FUN_080177A8` raises it and its
- * `config+0x38` gate is 0 on this codeplug, so it is held HIGH.  That is the
- * remaining candidate for the audio-path/amplifier enable, and it is what the
- * K1-driver callback drives. */
-#define AUDIO_PATH_PIN       (1u << 13)   /* PC13 -- amplifier enable candidate, held HIGH */
+ * `PC13` is the separate audio-path line: `FUN_080177A8` holds it HIGH while
+ * BT is off/unlinked; while an earpiece is linked it follows the codeplug's
+ * Speak Switch (settings byte 9 bit 5).  This radio's switch is off, so stock
+ * drives PC13 LOW while linked.  Its physical destination is still unknown. */
+#define AUDIO_PATH_PIN       (1u << 13)   /* PC13 -- stock BT/T-R audio-path control */
 
 /* The PA power/bias is a PWM, not a register: the stock's "Pow AdjData" path
  * (FUN_08016A2C -> FUN_0801830C -> FUN_0801BDE8 -> FUN_08018A88 -> FUN_080167B4
@@ -203,6 +203,34 @@
  * channel the keypad ladders do not use (docs/ra89r_battery.md).  The bus on
  * PC14/PB2, once taken for a companion gauge, is the BK1080 FM receiver's I2C. */
 #define BATTERY_ADC_PIN      (1u << 1)    /* PB1  */
+
+/* Bluetooth: a Jieli audio module on **USART3**, PB10 (TX) / PB11 (RX), AF2,
+ * 115200 8N1.  `FUN_08013420` is the pin/DMA bring-up and runs only when the
+ * UART handle's base is `0x40004800`, configuring GPIOB mask `0xC00` as AF2;
+ * `FUN_0801d718` calls `FUN_08020be4(0x1c200)` to set it up.  The module speaks
+ * a line AT protocol (driver/bluetooth.c).  See docs/ra89r_bluetooth.md. */
+#define BT_UART_TX_PIN       (1u << 10)   /* PB10 */
+#define BT_UART_RX_PIN       (1u << 11)   /* PB11 */
+#define BT_UART_AF           2u           /* GPIO_AF2_USART3 */
+#define BT_UART_BAUD         115200u
+
+/* Bluetooth module reset/enable: **PD0** (GPIOD, mask 1).  This is the line the
+ * old "companion gauge" reading called the gauge reset; the gauge was a dead end
+ * (the PC14/PB2 bus is the BK1080 FM receiver, see ra89r_bk1080.md) and PD0 is
+ * the Jieli module's **active-low reset**, held LOW (module in reset) until
+ * Bluetooth is enabled.  Evidence from the stock:
+ *
+ *   - the board bring-up configures PD0 as output (`FUN_08013C74`, GPIOD mask 1)
+ *     and clears it (`FUN_08013C24`, GPIOD BRR = 0xFFFF), i.e. reset asserted;
+ *   - "BT Switch" on -> `FUN_08009660` -> `FUN_0801D69C`, which drives PD0 low,
+ *     does the module handshake and then drives it high (GPIOD BSRR bit 0);
+ *   - "BT Switch" off -> `FUN_08009660` leaves PD0 low (GPIOD BRR bit 0);
+ *   - the periodic reset-retry `FUN_080066CC` reads PD0 back (`GPIOD->IDR & 1`)
+ *     and re-pulses it while `config[0x38]` (the codeplug Bluetooth bool) is 1.
+ *
+ * High = module out of reset (running).  See docs/ra89r_bluetooth.md. */
+#define BT_RESET_PIN         (1u << 0)    /* PD0 */
+#define BT_RESET_LEVEL       1            /* high = released / enabled */
 
 /* BK1080 FM receiver: a two-wire bus on PC14 (clock) / PB2 (data,
  * bidirectional -- driven to send, released to read).  This is the line pair

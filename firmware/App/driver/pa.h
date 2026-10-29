@@ -21,11 +21,14 @@
  *        (the BK4829 branch).  The stock picks the branch from the flag at
  *        `0x20000303` (1 = BK4829 at <= 134 MHz, 0 = BK4815 above it), so the
  *        BK4829's own receive state leaves pin 4 **clear**;
+ *      * **pin 2 (`0x10`)** -- set while BT is enabled and linked by
+ *        `FUN_08015D44`; stock also clears its paired 0x1000 configuration bit.
  *      * **pin 5 (`0x02`)** -- the **T/R** (PA enable), set by
  *        `FUN_08013A70(2)` and cleared by `(3)`.
- *    So the stock's transmit word is `0x40|0x02 = 0x42` on VHF and
- *    `0x20|0x02 = 0x22` on UHF.  The BK4829's receive state clears pin 4 and
- *    the TX pins; setting pin 4 costs ~16 dB on the BK4829 at VHF (measured).
+ *    So without BT the stock's transmit word is `0x40|0x02 = 0x42` on VHF and
+ *    `0x20|0x02 = 0x22` on UHF; pin 2 is additionally controlled by BT state.
+ *    The BK4829's receive state clears pin 4 and the TX pins; setting pin 4
+ *    costs ~16 dB on the BK4829 at VHF (measured).
  *
  * 3. **The amplifier enable is the chip's `0x36`** -- bit 7 (PA-CTL) with a bias
  *    in bits 15:8.  The stock's own transmit path never writes `0x36`; the K1
@@ -66,11 +69,34 @@
 #define PA_REG33_RX_MAIN  0x0004u   /* pin 4: the BK4815 receive branch's bit
                                      * (FUN_08016CEC sets it, FUN_08016DE8
                                      * clears it); the BK4829 leaves it clear */
+#define PA_REG33_BT_AUDIO 0x0010u   /* pin 2: set only while stock BT is linked
+                                     * (FUN_08015D44); stock also clears paired
+                                     * config bit 0x1000 */
 #define PA_REG33_TR       0x0002u   /* pin 5: T/R, the PA enable (FUN_08013A70) */
 
 /* Bring up the PWM pin and timer and park the band-path pins; compare 0, so the
  * PA is unbiased until a transmission asks for power. */
 void pa_init(void);
+
+/* Which transceiver is the one being listened to, for the `0x33` receive-path
+ * pin (pin 4, `PA_REG33_RX_MAIN`).  The stock ties that pin to the receive
+ * branch, not to the board's band: its BK4815 receive entry sets it
+ * (`FUN_08016CEC` -> `FUN_080137D4(0x10, 0x10)`) and its BK4829 entry clears it
+ * (`FUN_08016DE8` -> `FUN_080137D4(0x10, 0)`).  It is worth ~16 dB on the
+ * BK4829 at VHF when wrongly set (measured; docs/ra89r_rfpath.md), so it must
+ * follow the **audio lane** -- a VFO merely being *assigned* to the BK4815 is
+ * not enough.  `pa_apply_chip_path()` (and therefore every receive re-entry)
+ * re-asserts this choice. */
+void pa_set_rx_lane(bool use_4815);
+
+/* The lane last applied, for diagnostics. */
+bool pa_rx_lane_is_4815(void);
+
+/* Bench toggles (console 'y'/'z'), receive path only: PA1's level and the 0x33
+ * pin-2 bit (0x10), the two lines the stock's receive entry drives and the port
+ * does not.  See pa.c. */
+void pa_set_pa1(bool high);
+void pa_toggle_pin2(void);
 
 /* The bias PWM compare, 0 .. PA_PWM_MAX_DUTY.  Higher is more bias. */
 void pa_power(uint16_t compare);
@@ -148,5 +174,9 @@ void pa_rx_enable(void);
 uint16_t pa_last_reg36(void);
 uint16_t pa_last_reg33(void);
 uint16_t pa_last_compare(void);
+
+/* Preserve the stock BT-controlled RF-chip output (BK4829 0x33 pin 2). */
+void pa_set_bt_audio(bool on);
+bool pa_bt_audio(void);
 
 #endif /* DRIVER_PA_H */

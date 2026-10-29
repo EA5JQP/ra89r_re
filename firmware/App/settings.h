@@ -295,6 +295,17 @@ typedef struct {
     uint8_t               S0_LEVEL;
     uint8_t               S9_LEVEL;
 #endif
+
+    /* Bluetooth (Jieli YBT100) -- port addition; see
+     * docs/ra89r_bluetooth_design.md. */
+    bool                  BT_Switch;      /* module on/off (PD0 + AT+BT_DISCN) */
+    uint8_t               BT_Mode;        /* 0 = emitter, 1 = receiver */
+    char                  BT_Name[16];    /* AT+WRITE_NAME value */
+    uint8_t               BT_SpkGain;     /* AT+SPKGAIN level */
+    uint8_t               BT_MicGain;     /* AT+MICGAIN level */
+    uint8_t               BT_PTTType;     /* earpiece PTT behaviour */
+    uint8_t               BT_HoldTime;    /* earpiece PTT hold time */
+    char                  BT_PairedName[24];  /* the last device connected */
 } EEPROM_Config_t;
 
 extern EEPROM_Config_t gEeprom;
@@ -325,10 +336,11 @@ typedef struct {
 void     SETTINGS_InitEEPROM(void);
 void     SETTINGS_LoadCalibration(void);
 void     SETTINGS_FixupVfoPointers(void);
+bool     SETTINGS_BluetoothSpeakerSwitch(void);
 
 uint32_t SETTINGS_FetchChannelFrequency(const uint16_t channel);
 bool     SETTINGS_FetchChannelScanInfo(const uint16_t channel, uint32_t *frequency, ModulationMode_t *modulation);
-bool     SETTINGS_FetchChannelScanDisplayInfo(const uint16_t channel, ChannelScanDisplayInfo_t *info);
+bool     SETTINGS_FetchChannelScanDisplayInfo(uint8_t vfo, const uint16_t channel, ChannelScanDisplayInfo_t *info);
 void     SETTINGS_FetchChannelName(char *s, const uint16_t channel);
 /* The K1's ChannelAttributes_t as a plain u16, decoded from the stock codeplug
  * (whose format now lives in settings.c).  0xFFFF = no such channel. */
@@ -385,7 +397,9 @@ void      SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr);
  * settings blob.  gSetting_set_scn (misc.c) holds this value at run time. */
 typedef enum {
     SCAN_MODE_NORMAL    = 0,   /* step scan, no fast precheck */
-    SCAN_MODE_FAST      = 1,   /* single-lane fast RSSI precheck */
-    SCAN_MODE_FAST_BOTH = 2    /* both transceivers as interleaved scan lanes */
+    SCAN_MODE_FAST      = 1    /* fast RSSI precheck on the VFO's own chip */
+    /* 2 (FAST BOTH) and 3 (LISTEN) were removed: the two chips share one set
+     * of receive-path pins, so the chip they are not set for hears nothing
+     * (docs/ra89r_scan.md).  A saved 2 or 3 loads as FAST. */
 } scan_mode_t;
 #endif

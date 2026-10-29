@@ -81,5 +81,12 @@ deliberately free of any MCU include, and is tested on a PC by
 gone.  It does still raise the *amplifier* around the beep (`AUDIO_AudioPathOn()`,
 restored to `gEnableSpeaker`), because the DAC tone reaches the speaker only
 through that amp and the idle receive path leaves it off -- a rewrite that dropped
-it made every key beep silent.  The host previews link
+it made every key beep silent.  **And it waits 60 ms after switching the amp on**,
+as the K1 does (`SYSTEM_DelayMs(60)` before its first tone): since the receive
+gate drives `PC13` every 10 ms poll (2026-10-22) the amp is off whenever the
+squelch is closed, and a 60 ms key beep played straight after switching it on fell
+entirely inside the amp's wake-up -- radio 2026-10-29: the boot beep (amp still on
+from `audio_path_init()`) heard, every key beep silent, `H` showing `PC13 0`,
+`function 0`, `Beep` on.  The wait is skipped when the amp is already on.  Fixed
+and heard on the radio the same day.  The host previews link
 `tools/host/host_beeper.c` in the driver's place.

@@ -130,7 +130,7 @@ here are the port's todo list:
 | `eeprom.c`, `eeprom_compat.c`, `flash.c`, `mb_flash.c`, `py25q16.c`, `spi.c`, `i2c.c` | `gEeprom` (the whole settings model), firmware slots, the codeplug | the external SPI NOR driver is on the **unmerged** `driver/eeprom` branch (read + dump validated, **write test not run**), and there is no `EEPROM_Config_t gEeprom` layer at all -- this is the largest single gap |
 | `keyboard.c` | `KEYBOARD_*`, the app's key API | ours is `keypad.c` and already returns `KEY_Code_e`; needs an adapter or a rename, not new work |
 | `st7565.c` | `ST7565_*` + `gFrameBuffer[7][128]`/`gStatusLine[128]` | ours is `lcd_st7565.c`, bit-banged over a different pin set; the app draws into the K1's shadow buffers, so the port needs that buffer shape (or the app's UI calls re-pointed) |
-| `adc.c` | battery/S-meter sampling | **the RA89R has no battery ADC channel**: the gauge is a separate chip whose bus never answered (`ra89r_battery.md`).  Decision needed before the app's battery/saver logic can mean anything |
+| `adc.c` | battery/S-meter sampling | ours is `driver/battery.c`: the pack is ADC channel 9 (`PB1`, the `V_DET` line) inside the keypad's DMA scan, 2.438 mV/count, wired to `board.c`'s `BOARD_ADC_GetBatteryInfo()` (`ra89r_battery.md`).  The S-meter is the BK4829's `0x67`, read in `driver/bk4819.c` |
 | `system.c` | clock/power management | ours is `clock.c`/`early.c`; the APIs differ |
 | `crc.c`, `aes.c` | image validation, the codec's checks | port as-is (MCU-independent) |
 | `vcp.c`, `usb/` | USB serial | the RA89R's USB-C is unused by the stock; stub or disable |
@@ -475,6 +475,35 @@ here are the port's todo list:
   through the stock's journal, in the stock's own layout; `ra89r_codeplug.md`
   records the two regions it must never assume it owns -- the calibration window
   and the signature.
+
+## Receive gate: the retune burst (2026-10-23)
+
+**Finding (bench):** every frequency change produced an audible squelch
+"burp", even with the new channel quiet.
+
+**Cause.**  Two K1 paths open the audio behind the port's squelch gate:
+`RADIO_SetupRegisters()` unmutes the chip's AF through
+`RADIO_SetModulation()` (`BK4819_SetAF(BK4819_AF_FM)`), and
+`APP_StartListening()` opens the amplifier with
+`AUDIO_AudioPathOn()` + `gEnableSpeaker = true`.  The gate had no settling
+hold-off, so the first RSSI reads after a retune -- the AGC/PLL settling, not
+the new channel's level -- crossed the open mark and opened the audio for a
+poll or two.  The gate state itself was never reset on a retune.
+
+**Fix (branch `driver/rx-retune-squelch`).**
+
+* `rx_apply_audio_gate()` is the three-gate drive (BK4815 AF `0x49`, BK4829 AF
+  `0x47`, amplifier `PC13`) factored out of `rx_poll()`.  `RADIO_SetupRegisters()`
+  and `APP_StartListening()` call it right after the K1 opens the audio, so the
+  gate is authoritative immediately rather than on the next 10 ms poll.
+* `rx_gate_hold_closed()` closes the gate, mutes the three gates and ignores
+  the RSSI for `RX_SETTLE_POLLS` (5 x 10 ms = 50 ms) on an actual frequency
+  change -- `rx_set_frequency()`, the BK4815 retune in `rf_dual_refresh()`, and
+  a receive-lane switch.
+
+Target build and `check_all.sh` (Zig) pass.  **On-radio validation pending**:
+the radio stopped answering CAT/console after the bench run that found it, so
+the burp has not been re-listened to with the fix flashed.
 
 ## Suggested order
 

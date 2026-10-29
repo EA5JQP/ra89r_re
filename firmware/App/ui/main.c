@@ -202,7 +202,7 @@ static void UI_MAIN_DrawScanRssiSparkline(uint8_t line)
     for (uint8_t i = 0; i < CHFRSCANNER_RSSI_SPARKLINE_WIDTH; i++)
     {
         const uint8_t previousRaw = (i > 0) ? level[i - 1] : 0;
-        const uint8_t nextRaw = (i + 1 < CHFRSCANNER_RSSI_SPARKLINE_WIDTH) ? level[i + 1] : 0;
+        const uint8_t nextRaw = ((unsigned)i + 1u < (unsigned)CHFRSCANNER_RSSI_SPARKLINE_WIDTH) ? level[i + 1] : 0;
         uint8_t displayLevel = (uint8_t)((previousRaw + 2u * level[i] + nextRaw + 2u) >> 2);
         uint8_t previousLevel = previousRaw;
 

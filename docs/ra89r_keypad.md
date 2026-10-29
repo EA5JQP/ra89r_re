@@ -33,8 +33,11 @@ How to reproduce the analysis (see "Loading the current decode into Ghidra"):
   (`0x0800415F`) -- keys are polled.  (The real handlers are DMA1 streams,
   `TIM3`/`TIM5`, `SPI1`, `USART1`, `SysTick`.)
 
-**Correction: the keys are NOT on the ADC.**  The 6-channel ADC scan is real and
-worth recording, but it is the **S-meter**, not a keypad ladder.  `FUN_08004E58`
+**Correction (itself superseded by "SOLVED: a 5-line analog key matrix" below).**
+The 6-channel ADC scan is real and worth recording: channels 2/3/6/7/8 *are* the
+keypad ladders, and the sixth (channel 9 = `PB1`) is the pack-voltage sense
+(`V_DET`, see [`ra89r_battery.md`](ra89r_battery.md)) -- **not** the S-meter; that
+is the BK4829's `0x67` RSSI.  `FUN_08004E58`
 programs a regular scan of six channels -- `2` *or* `14`, then `3`, `6`, `7`,
 `8`, `9` (`FUN_080109E4` per channel) -- and `FUN_0801BE90`/`FUN_08005460` start
 a DMA conversion (`FUN_08010DB8(inst, buffer, 0x30)`) whose results land at
@@ -49,8 +52,8 @@ The **only** consumers of those results are:
   `0x18`, channels 4 bytes apart) -- and it is called from exactly two places,
   both reading **channel index 5** (the 6th = ADC channel 9 = **PB1**):
   `FUN_08007664` (main loop: `>> 4`, compare and draw a bar through the display
-  module = the S-meter) and `FUN_0800E514` (average 5 samples, `>> 6`, smoothed
-  value).
+  module = the pack-voltage bar) and `FUN_0800E514` (average 5 samples, `>> 6`,
+  smoothed value).  The S-meter in the stock is the BK4829's `0x67`, not this.
 
 No function maps an ADC reading to a key code, and no threshold table is
 referenced from any key path, so the earlier "keypad = ADC ladder" claim in this
@@ -246,3 +249,14 @@ keypad.  Also worth knowing from that example: it runs its DMA 16-bit
 the value is in the low 12 bits.  **Not yet run on the radio** -- the `k` monitor is the check, and the
 raw values it prints should be unchanged (they are the same measurement, still
 averaged over eight samples).
+
+## Port note: boot-time PTT is PTT1 on PB10, never PTT2 on PB9 (2026-10-11)
+
+`PB9` is the line the **bootloader** gates on, so holding it with any `PA2` key
+at reset drops the radio into **update mode** instead of running the application
+— measured: "PTT2 + SIDE1 puts the radio in update mode".  The boot-time key
+mode (`helper/boot.c`) therefore must **not** read `PB9`.  It reads the **main
+PTT (PTT1)** on **`PB10`** instead (the stock's own PTT1 read), with the ladder
+`KEY_PTT` as a fallback.  PTT1 also pulls the `PA2` ladder fully low, so it
+masks `SIDE1` on the shared line: the hidden-menu combination is effectively
+**PTT1 held** at power-on.

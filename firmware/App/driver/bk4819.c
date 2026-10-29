@@ -392,6 +392,31 @@ bool BK4819_IsGpioOutSet(BK4819_GPIO_PIN_t Pin)
     return (gBK4819_GpioOutState & (0x40u >> Pin)) != 0;
 }
 
+/* Port addition: mirror stock FUN_080137D4(mask, value) exactly.  The K1 helper
+ * above only changes output bits; the RA89R helper also clears the paired
+ * configuration bit 14-pin for each pin in `mask`.  Keeping this as a separate
+ * entry point avoids changing the imported K1 API's semantics for other users. */
+uint16_t BK4819_ToggleGpioOutStock(uint8_t mask, uint8_t value)
+{
+    unsigned pin;
+
+    for (pin = 0; pin < 7u; pin++) {
+        const uint16_t pin_mask = (uint16_t)(1u << pin);
+        const uint16_t out_mask = (uint16_t)(0x40u >> pin);
+        const uint16_t pair_mask = (uint16_t)(1u << (14u - pin));
+
+        if ((mask & pin_mask) == 0u)
+            continue;
+
+        gBK4819_GpioOutState &= (uint16_t)~(out_mask | pair_mask);
+        if ((value & pin_mask) != 0u)
+            gBK4819_GpioOutState |= out_mask;
+    }
+
+    BK4819_WriteRegister(BK4819_REG_33, gBK4819_GpioOutState);
+    return gBK4819_GpioOutState;
+}
+
 void BK4819_SetCDCSSCodeWord(uint32_t CodeWord)
 {
     // REG_51
@@ -742,8 +767,12 @@ void BK4819_SetupSquelch(
     // <13:11> 5 Squelch = open  Delay Setting
     //         0 ~ 7
     //
-    // <10:9>  3 Squelch = close Delay Setting
-    //         0 ~ 3
+    // <10:9>  0 Squelch = close Delay Setting
+    //         0 ~ 3.  Measured on this board: ~10 ms per step, so 3 added
+    //         ~30 ms of chip tail over 0 (~50 ms vs ~78 ms fall->close) and
+    //         made no audible difference under the audio/AGC tail.  0 stayed
+    //         at one transition from -30 to -50 dBm (SQL 5), so the open
+    //         delay and the glitch/noise filters carry the debounce.
     //
     // <8>     1 ???
     //
@@ -753,7 +782,7 @@ void BK4819_SetupSquelch(
     BK4819_WriteRegister(BK4819_REG_4E,
     (1u << 14) |                  // 1 ???
     (5u << 11) |                  // 5 squelch = open  delay .. 0 ~ 7
-    (3u <<  9) |                  // 3 squelch = close delay .. 0 ~ 3
+    (0u <<  9) |                  // 0 squelch = close delay .. 0 ~ 3
     (1u <<  8) |                  // 1 ??? (matches stock BK4829)
     SquelchOpenGlitchThresh);     // 0 ~ 255
 
@@ -836,15 +865,15 @@ void BK4819_RX_TurnOn(void)
 void BK4819_PickRXFilterPathBasedOnFrequency(uint32_t Frequency)
 {
     /* Port adaptation (see NOTICE, docs/ra89r_rfpath.md): on this board the RX
-     * LNA pins belong to the BK4815 receive branch.  The BK4829's own receive
-     * state clears both (stock FUN_08016DE8 -> FUN_080137D4(0x10, 0)), and the
-     * radio confirms it -- the K1's pin-4 rule costs ~16 dB on the BK4829 at VHF
-     * (console 'F': pin 4 gave 0x67 = 199, cleared gave 232).  So this K1 rule
-     * is neutralised to the board's BK4829 state. */
+     * LNA pins belong to the receive **lane**, not to the frequency's band.
+     * The stock's BK4829 receive entry clears pin 4 (`FUN_08016DE8` ->
+     * `FUN_080137D4(0x10, 0)`) and its BK4815 entry sets it (`FUN_08016CEC`),
+     * and the radio confirms it -- the K1's pin-4 rule costs ~16 dB on the
+     * BK4829 at VHF (console 'F': pin 4 gave 0x67 = 199, cleared gave 232).
+     * `pa_set_rx_lane()` owns the pin now; this K1 hook must not touch it,
+     * because the app calls it on every receive re-entry and would undo the
+     * lane's choice. */
     (void)Frequency;
-
-    BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, false);
-    BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, false);
 }
 
 void BK4819_DisableScramble(void)

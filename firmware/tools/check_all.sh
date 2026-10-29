@@ -19,11 +19,40 @@ run() {
     printf '%s\n' "$out" | tail -2
 }
 
-echo "== test_rf (register paths, including the BK4815 synthesizer) =="
-$CC -std=c11 -I tools/host -I App -I App/driver tools/test_rf.c \
+echo "== test_bluetooth (driver command table + parser) =="
+$CC -std=c11 -I App -I App/driver -DBLUETOOTH_HOST_TEST \
+    tools/test_bluetooth.c App/driver/bluetooth.c -o /tmp/ra89r_test_bluetooth
+run /tmp/ra89r_test_bluetooth
+
+echo "== test_bt_capture (timed USART capture) =="
+$CC -std=c11 -Wall -Wextra -Werror -I App -I App/driver \
+    tools/test_bt_capture.c App/driver/bt_capture.c -o /tmp/ra89r_test_bt_capture
+run /tmp/ra89r_test_bt_capture
+
+echo "== test_bt_service (BT state machine + queue) =="
+$CC -std=c11 -Wall -Wextra -I App -I App/driver -DBLUETOOTH_HOST_TEST \
+    tools/test_bt_service.c App/app/bt.c App/driver/bluetooth.c \
+    -o /tmp/ra89r_test_bt_service
+run /tmp/ra89r_test_bt_service
+
+echo "== test_bt_debug (BT debug console: !-lines, trace, inject) =="
+$CC -std=c11 -Wall -Wextra -I App -I App/driver -DBLUETOOTH_HOST_TEST \
+    tools/test_bt_debug.c App/app/bt_debug.c App/app/bt.c \
+    App/driver/bluetooth.c -o /tmp/ra89r_test_bt_debug
+run /tmp/ra89r_test_bt_debug
+
+echo "== test_rf (register paths, including the stock BT pin) =="
+$CC -std=c11 -I tools/host -I App -I App/driver -DBLUETOOTH_HOST_TEST \
+    tools/test_rf.c \
     App/driver/bk4829.c App/driver/bk4815.c App/driver/bk4819.c \
-    App/driver/pa.c App/driver/tx.c tools/host/host_led.c -o /tmp/ra89r_test_rf
+    App/driver/pa.c App/driver/tx.c \
+    tools/host/host_led.c -o /tmp/ra89r_test_rf
 run /tmp/ra89r_test_rf
+
+echo "== test_squelch (the stock's 0..10 counter) =="
+$CC -std=c11 -I App -I App/driver tools/test_squelch.c \
+    -o /tmp/ra89r_test_squelch
+run /tmp/ra89r_test_squelch
 
 echo "== test_rf_dual (two-transceiver coordinator) =="
 $CC -std=c11 -I App -I App/driver tools/test_rf_dual.c \
@@ -40,10 +69,15 @@ $CC -std=c11 -I App -I App/driver tools/test_bk1080.c \
     App/driver/bk1080.c -o /tmp/ra89r_test_bk1080
 run /tmp/ra89r_test_bk1080
 
-echo "== test_scan_dual (dual-transceiver scan policy) =="
-$CC -std=c11 -I App -I App/driver tools/test_scan_dual.c \
-    App/app/scan_dual.c -o /tmp/ra89r_test_scan_dual
-run /tmp/ra89r_test_scan_dual
+echo "== test_scan_rate (scan throughput counter) =="
+$CC -std=c11 -I App -I App/driver tools/test_scan_rate.c \
+    App/app/scan_rate.c -o /tmp/ra89r_test_scan_rate
+run /tmp/ra89r_test_scan_rate
+
+echo "== test_cat (FT-817 CAT frame parser) =="
+$CC -std=c11 -I App -I App/driver tools/test_cat.c \
+    App/cat.c -o /tmp/ra89r_test_cat
+run /tmp/ra89r_test_cat
 
 echo "== test_spectrum (spectrum chip policy) =="
 $CC -std=c11 -I App -I App/driver tools/test_spectrum.c \
@@ -52,21 +86,23 @@ run /tmp/ra89r_test_spectrum
 
 echo "== preview_k1 (screens + keys + settings, on a PC) =="
 $CC $HOST_FLAGS -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
+    -DBLUETOOTH_HOST_TEST \
     -ffunction-sections -fdata-sections -Wl,--gc-sections \
     tools/preview_k1.c tools/host/host_hw.c tools/host/host_bk4819.c \
-    tools/host/host_beeper.c \
+    tools/host/host_beeper.c tools/host/host_bluetooth.c \
     App/ui/main.c App/ui/menu.c App/ui/ui.c App/ui/status.c App/ui/welcome.c \
     App/ui/battery.c App/ui/scanner.c App/ui/helper.c App/ui/inputbox.c \
-    App/ui/fmradio.c \
+    App/ui/fmradio.c App/ui/bt.c \
     App/app/menu.c App/app/action.c App/app/app.c App/app/main.c \
     App/app/generic.c App/app/common.c App/app/chFrScanner.c App/app/dtmf.c \
-    App/app/scanner.c App/app/fm.c App/radio.c App/functions.c App/audio.c \
-    App/misc.c App/driver/py25q16.c \
+    App/app/scanner.c App/app/fm.c App/app/bt.c \
+    App/radio.c App/functions.c App/audio.c App/misc.c \
+    App/driver/bluetooth.c App/driver/bt_capture.c App/driver/py25q16.c \
     App/board.c App/settings.c App/version.c App/dcs.c App/frequencies.c \
     App/helper/battery.c App/helper/boot.c App/driver/system.c App/font.c \
     App/bitmaps.c App/driver/st7565.c App/driver/keyboard.c \
     App/driver/backlight.c App/driver/audio_path.c App/driver/scheduler.c \
-    App/app/scan_dual.c App/app/spectrum_rf.c \
+    App/app/scan_rate.c App/app/spectrum_rf.c \
     -o /tmp/ra89r_preview_k1
 run /tmp/ra89r_preview_k1
 

@@ -27,6 +27,7 @@
 #include "audio.h"
 #include "dcs.h"
 #include "driver/bk4819.h"
+#include "driver/rx.h"
 #include "driver/py25q16.h"
 #include "driver/gpio.h"
 #include "driver/system.h"
@@ -346,7 +347,7 @@ void RADIO_ConfigureChannel(const unsigned int VFO, const unsigned int configure
          * including where a frequency channel's own frequency is kept. */
         ChannelScanDisplayInfo_t info;
 
-        if (SETTINGS_FetchChannelScanDisplayInfo(channel, &info))
+        if (SETTINGS_FetchChannelScanDisplayInfo(VFO, channel, &info))
         {
             pVfo->TX_OFFSET_FREQUENCY_DIRECTION = info.txOffsetFrequencyDirection;
             pVfo->Modulation                    = info.modulation;
@@ -370,10 +371,18 @@ void RADIO_ConfigureChannel(const unsigned int VFO, const unsigned int configure
 #endif
             pVfo->DTMF_PTT_ID_TX_MODE  = info.dtmfPttIdTxMode;
 
-            if (info.rx.Frequency == 0xFFFFFFFFu)
-                pVfo->freq_config_RX.Frequency = frequencyBandTable[band].lower;
-            else
-                pVfo->freq_config_RX.Frequency = info.rx.Frequency;
+            /* Only a full reload (a VFO switch) takes the channel's own
+             * frequency.  A plain reconfigure must not: it runs in the same pass
+             * as a frequency step, before that step has been saved (the save is
+             * deferred to key release), so re-reading would undo the step and
+             * the VFO could never be tuned. */
+            if (VFO_CONFIGURE_RELOAD == configure)
+            {
+                if (info.rx.Frequency == 0xFFFFFFFFu)
+                    pVfo->freq_config_RX.Frequency = frequencyBandTable[band].lower;
+                else
+                    pVfo->freq_config_RX.Frequency = info.rx.Frequency;
+            }
 
             pVfo->TX_OFFSET_FREQUENCY = info.offset;
         }
@@ -437,6 +446,11 @@ void RADIO_ConfigureChannel(const unsigned int VFO, const unsigned int configure
 
     pVfo->Compander = att->compander;
 
+    /* The channel record carries FM for a frequency channel (settings.c), and
+     * every consumer below reads VFO_Info_t::Modulation, so normalise it here
+     * too -- the airband is AM whether or not a demod write follows. */
+    RADIO_ApplyBandModulation(pVfo);
+
     #ifdef ENABLE_FEAT_F4HWN_RESCUE_OPS
     if(gRemoveOffset)
     {
@@ -460,8 +474,6 @@ void RADIO_ConfigureSquelchAndOutputPower(VFO_Info_t *pInfo)
     // squelch
 
     FREQUENCY_Band_t Band = FREQUENCY_GetBand(pInfo->pRX->Frequency);
-    // 0x1E60 : 0x1E00
-    uint32_t Base = (Band < BAND4_174MHz) ? 0x010060 : 0x010000;
 
     if (gEeprom.SQUELCH_LEVEL == 0)
     {   // squelch == 0 (off)
@@ -474,52 +486,34 @@ void RADIO_ConfigureSquelchAndOutputPower(VFO_Info_t *pInfo)
         pInfo->SquelchOpenGlitchThresh  = 255;   // 255 ~ 0
     }
     else
-    {   // squelch >= 1
-        Base += gEeprom.SQUELCH_LEVEL;           // my eeprom squelch-1
-                                                 // VHF   UHF
-        uint8_t *sq_ptrs[6] = {
-            &pInfo->SquelchOpenRSSIThresh,       //  50    10
-            &pInfo->SquelchCloseRSSIThresh,      //  40     5
-            &pInfo->SquelchOpenNoiseThresh,      //  65    90
-            &pInfo->SquelchCloseNoiseThresh,     //  70   100
-            &pInfo->SquelchCloseGlitchThresh,    //  90    90
-            &pInfo->SquelchOpenGlitchThresh      // 100   100
-        };
+    {   /* The K1's calibration table at 0x010000/0x010060 is blank (0xFF) on
+         * this radio, so the K1 import programmed 255/127/255 and the chip's
+         * squelch never fired.  Use the values measured on this board instead
+         * (docs/ra89r_calibration.md, 2026-10-24):
+         *
+         *   quiet RSSI   ~55 UHF / ~100 VHF / ~63 AM
+         *   quiet ExNoise 47, carrier 8
+         *   quiet glitch  57, carrier 0
+         *
+         * The open marks scale with the SQL level; the close marks sit at the
+         * noise floor.  The chip's 0x4E 5/0 delays (open/close) supply the
+         * time hysteresis; the close delay is 0 because it only added ~10 ms
+         * per step of chip tail and 0 stayed at one transition on the bench.
+         * The RSSI split is this board's RF path (280 MHz), not the K1's
+         * 174 MHz calibration split. */
+        const uint8_t level = (gEeprom.SQUELCH_LEVEL > 9u) ? 9u : gEeprom.SQUELCH_LEVEL;
+        const bool    am    = (pInfo->Modulation == MODULATION_AM);
+        const bool    uhf   = (pInfo->pRX->Frequency >= 28000000u);
+        const uint16_t rssi_floor = am ? 63u : (uhf ? 55u : 100u);
+        const uint16_t rssi_open  = (uint16_t)(rssi_floor + 6u + 6u * level);
+        const uint16_t noise_open = (uint16_t)(42u - 3u * (level - 1u));
 
-        for(uint8_t i = 0; i < 6; i++) {
-            PY25Q16_ReadBuffer(Base + (i * 0x10), sq_ptrs[i], 1);
-        }
-
-        uint16_t noise_open   = pInfo->SquelchOpenNoiseThresh;
-        uint16_t noise_close  = pInfo->SquelchCloseNoiseThresh;
-
-#if ENABLE_SQUELCH_MORE_SENSITIVE
-        uint16_t rssi_open    = pInfo->SquelchOpenRSSIThresh;
-        uint16_t rssi_close   = pInfo->SquelchCloseRSSIThresh;
-        uint16_t glitch_open  = pInfo->SquelchOpenGlitchThresh;
-        uint16_t glitch_close = pInfo->SquelchCloseGlitchThresh;
-        // make squelch more sensitive
-        // note that 'noise' and 'glitch' values are inverted compared to 'rssi' values
-        rssi_open   = (rssi_open   * 1) / 2;
-        noise_open  = (noise_open  * 2) / 1;
-        glitch_open = (glitch_open * 2) / 1;
-
-        // ensure the 'close' threshold is lower than the 'open' threshold
-        if (rssi_close == rssi_open && rssi_close >= 2)
-            rssi_close -= 2;
-        if (noise_close == noise_open && noise_close  <= 125)
-            noise_close += 2;
-        if (glitch_close == glitch_open && glitch_close <= 253)
-            glitch_close += 2;
-
-        pInfo->SquelchOpenRSSIThresh    = MIN(rssi_open,    255);
-        pInfo->SquelchCloseRSSIThresh   = MIN(rssi_close,   255);
-        pInfo->SquelchOpenGlitchThresh  = MIN(glitch_open,  255);
-        pInfo->SquelchCloseGlitchThresh = MIN(glitch_close, 255);
-#endif
-
-        pInfo->SquelchOpenNoiseThresh   = MIN(noise_open,   127);
-        pInfo->SquelchCloseNoiseThresh  = MIN(noise_close,  127);
+        pInfo->SquelchOpenRSSIThresh    = (uint8_t)MIN(rssi_open, 255u);
+        pInfo->SquelchCloseRSSIThresh   = (uint8_t)MIN((uint16_t)(rssi_open - 12u), 255u);
+        pInfo->SquelchOpenNoiseThresh   = (uint8_t)MIN(noise_open, 127u);
+        pInfo->SquelchCloseNoiseThresh  = 46u;
+        pInfo->SquelchCloseGlitchThresh = 55u;
+        pInfo->SquelchOpenGlitchThresh  = 45u;
     }
 
     // *******************************
@@ -700,6 +694,49 @@ BK4819_FilterBandwidth_t RADIO_GetAMFilterBandwidth(const VFO_Info_t *pVfo)
     return (pVfo->CHANNEL_BANDWIDTH == BANDWIDTH_WIDE) ? BK4819_FILTER_BW_WIDE : BK4819_FILTER_BW_AM;
 }
 
+/* The airband is AM by nature, and a range scan carries the VFO's modulation,
+ * so a scan of 108-137 MHz would demodulate FM (unintelligible) unless the menu
+ * had been set to AM first -- which would then also apply to 145 MHz.  The band
+ * therefore decides the receive demodulation inside 108.0-137.0 MHz; the menu's
+ * modulation choice applies outside it.  Called from RADIO_SetupRegisters(),
+ * which runs on every channel change, knob step and scan hit.
+ *
+ * Receive-only: the K1's RADIO_PrepareTX() already refuses TX for any non-FM
+ * modulation, so an airband channel cannot key the PA. */
+static bool s_airband_rule_active;
+
+void RADIO_ApplyBandModulation(VFO_Info_t *vfo)
+{
+    const bool air = FREQUENCY_IsAirband(vfo->pRX->Frequency);
+    bool       changed = false;
+
+    if (air && vfo->Modulation != MODULATION_AM) {
+        vfo->Modulation = MODULATION_AM;
+        changed         = true;
+    } else if (!air && vfo->Modulation == MODULATION_AM && s_airband_rule_active) {
+        /* Only undo the rule's own choice, not a menu setting. */
+        vfo->Modulation = MODULATION_FM;
+        changed         = true;
+    }
+
+    if (changed) {
+        gUpdateDisplay = true;
+        gUpdateStatus  = true;
+    }
+
+    if (vfo != gRxVfo)
+        return;
+
+    s_airband_rule_active = air;
+
+    /* Program the demod here, not through a later caller: on the radio
+     * 2026-10-22 the VFO field read AM while 0x31/0x42 still held the FM/init
+     * values, because RADIO_ConfigureChannel set the field after the receive
+     * setup and nothing called RADIO_SetModulation again. */
+    if (changed)
+        RADIO_SetModulation(vfo->Modulation);
+}
+
 void RADIO_SetupRegisters(bool switchToForeground)
 {
     BK4819_FilterBandwidth_t Bandwidth = gRxVfo->CHANNEL_BANDWIDTH;
@@ -771,7 +808,8 @@ void RADIO_SetupRegisters(bool switchToForeground)
      * (COMMON_SwitchVFOs -> gFlagReconfigureVfos), so without this the BK4829
      * is yanked off the other VFO's frequency and the BK4815's path pin is
      * dropped, and two VFOs on different chips can never stay apart.  The port
-     * tunes both chips from rx_service() -> rf_dual_refresh(). */
+     * tunes both chips from rx_service() -> rf_dual_refresh(), and during a
+     * scan from rx_scan_commit(). */
     if (SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) != RF_XCVR_BK4815)
     {
         BK4819_SetFrequency(Frequency);
@@ -780,6 +818,7 @@ void RADIO_SetupRegisters(bool switchToForeground)
     }
 
     // Keep the demodulator in sync when retuning without entering RX audio.
+    RADIO_ApplyBandModulation(gRxVfo);
     RADIO_SetModulation(gRxVfo->Modulation);
 
     BK4819_SetupSquelch(
@@ -794,7 +833,10 @@ void RADIO_SetupRegisters(bool switchToForeground)
     //BK4819_WriteRegister(BK4819_REG_48, 0xB3A8);  // 1011 00 111010 1000
     BK4819_SetRxAudioGain();
 
-    uint16_t InterruptMask = BK4819_REG_3F_SQUELCH_FOUND | BK4819_REG_3F_SQUELCH_LOST;
+    /* The squelch result is polled from REG_0C<1> (driver/rx.c); its interrupt
+     * bits are not armed because the AF gate is MCU-side and the result is
+     * level-based.  The other interrupts below are unaffected. */
+    uint16_t InterruptMask = 0;
 
     #ifdef ENABLE_NOAA
         if (!IS_NOAA_CHANNEL(gRxVfo->CHANNEL_SAVE))
@@ -891,6 +933,11 @@ void RADIO_SetupRegisters(bool switchToForeground)
 
     if (switchToForeground)
         FUNCTION_Select(FUNCTION_FOREGROUND);
+
+    /* The K1 setup above unmuted the chip AF (RADIO_SetModulation) and may
+     * have opened the amplifier: put the port's gate back immediately, so a
+     * retune does not leak the receiver's settling burst. */
+    rx_apply_audio_gate();
 }
 
 #ifdef ENABLE_NOAA
@@ -1006,6 +1053,13 @@ void RADIO_SetTxParameters(void)
 
 void RADIO_SetModulation(ModulationMode_t modulation)
 {
+    /* The airband is AM by nature, and the demod is programmed from several
+     * callers (receive setup, the app's incoming handler, the menu).  Enforce
+     * the band here so none of them can put the receiver back on FM while it
+     * is tuned inside 108.0-137.0 MHz. */
+    if (FREQUENCY_IsAirband(gRxVfo->pRX->Frequency))
+        modulation = MODULATION_AM;
+
     #ifdef ENABLE_BYP_RAW_DEMODULATORS
     if (modulation == MODULATION_BYP || modulation == MODULATION_RAW) {
         uint16_t reg_3d_val = 0x0000;
