@@ -34,6 +34,12 @@ port of the F4HWN UV-K1/K5V3 application that boots into the K1 GUI on the radio
 - `tools/ra89r_rf_console_sim.py` — test double for the console: emits the same
   `S`/`F`/`B`/`Q` text over a PTY and accepts CAT frames, so `rf_harness.py` can
   be exercised with no radio attached.
+- `tools/ra89r_bt.py` — the Bluetooth debug tool: talks to the firmware's `!`
+  BT debug lines on the radio console (status, trace, raw AT, inject, restart,
+  a guided `ptt-test`) or sniffs the module's own UART; `--selftest` runs it
+  against `tools/ra89r_bt_console_sim.py`; `tools/ra89r_bt_headset.py` makes
+  this PC the earpiece (HFP + SCO/mSBC, a known mic signal, PTT) for over-air
+  audio tests.  See `docs/ra89r_bt_debug.md`.
 - `tools/BUILDING.md` — building the firmware and host tools. `tools/FLASHING.md`
   — the concrete flash procedure: hardware, entering update mode, the probe/flash
   commands, and how to go back to stock.

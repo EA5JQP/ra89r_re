@@ -88,17 +88,13 @@ static const char *bt_item_value(unsigned index, char *buf, unsigned cap)
     case 0:
         return gEeprom.BT_Switch ? "On" : "Off";
     case 1:
+        if (!bt_enabled())
+            return "BT Off";
         if (bt_connected())
             return "Linked";
-        return (bt_state() == BT_STATE_SCAN) ? "Scanning" : "";
-    case 2:
-        if (bt_connected())
-            sprintf(buf, "Linked %s", bt_linked_name());
-        else if (gEeprom.BT_PairedName[0] != '\0')
-            sprintf(buf, "Saved %s", gEeprom.BT_PairedName);
-        else
-            sprintf(buf, "None");
-        return buf;
+        return (bt_state() == BT_STATE_SCAN) ? "Scanning" : "Search";
+    case 2:                     /* drawn by bt_draw_paired() */
+        return "";
     case 3:
         sprintf(buf, "%u", (unsigned)gEeprom.BT_HoldTime);
         return buf;
@@ -119,6 +115,121 @@ static const char *bt_item_value(unsigned index, char *buf, unsigned cap)
     }
 }
 
+/* The K1 menu's value pane (ui/menu.c: menu_item_x1/x2): right of the
+ * 6-character item column and its divider. */
+#define BT_PANE_X1  50u
+#define BT_PANE_X2  127u
+#define BT_PANE_BIG   ((BT_PANE_X2 - BT_PANE_X1) / 8u)    /* 9 big chars */
+#define BT_PANE_SMALL ((BT_PANE_X2 - BT_PANE_X1) / 7u)    /* 11 small chars */
+
+/* `text` centred in the value pane over pages `line` and `line + 1`: the big
+ * font when it fits, as the K1 prints a value; else the small font, on one
+ * line or wrapped at a space onto two, each clipped to the pane. */
+static void bt_pane_text(const char *text, uint8_t line)
+{
+    char           buf[BT_PANE_SMALL + 1u];
+    const unsigned len = (unsigned)strlen(text);
+    unsigned       cut;
+
+    if (len <= BT_PANE_BIG) {
+        UI_PrintString(text, BT_PANE_X1, BT_PANE_X2, line, 8);
+        return;
+    }
+    if (len <= BT_PANE_SMALL) {
+        UI_PrintStringSmallNormal(text, BT_PANE_X1, BT_PANE_X2, (uint8_t)(line + 1u));
+        return;
+    }
+
+    /* Two lines: break at the last space that keeps the first one in the
+     * pane, or hard at the pane width when there is none. */
+    for (cut = BT_PANE_SMALL; cut > 0u && text[cut] != ' '; cut--)
+        ;
+    if (cut == 0u)
+        cut = BT_PANE_SMALL;
+    memcpy(buf, text, cut);
+    buf[cut] = '\0';
+    UI_PrintStringSmallNormal(buf, BT_PANE_X1, BT_PANE_X2, line);
+
+    text += cut;
+    while (*text == ' ')
+        text++;
+    strncpy(buf, text, BT_PANE_SMALL);
+    buf[BT_PANE_SMALL] = '\0';
+    UI_PrintStringSmallNormal(buf, BT_PANE_X1, BT_PANE_X2, (uint8_t)(line + 1u));
+}
+
+/* Small text centred in the value pane, clipped to it. */
+static void bt_pane_small(const char *text, uint8_t line)
+{
+    char buf[BT_PANE_SMALL + 1u];
+
+    strncpy(buf, text, BT_PANE_SMALL);
+    buf[BT_PANE_SMALL] = '\0';
+    UI_PrintStringSmallNormal(buf, BT_PANE_X1, BT_PANE_X2, line);
+}
+
+/* The K1's top-right rounded index badge (CTCSS `nn/nn`), centred in the pane:
+ * small inverse text on `line`. */
+static void bt_pane_badge(const char *text, uint8_t line)
+{
+    const unsigned width = (unsigned)strlen(text) * 7u + 1u;
+    const unsigned start = BT_PANE_X1 + ((BT_PANE_X2 - BT_PANE_X1 + 1u) - width) / 2u;
+
+    UI_PrintStringSmallNormalInverse(text, (uint8_t)start, 0, line);
+}
+
+/* Paired: the K1 MEM-CH layout -- what the device is to us on top, its name
+ * big below, "None" alone when there is nothing. */
+static void bt_draw_paired(void)
+{
+    if (bt_connected()) {
+        bt_pane_small("Linked", 1);
+        bt_pane_text(bt_linked_name(), 2);
+    } else if (gEeprom.BT_PairedName[0] != '\0') {
+        bt_pane_small("Saved", 1);
+        bt_pane_text(gEeprom.BT_PairedName, 2);
+    } else {
+        bt_pane_text("None", 2);
+    }
+}
+
+/* Pair, entered: a K1 list value -- index badge, the device big, its signal
+ * below; progress and the result replace it once one is chosen. */
+static void bt_draw_pairing(void)
+{
+    const unsigned n = bt_found_count();
+    char           buf[24];
+
+    if (s_connecting) {
+        const bool  linked = bt_connected();
+        const char *name   = linked ? bt_linked_name()
+                           : (gEeprom.BT_PairedName[0] != '\0'
+                              ? gEeprom.BT_PairedName : "Device");
+
+        bt_pane_small(linked ? "Linked" : "Connecting", 1);
+        bt_pane_text(name, 2);
+        if (linked)
+            bt_pane_small("EXIT: done", 5);
+        return;
+    }
+
+    if (n == 0u) {
+        bt_pane_text("Scanning", 2);
+        bt_pane_small("no device", 5);
+        return;
+    }
+
+    sprintf(buf, "%02u/%02u", 1u + (unsigned)s_pair_cursor, n);
+    bt_pane_badge(buf, 0);
+    bt_pane_text(bt_found_dev(s_pair_cursor), 2);
+    if (bt_found_rssi(s_pair_cursor)[0] != '\0') {
+        snprintf(buf, sizeof buf, "%s dBm", bt_found_rssi(s_pair_cursor));
+        bt_pane_small(buf, 5);
+    }
+    if (bt_state() == BT_STATE_SCAN)
+        GUI_DisplaySmallest("SCAN", 112, 50, false, true);
+}
+
 void UI_DisplayBT(void)
 {
     const int cnt = (int)BT_MenuCount();
@@ -128,67 +239,12 @@ void UI_DisplayBT(void)
 
     UI_DisplayClear();
 
+    /* The K1 menu frame: the divider and the dotted rule over the index. */
     UI_DrawLineBuffer(gFrameBuffer, (uint8_t)(8u * 6u), 0, (uint8_t)(8u * 6u), 55, 1);
     for (i = 0; i < (8u * 6u); i += 2u)
         gFrameBuffer[5][i] = 0x40;
 
-    if (s_pairing) {
-        const unsigned n = bt_found_count();
-
-        if (s_connecting) {
-            const bool connected = bt_connected();
-            const char *name = connected ? bt_linked_name()
-                             : (gEeprom.BT_PairedName[0] != '\0'
-                                ? gEeprom.BT_PairedName : "Device");
-
-            UI_PrintStringSmallNormal(connected ? "Connected" : "Connecting...",
-                                      0, 0, 0);
-            GUI_DisplaySmallest(name, 0, 22, false, true);
-            UI_PrintStringSmallNormal(connected ? "Press EXIT" : "Please wait",
-                                      0, 0, 4);
-            ST7565_BlitStatusLine();
-            ST7565_BlitFullScreen();
-            return;
-        }
-
-        UI_PrintStringSmallNormal("Pairing", 0, 0, 0);
-
-        if (n == 0u) {
-            /* the scan status on the right, like an item value */
-            GUI_DisplaySmallest("Scanning...", 66, 9, false, true);
-        } else {
-            unsigned k;
-            uint8_t  top = 0;
-
-            if (s_pair_cursor >= 6u)
-                top = (uint8_t)(s_pair_cursor - 5u);
-            for (k = 0; k < 6u && (unsigned)top + k < n; k++) {
-                const char   *dev = bt_found_dev((unsigned)top + k);
-                char          disp[18];
-                const uint8_t line = (uint8_t)(k + 1u);
-
-                strncpy(disp, dev, 16);      /* keep the inverse box in bounds */
-                disp[16] = '\0';
-
-                if ((unsigned)top + k == (unsigned)s_pair_cursor) {
-                    const unsigned len = (unsigned)strlen(disp);
-                    const uint8_t  start = (uint8_t)((127u - len * 7u + 1u) / 2u);
-
-                    UI_PrintStringSmallNormalInverse(disp, start, 0, line);
-                } else {
-                    UI_PrintStringSmallNormal(disp, 0, 0, line);
-                }
-            }
-            sprintf(String, "%02u/%02u", 1u + (unsigned)s_pair_cursor, n);
-            UI_PrintStringSmallNormal(String, 92, 0, 0);
-        }
-
-        ST7565_BlitStatusLine();
-        ST7565_BlitFullScreen();
-        return;
-    }
-
-    if (s_editing) {
+    if (s_editing || s_pairing) {
         /* Entering an item moves its name to the top, the way the K1 menu
          * shows a selected item. */
         UI_PrintString(bt_items[idx], 0, 0, 0, 8);
@@ -209,26 +265,17 @@ void UI_DisplayBT(void)
     sprintf(String, "%02u/%02u", 1u + (unsigned)idx, (unsigned)cnt);
     UI_PrintStringSmallNormal(String, 6, 0, 6);
 
-    /* the current item's value, on the right */
-    if (idx == 2) {
-        /* Paired: the state on one line (small font) and the device on the
-         * next (the smallest font), like `Linked:` / `Ear Stick`. */
-        const char *name = bt_connected() ? bt_linked_name()
-                         : (gEeprom.BT_PairedName[0] != '\0' ? gEeprom.BT_PairedName
-                                                             : "None");
-
-        UI_PrintStringSmallNormal(bt_connected() ? "Linked:" : "Saved:", 52, 0, 2);
-        GUI_DisplaySmallest(name, 52, 34, false, true);
+    /* The current item's value, in the pane on the right. */
+    if (s_pairing) {
+        bt_draw_pairing();
+    } else if (idx == 2) {
+        bt_draw_paired();
     } else {
         char        vbuf[32];
         const char *val = bt_item_value((unsigned)idx, vbuf, sizeof vbuf);
 
-        if (val[0] != '\0') {
-            if (strlen(val) > 6u)
-                GUI_DisplaySmallest(val, 52, 28, false, true);
-            else
-                UI_PrintString(val, 52, 127, 2, 8);
-        }
+        if (val[0] != '\0')
+            bt_pane_text(val, 2);
     }
 
     ST7565_BlitStatusLine();
@@ -287,21 +334,29 @@ void BT_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 
     if (s_pairing) {
         switch (Key) {
-        case KEY_UP:
-            if (bKeyPressed && !bKeyHeld && s_pair_cursor > 0u)
-                s_pair_cursor--;
+        case KEY_UP:            /* the list wraps, like a K1 menu value */
+            if (bKeyPressed && !bKeyHeld && !s_connecting && bt_found_count() > 0u)
+                s_pair_cursor = (s_pair_cursor == 0u)
+                              ? (uint8_t)(bt_found_count() - 1u)
+                              : (uint8_t)(s_pair_cursor - 1u);
             gUpdateDisplay = true;
             break;
 
         case KEY_DOWN:
-            if (bKeyPressed && !bKeyHeld &&
-                (unsigned)s_pair_cursor + 1u < bt_found_count())
-                s_pair_cursor++;
+            if (bKeyPressed && !bKeyHeld && !s_connecting && bt_found_count() > 0u)
+                s_pair_cursor = (uint8_t)(((unsigned)s_pair_cursor + 1u) %
+                                          bt_found_count());
             gUpdateDisplay = true;
             break;
 
         case KEY_MENU:
-            if (bKeyPressed && !bKeyHeld && bt_found_count() > 0u) {
+            if (bKeyPressed && !bKeyHeld && s_connecting && bt_connected()) {
+                /* linked: MENU confirms, like leaving a K1 value */
+                s_pairing    = false;
+                s_connecting = false;
+                gUpdateDisplay = true;
+            } else if (bKeyPressed && !bKeyHeld && !s_connecting &&
+                       bt_found_count() > 0u) {
                 s_connecting = true;
                 bt_connect_dev(s_pair_cursor);
                 strncpy(gEeprom.BT_PairedName, bt_found_dev(s_pair_cursor),
@@ -354,7 +409,7 @@ void BT_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
         if (bKeyPressed && !bKeyHeld) {
             if (s_editing) {
                 s_editing = false;          /* confirm */
-            } else if (s_cursor == 1u) {    /* Pair: scan and pick */
+            } else if (s_cursor == 1u && bt_enabled()) {  /* Pair: scan and pick */
                 s_pairing     = true;
                 s_connecting  = false;
                 s_pair_cursor = 0;

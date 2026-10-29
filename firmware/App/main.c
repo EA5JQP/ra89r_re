@@ -19,8 +19,10 @@
 #include "driver/battery.h"
 #include "driver/bluetooth.h"
 #include "app/bt.h"
+#include "app/bt_debug.h"
 #include "driver/bk1080.h"
-#include "driver/i2c_bus.h"#include "helper/battery.h"
+#include "driver/i2c_bus.h"
+#include "helper/battery.h"
 #include "driver/bk4819.h"
 #include "driver/bk4829.h"
 #include "driver/audio_path.h"
@@ -35,6 +37,7 @@
 #include "driver/pa.h"
 #include "driver/rf_bus.h"
 #include "driver/tx.h"
+#include "driver/keyboard.h"
 #include "driver/lcd_st7565.h"
 #include "driver/st7565.h"
 #include "driver/systick.h"
@@ -148,6 +151,38 @@ static int cat_console_getc(void)
 #include "ui.h"
 
 #define VERSION_STRING "ra89r_fw 0.2 (uart debug)"
+
+/* The Bluetooth debug console's view of the radio (app/bt_debug.h). */
+static void     bt_dbg_out(const char *text) { uart_puts(text); }
+static uint32_t bt_dbg_millis(void) { return systick_millis(); }
+static bool     bt_dbg_radio_ptt(void)
+{
+    const KEY_Code_t key = KEYBOARD_GetKey();
+
+    return key == KEY_PTT || key == KEY_PTT2;
+}
+static uint8_t  bt_dbg_ptt_type(void) { return gEeprom.BT_PTTType; }
+static void     bt_dbg_restart(void)
+{
+    bt_set_enabled(false);
+    bt_set_enabled(true);
+}
+
+static void bt_debug_start(void)
+{
+    static const bt_debug_io_t io = {
+        .out       = bt_dbg_out,
+        .millis    = bt_dbg_millis,
+        .radio_ptt = bt_dbg_radio_ptt,
+        .tx_active = tx_active,
+        .ptt_type  = bt_dbg_ptt_type,
+        .rx_bytes  = bluetooth_rx_bytes,
+        .rx_log    = bluetooth_rx_log,
+        .restart   = bt_dbg_restart,
+    };
+
+    bt_debug_init(&io);
+}
 
 /* Ask for a screen: the K1 application repaints when gUpdateDisplay is set
  * (app/app.c calls GUI_DisplayScreen). */
@@ -341,6 +376,7 @@ static void print_help(void)
               "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
               "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
               "          BT: F then MENU opens the BT screen (switch, pairing, gains)\n"
+              "          !? BT debug lines (!s status, !t1 trace, !a<AT>, !i<line>)\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
               "          5 save settings   6 flash write test   e flash dump\n"
@@ -1027,7 +1063,8 @@ static void dual_rf_diag(void)
         uart_printf("    0x44 = 0x%04X   RSSI %u\n", (unsigned)r, (unsigned)(r & 0x7fu));
         for (volatile unsigned d = 0; d < 400000u; d++)
             ;
-    }}
+    }
+}
 
 /* ------------------------------------------- cable-free audio-path bench
  *
@@ -1686,6 +1723,7 @@ int main(void)
     bt_set_gain_levels(gEeprom.BT_MicGain, gEeprom.BT_SpkGain);
     bt_set_linked_name(gEeprom.BT_PairedName);
     bt_set_enabled(gEeprom.BT_Switch);
+    bt_debug_start();
 
     /* Sample the pack before any screen is drawn.  The status bar (and the
      * welcome screen) would otherwise show level 0 until the first 500 ms
@@ -1781,7 +1819,12 @@ int main(void)
                 uart_printf("%c", ch);
             }
 
-            switch (ch) {
+            /* '!' lines are the Bluetooth debug console (app/bt_debug.h,
+             * tools/ra89r_bt.py): every letter here is taken, so it gets
+             * whole lines instead. */
+            if (ch == '!' || bt_debug_active()) {
+                bt_debug_feed(ch);
+            } else switch (ch) {
             case 'h':
                 print_help();
                 break;
@@ -2232,7 +2275,8 @@ int main(void)
                 bk4815_dump_registers();
                 bk4829_dump_registers();
                 bk4815_bench();
-                break;            case 'e': {
+                break;
+            case 'e': {
                 /* The external SPI NOR flash: identity, then a hexdump. */
                 uint16_t man_dev = 0;
                 uint32_t jedec = 0;
@@ -2396,6 +2440,7 @@ int main(void)
         if ((uint32_t)(now - bt_tick10) >= 10u) {
             bt_tick10 = now;
             bt_service_tick();
+            bt_debug_tick();
         }
 
         if (bench_panel) {

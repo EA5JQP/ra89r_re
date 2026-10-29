@@ -66,6 +66,9 @@ bool        bt_connected(void);
 unsigned    bt_found_count(void);
 const char *bt_found_dev(unsigned i);   /* the device's address/name text */
 void        bt_connect_dev(unsigned i); /* AT+EAR_CONN=<device> */
+/* The `<rssi>` field of the found device's `+IM_EARDEV` payload ("-68"), or
+ * "" when it has none. */
+const char *bt_found_rssi(unsigned i);
 
 /* The earpiece's PTT button (`+IM_EAR_PTT_KEYDOWN/UP` or the earpiece's own
  * `+IM_EAR_SIDE_SINGLE1` click); tx.c keys the transmitter while it is set. */
@@ -77,6 +80,11 @@ bool        bt_ptt_source_active(bool radio_ptt, bool headset_ptt, uint8_t mode)
  * restores the persisted name at boot. */
 const char *bt_linked_name(void);
 void        bt_set_linked_name(const char *name);
+/* Read-outs for the debug console (app/bt_debug.c): the SCO/call state, a
+ * CALL=ON waiting for the next T/R transition, and the radio's TX flag. */
+bool        bt_call_active(void);
+bool        bt_call_resume_pending(void);
+bool        bt_radio_tx_active(void);
 bt_state_t bt_state(void);
 const char *bt_version(void);
 const char *bt_local_addr(void);

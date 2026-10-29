@@ -531,6 +531,20 @@ void bt_connect_dev(unsigned i)
     bluetooth_send_param(BT_CMD_EAR_CONN, s_found[i]);
 }
 
+const char *bt_found_rssi(unsigned i)
+{
+    const char *p;
+    unsigned    field = 0u;
+
+    if (i >= s_found_n)
+        return "";
+    for (p = s_found[i]; *p != '\0'; p++) {
+        if (*p == ',' && ++field == 2u)
+            return p + 1;
+    }
+    return "";
+}
+
 const char *bt_linked_name(void)
 {
     return (s_linked_name[0] != '\0') ? s_linked_name : "None";
@@ -545,6 +559,21 @@ void bt_set_linked_name(const char *name)
     } else {
         s_linked_name[0] = '\0';
     }
+}
+
+bool bt_call_active(void)
+{
+    return s_call_on;
+}
+
+bool bt_call_resume_pending(void)
+{
+    return s_call_resume_pending;
+}
+
+bool bt_radio_tx_active(void)
+{
+    return s_radio_tx_active;
 }
 
 bt_state_t bt_state(void)

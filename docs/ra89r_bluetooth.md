@@ -691,6 +691,17 @@ or unrecognized binary-control path exists. No TX-mic register change is
 justified by this static evidence; headset PTT's raw UART event and a controlled
 over-air mic-source test are still required.
 
+### Menu layout and the debug channel (2026-10-29)
+
+Pair and Paired now draw in the K1 menu's value pane, like every other item.
+Paired uses the MEM-CH layout: `Linked`/`Saved` small on top, the device name
+big, or small and wrapped when it is long, and `None` when there is no device.
+Entering Pair (with the BT Switch on) is a K1 list value: an `nn/nn` index
+badge, the device name, its RSSI below, and UP/DOWN wrapping.  MENU connects,
+the pane then shows `Connecting` and `Linked`, and MENU or EXIT leaves.  The
+console's BT diagnostics, lost in the develop merge, are back as `!` lines
+with a host tool; see `ra89r_bt_debug.md`.
+
 ## Open
 
 1. **Port integration.** The service, the F+MENU `DISPLAY_BT` screen and the

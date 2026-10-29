@@ -45,6 +45,7 @@ set(APP_SOURCES
     App/driver/bluetooth.c
     App/driver/bt_capture.c
     App/app/bt.c
+    App/app/bt_debug.c
     App/driver/systick.c
     App/driver/scheduler.c
     App/driver/lcd_st7565.c

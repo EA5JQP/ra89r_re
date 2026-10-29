@@ -141,6 +141,17 @@ void bluetooth_set_event_cb(void (*cb)(bt_event_t ev, const char *payload,
                                        unsigned len));
 void bluetooth_feed(const uint8_t *data, unsigned len);
 
+/* Debug trace: called with every line received from the module (`dir` '<',
+ * CR/LF stripped, `ev` the parser's classification, BT_EV_NONE when no prefix
+ * matched) and every text sent to it (`dir` '>', `ev` BT_EV_NONE).  NULL turns
+ * it off.  Host-testable.  See app/bt_debug.h. */
+void bluetooth_set_trace_cb(void (*cb)(char dir, const char *text, unsigned len,
+                                       bt_event_t ev));
+
+/* The enum name of an event without its `BT_EV_` prefix ("SCO_CONN"), for the
+ * debug trace.  Pure. */
+const char *bt_event_name(bt_event_t ev);
+
 /* Target only: drain USART3's receive register into bluetooth_feed(). */
 void bluetooth_poll(void);
 

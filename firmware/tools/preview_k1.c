@@ -1206,8 +1206,18 @@ int main(void)
         UI_DisplayBT();
         render("UI_DisplayBT(): the Bluetooth menu");
 
-        /* Enter Pairing (item 1) and render the scan/device screen. */
+        /* Paired (item 2) with a saved device: the K1 MEM-CH layout. */
+        strcpy(gEeprom.BT_PairedName, "Ear (stick)");
+        UI_DisplayBT();
+        render("UI_DisplayBT(): Paired (saved device)");
+
+        /* Pairing scans only with the module on; enter it (item 1) and render
+         * the scan/device screen. */
+        gEeprom.BT_Switch = true;
+        bt_set_enabled(true);
         BT_ProcessKeys(KEY_UP, true, false);     /* cursor -> Pair from Paired */
+        UI_DisplayBT();
+        render("UI_DisplayBT(): Pair (not entered)");
         BT_ProcessKeys(KEY_MENU, true, false);   /* enter Pairing */
         UI_DisplayBT();
         render("UI_DisplayBT(): Pairing (scanning)");
@@ -1220,8 +1230,15 @@ int main(void)
                ok ? "ok  " : "FAIL");
         if (!ok) failures++;
         UI_DisplayBT();
-        memcpy(before_connecting, gFrameBuffer, sizeof before_connecting);
         render("UI_DisplayBT(): found device");
+        bt_service_event(BT_EV_EARDEV, "1122334455AB,Long Headset Name,-81",
+                         (unsigned)strlen("1122334455AB,Long Headset Name,-81"));
+        BT_ProcessKeys(KEY_DOWN, true, false);   /* the second device */
+        UI_DisplayBT();
+        render("UI_DisplayBT(): second found device (long name)");
+        BT_ProcessKeys(KEY_DOWN, true, false);   /* wraps back to the first */
+        UI_DisplayBT();
+        memcpy(before_connecting, gFrameBuffer, sizeof before_connecting);
 
         BT_ProcessKeys(KEY_MENU, true, false);   /* select and connect */
         UI_DisplayBT();

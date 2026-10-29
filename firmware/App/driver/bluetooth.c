@@ -137,6 +137,42 @@ static const struct bt_event_spec bt_events[] = {
     { "+IM_EAR_VOL=",       BT_EV_EAR_VOL,          1 },
 };
 
+const char *bt_event_name(bt_event_t ev)
+{
+    static const char *const names[] = {
+        [BT_EV_NONE]              = "NONE",
+        [BT_EV_BINARY_FRAME]      = "BINARY_FRAME",
+        [BT_EV_READY]             = "READY",
+        [BT_EV_OK]                = "OK",
+        [BT_EV_ERROR]             = "ERROR",
+        [BT_EV_VERSION]           = "VERSION",
+        [BT_EV_BT_EMITTER]        = "BT_EMITTER",
+        [BT_EV_NAME_EQUALLY]      = "NAME_EQUALLY",
+        [BT_EV_BT_RECEIVER]       = "BT_RECEIVER",
+        [BT_EV_BLE_MASTER]        = "BLE_MASTER",
+        [BT_EV_BLE_SLAVE]         = "BLE_SLAVE",
+        [BT_EV_CONN_STATE]        = "CONN_STATE",
+        [BT_EV_SCO_CONN]          = "SCO_CONN",
+        [BT_EV_CALL_CONNECTED]    = "CALL_CONNECTED",
+        [BT_EV_CALL_DISCONNECTED] = "CALL_DISCONNECTED",
+        [BT_EV_SCO_DISCONNECT]    = "SCO_DISCONNECT",
+        [BT_EV_EARDEV]            = "EARDEV",
+        [BT_EV_BT_SCAN_STOP]      = "BT_SCAN_STOP",
+        [BT_EV_BT_EAR_CONN]       = "BT_EAR_CONN",
+        [BT_EV_BT_DISCONNECT]     = "BT_DISCONNECT",
+        [BT_EV_EAR_PTT_DOWN]      = "EAR_PTT_DOWN",
+        [BT_EV_EAR_PTT_UP]        = "EAR_PTT_UP",
+        [BT_EV_BLE_LOCAL]         = "BLE_LOCAL",
+        [BT_EV_BT_LOCAL]          = "BT_LOCAL",
+        [BT_EV_EAR_SIDE_SINGLE]   = "EAR_SIDE_SINGLE",
+        [BT_EV_EAR_VOL]           = "EAR_VOL",
+    };
+
+    if ((unsigned)ev < sizeof names / sizeof names[0] && names[ev] != 0)
+        return names[ev];
+    return "?";
+}
+
 bt_event_t bt_parse_line(const char *line, unsigned len,
                          const char **payload, unsigned *payload_len)
 {
@@ -179,10 +215,29 @@ bt_event_t bt_parse_line(const char *line, unsigned len,
  * bluetooth_hw_write() is the one hardware dependency.  On the target it is
  * defined at the bottom of this file; a host test compiles with
  * -DBLUETOOTH_HOST_TEST and provides its own recorder. */
+static void (*s_trace_cb)(char, const char *, unsigned, bt_event_t);
+
+void bluetooth_set_trace_cb(void (*cb)(char dir, const char *text, unsigned len,
+                                       bt_event_t ev))
+{
+    s_trace_cb = cb;
+}
+
 void bluetooth_send(const char *text)
 {
-    if (text)
-        bluetooth_hw_write((const uint8_t *)text, (unsigned)strlen(text));
+    unsigned len;
+
+    if (!text)
+        return;
+    len = (unsigned)strlen(text);
+    if (s_trace_cb) {
+        unsigned n = len;
+
+        while (n != 0u && (text[n - 1u] == '\r' || text[n - 1u] == '\n'))
+            n--;
+        s_trace_cb('>', text, n, BT_EV_NONE);
+    }
+    bluetooth_hw_write((const uint8_t *)text, len);
 }
 
 void bluetooth_send_cmd(bt_cmd_t cmd)
@@ -228,6 +283,8 @@ static void bt_dispatch_line(void)
     s_line[s_line_len] = '\0';
 
     ev = bt_parse_line(s_line, s_line_len, &payload, &payload_len);
+    if (s_trace_cb && s_line_len != 0u)     /* not the blank half of a CRLF pair */
+        s_trace_cb('<', s_line, s_line_len, ev);
     if (ev != BT_EV_NONE && s_event_cb)
         s_event_cb(ev, payload, payload_len);
 }

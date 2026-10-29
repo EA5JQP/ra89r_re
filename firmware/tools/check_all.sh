@@ -35,6 +35,12 @@ $CC -std=c11 -Wall -Wextra -I App -I App/driver -DBLUETOOTH_HOST_TEST \
     -o /tmp/ra89r_test_bt_service
 run /tmp/ra89r_test_bt_service
 
+echo "== test_bt_debug (BT debug console: !-lines, trace, inject) =="
+$CC -std=c11 -Wall -Wextra -I App -I App/driver -DBLUETOOTH_HOST_TEST \
+    tools/test_bt_debug.c App/app/bt_debug.c App/app/bt.c \
+    App/driver/bluetooth.c -o /tmp/ra89r_test_bt_debug
+run /tmp/ra89r_test_bt_debug
+
 echo "== test_rf (register paths, including the stock BT pin) =="
 $CC -std=c11 -I tools/host -I App -I App/driver -DBLUETOOTH_HOST_TEST \
     tools/test_rf.c \
