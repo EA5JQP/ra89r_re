@@ -21,9 +21,7 @@
 #include "app/uart.h"
 #endif
 
-#ifdef ENABLE_SCAN_RANGES
-#include "chFrScanner.h"
-#endif
+#include "chFrScanner.h"   // Port: also CHFRSCANNER_ReadRssiSettled()
 
 #include "driver/backlight.h"
 #include "driver/bk4815.h"
@@ -692,16 +690,13 @@ uint16_t GetRssi()
         return spectrum_rf_normalize_rssi(SPECTRUM_CHIP_4815, bk4815_read_rssi());
     }
 
-    // Wait for glitch to settle below threshold (not just < 255)
-    uint8_t guard = 50;
-    while (guard-- && (BK4819_ReadRegister(0x63) & 0xFF) >= 200)
-    {
-        SYSTICK_DelayUs(1);
-    }
-    // Discard first read (AGC may still be transitioning), keep second
-    BK4819_GetRSSI();
-    uint16_t rssi = BK4819_GetRSSI();
-    return rssi;
+    /* Port adaptation: the FAST scanner's settled read instead of the K1's
+     * glitch wait + one read.  On this radio the glitch indicator is low right
+     * after the REG_30 restart while 0x67 is still climbing, and single reads
+     * put plain noise above any useful trigger (radio 2026-10-27,
+     * app/chFrScanner.c; the spectrum's own trace on 2026-10-29: listen opened
+     * on noise at 75-83 against an auto trigger of 71). */
+    return CHFRSCANNER_ReadRssiSettled();
 }
 
 static void ToggleAudio(bool on)
@@ -937,6 +932,10 @@ static void UpdatePeakInfoForce()
 
 static void UpdatePeakInfo()
 {
+    SPEC_TRACE("spec: half-sweep rssi=%u..%u at %u trig=%u floor=%u\r\n",
+               (uint32_t)scanInfo.rssiMin, (uint32_t)scanInfo.rssiMax,
+               (uint32_t)scanInfo.fPeak, (uint32_t)settings.rssiTriggerLevel,
+               (uint32_t)autoNoiseFloor);
     if (peak.f == 0 || peak.t >= 1024 || peak.rssi < scanInfo.rssiMax)
         UpdatePeakInfoForce();
 }

@@ -39,6 +39,11 @@ bool CHFRSCANNER_TogglePlainTune(void);
 /* Console '%': the per-probe scan trace (bench diagnostic).  Toggle returns
  * the new state. */
 bool CHFRSCANNER_ToggleTrace(void);
+
+/* The BK4829's settled RSSI after a retune: follows 0x67 until it holds still
+ * and returns the plateau's mean (radio 2026-10-27; see chFrScanner.c).  Also
+ * the spectrum's BK4829 read (app/spectrum.c). */
+uint16_t CHFRSCANNER_ReadRssiSettled(void);
 bool CHFRSCANNER_TraceOn(void);
 
 /* Diagnostics (console 'J'): probes completed and wall time since the scan
