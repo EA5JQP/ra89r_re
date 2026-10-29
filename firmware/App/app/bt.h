@@ -1,0 +1,92 @@
+/* Bluetooth service -- the YBT100 state machine and command queue.
+ *
+ * Device-header free: the service talks to the module only through
+ * `driver/bluetooth.h`, whose USART3 half is compiled out under
+ * BLUETOOTH_HOST_TEST, so the core is host-testable.  The application owns the
+ * settings (`gEeprom.BT_*`) and drives the service with these calls.  See
+ * docs/ra89r_bluetooth_design.md.
+ */
+#ifndef APP_BT_H
+#define APP_BT_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "driver/bluetooth.h"
+
+typedef enum {
+    BT_STATE_OFF = 0,   /* disabled, module held in reset */
+    BT_STATE_RESET,     /* PD0 released, waiting for +IM_READY */
+    BT_STATE_CONFIG,    /* sending the stock's config sequence */
+    BT_STATE_IDLE,      /* ready, no command in flight */
+    BT_STATE_SCAN,      /* scanning for an earpiece */
+    BT_STATE_CONNECT,   /* connecting */
+    BT_STATE_CONNECTED  /* audio link up */
+} bt_state_t;
+
+/* Target only: bring up the transport and register the event callback. */
+void bt_init(void);
+/* Target only: drain USART3.  Call on every pass of the main loop -- the
+ * module's boot banner is ~100 bytes in ~9 ms and would overrun a 10 ms poll. */
+void bt_poll(void);
+
+/* Pure, host-testable.  Call on the 10 ms slice: it is the state machine's
+ * clock (reset retry, per-command timeout). */
+void bt_service_tick(void);
+void bt_service_event(bt_event_t ev, const char *payload, unsigned len);
+/* Reopen SCO when the radio returns to RX after a PTT/T-R transition. */
+void bt_resume_audio(void);
+void bt_set_radio_tx_active(bool active);
+
+void       bt_set_enabled(bool on);
+/* Stock codeplug setting byte 9 bit 5 (Speak Switch), used for the PC13 level
+ * only while BT is enabled and an earpiece is linked. */
+void       bt_set_speaker_switch(bool enabled);
+bool       bt_enabled(void);
+void       bt_set_mode(uint8_t mode);        /* 0 = emitter, 1 = receiver */
+void       bt_set_name(const char *name);    /* NULL/"" = unset */
+
+/* Phase 1 item actions.  Scan is transient; the gains send the stock's own
+ * value strings (see the tables in driver/bluetooth.h). */
+void       bt_set_scan(bool on);
+void       bt_set_spk_gain(uint8_t level);
+void       bt_set_mic_gain(uint8_t level);
+/* Seed the module's mic/speaker gain levels without sending anything.  The app
+ * calls this at boot from codeplug byte 8; the levels are sent to the module on
+ * earpiece connect, as the stock does (`FUN_080075A0`). */
+void       bt_set_gain_levels(uint8_t mic, uint8_t spk);
+unsigned   bt_spk_gain_levels(void);
+unsigned   bt_mic_gain_levels(void);
+
+/* Pairing: scan (`AT+BT_SCAN=ON`, the stock's Pairing item) and the devices it
+ * reports as `+IM_EARDEV`. */
+void        bt_start_connect(void);
+void        bt_stop_connect(void);
+bool        bt_connected(void);
+unsigned    bt_found_count(void);
+const char *bt_found_dev(unsigned i);   /* the device's address/name text */
+void        bt_connect_dev(unsigned i); /* AT+EAR_CONN=<device> */
+/* The `<rssi>` field of the found device's `+IM_EARDEV` payload ("-68"), or
+ * "" when it has none. */
+const char *bt_found_rssi(unsigned i);
+
+/* The earpiece's PTT button (`+IM_EAR_PTT_KEYDOWN/UP` or the earpiece's own
+ * `+IM_EAR_SIDE_SINGLE1` click); tx.c keys the transmitter while it is set. */
+bool        bt_ptt_down(void);
+/* Select which PTT input is allowed to key TX: 0=BT, 1=radio, 2=both. */
+bool        bt_ptt_source_active(bool radio_ptt, bool headset_ptt, uint8_t mode);
+
+/* The name of the device we connected, or "None".  `bt_set_linked_name()`
+ * restores the persisted name at boot. */
+const char *bt_linked_name(void);
+void        bt_set_linked_name(const char *name);
+/* Read-outs for the debug console (app/bt_debug.c): the SCO/call state, a
+ * CALL=ON waiting for the next T/R transition, and the radio's TX flag. */
+bool        bt_call_active(void);
+bool        bt_call_resume_pending(void);
+bool        bt_radio_tx_active(void);
+bt_state_t bt_state(void);
+const char *bt_version(void);
+const char *bt_local_addr(void);
+
+#endif /* APP_BT_H */

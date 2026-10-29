@@ -75,6 +75,7 @@
     #include "sram-overlay.h"
 #endif
 #include "ui/battery.h"
+#include "ui/bt.h"
 #include "ui/helper.h"
 #include "ui/inputbox.h"
 #include "ui/main.h"
@@ -111,6 +112,7 @@ void (*const ProcessKeysFunctions[])(KEY_Code_t Key, bool bKeyPressed, bool bKey
     [DISPLAY_MAIN] = &MAIN_ProcessKeys,
     [DISPLAY_MENU] = &MENU_ProcessKeys,
     [DISPLAY_SCANNER] = &SCANNER_ProcessKeys,
+    [DISPLAY_BT] = &BT_ProcessKeys,
 
 #ifdef ENABLE_FMRADIO_EMBEDDED
     [DISPLAY_FM] = &FM_ProcessKeys,
@@ -2572,7 +2574,7 @@ static void ProcessKey(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 
 Skip:
     if (gBeepToPlay != BEEP_NONE) {
-        AUDIO_PlayBeep(gBeepToPlay);
+        AUDIO_PlayKeyBeep(gBeepToPlay);
         gBeepToPlay = BEEP_NONE;
     }
 

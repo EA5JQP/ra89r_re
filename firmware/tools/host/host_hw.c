@@ -4,6 +4,7 @@
 #include "py32f4xx.h"
 
 #include "driver/backlight.h"
+#include "driver/audio_path.h"
 #include "driver/bk1080.h"
 #include "driver/bk4815.h"
 #include "driver/bk4819.h"
@@ -184,6 +185,9 @@ int16_t  BK4819_GetRSSI_dBm(void) { return -120; }
 /* More of the same: the menu's action path calls these, and the host compiles
  * no audio engine and no GPIO driver. */
 void BK4819_ToggleGpioOut(BK4819_GPIO_PIN_t pin, bool enable) { (void)pin; (void)enable; }
+/* The preview links the real audio_path driver; only the RF-side BT pin remains
+ * a stub here. */
+void pa_set_bt_audio(bool on) { (void)on; }
 
 
 /* Leftovers of the menu/battery path in the host build (their owners are the
@@ -192,7 +196,7 @@ void BK4819_ToggleGpioOut(BK4819_GPIO_PIN_t pin, bool enable) { (void)pin; (void
 
 /* ---------------------------------------------------------------------------
  * A tiny in-RAM stand-in for the external SPI NOR flash, covering three
- * regions: the codeplug (0x0000..0x1FFF, which the preview preloads with a
+ * regions: the codeplug (0x0000..0x3FFF, which the preview preloads with a
  * factory-shaped image), the K1 image (0x4000..0x13FFF, empty until the port's
  * import writes it) and the two sectors the port's storage uses
  * (0x1FE000..0x1FFFFF, both empty on this radio).  Program ANDs bits and erase
@@ -204,7 +208,7 @@ void BK4819_ToggleGpioOut(BK4819_GPIO_PIN_t pin, bool enable) { (void)pin; (void
 static uint8_t s_host_flash[HOST_FLASH_SIZE];
 
 #define HOST_CP_BASE 0x0000u
-#define HOST_CP_SIZE 0x2000u
+#define HOST_CP_SIZE 0x4000u
 static uint8_t s_host_codeplug[HOST_CP_SIZE];
 
 /* The K1 application's own EEPROM image: names 0x4000, attributes 0x8000,
@@ -309,6 +313,13 @@ void spi_flash_init(void)
     }
 }
 
+void host_set_codeplug_byte(uint32_t offset, uint8_t value)
+{
+    spi_flash_init();
+    if (offset < HOST_CP_SIZE)
+        s_host_codeplug[offset] = value;
+}
+
 bool spi_flash_id(uint16_t *man_dev, uint32_t *jedec)
 {
     if (man_dev)
@@ -400,15 +411,12 @@ void     BK4819_WriteRegister(BK4819_REGISTER_t Register, uint16_t Data)
 uint16_t BK4819_ReadRegister(BK4819_REGISTER_t Register) { (void)Register; return 0; }
 void     BK4819_PickRXFilterPathBasedOnFrequency(uint32_t Frequency) { (void)Frequency; }
 
-/* The amplifier enable (PC13).  The beeper's DAC tone only reaches the speaker
- * through it, and the idle receive path leaves it off, so a beep has to turn it
- * on.  The previews track it so that can be asserted (see tools/preview_k1.c). */
-static int s_host_audio_path;
+/* The real audio_path driver is linked in the preview, so policy and reported
+ * state exercise the target implementation rather than a separate model. */
+void GPIO_EnableAudioPath(void) { audio_path_drive(1); }
+void GPIO_DisableAudioPath(void) { audio_path_drive(0); }
 
-void GPIO_EnableAudioPath(void) { s_host_audio_path = 1; }
-void GPIO_DisableAudioPath(void) { s_host_audio_path = 0; }
-
-bool host_audio_path_is_on(void) { return s_host_audio_path != 0; }
+bool host_audio_path_is_on(void) { return audio_path_is_on(); }
 
 void systick_delay_ms(uint32_t ms) { (void)ms; }
 void SYSTICK_DelayUs(uint32_t us) { (void)us; }

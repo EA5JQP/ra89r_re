@@ -17,6 +17,9 @@
 #include "driver/beeper.h"
 #include "driver/bk4815.h"
 #include "driver/battery.h"
+#include "driver/bluetooth.h"
+#include "app/bt.h"
+#include "app/bt_debug.h"
 #include "driver/bk1080.h"
 #include "driver/i2c_bus.h"
 #include "helper/battery.h"
@@ -35,6 +38,7 @@
 #include "driver/pa.h"
 #include "driver/rf_bus.h"
 #include "driver/tx.h"
+#include "driver/keyboard.h"
 #include "driver/lcd_st7565.h"
 #include "driver/st7565.h"
 #include "driver/systick.h"
@@ -148,6 +152,38 @@ static int cat_console_getc(void)
 #include "ui.h"
 
 #define VERSION_STRING "ra89r_fw 0.2 (uart debug)"
+
+/* The Bluetooth debug console's view of the radio (app/bt_debug.h). */
+static void     bt_dbg_out(const char *text) { uart_puts(text); }
+static uint32_t bt_dbg_millis(void) { return systick_millis(); }
+static bool     bt_dbg_radio_ptt(void)
+{
+    const KEY_Code_t key = KEYBOARD_GetKey();
+
+    return key == KEY_PTT || key == KEY_PTT2;
+}
+static uint8_t  bt_dbg_ptt_type(void) { return gEeprom.BT_PTTType; }
+static void     bt_dbg_restart(void)
+{
+    bt_set_enabled(false);
+    bt_set_enabled(true);
+}
+
+static void bt_debug_start(void)
+{
+    static const bt_debug_io_t io = {
+        .out       = bt_dbg_out,
+        .millis    = bt_dbg_millis,
+        .radio_ptt = bt_dbg_radio_ptt,
+        .tx_active = tx_active,
+        .ptt_type  = bt_dbg_ptt_type,
+        .rx_bytes  = bluetooth_rx_bytes,
+        .rx_log    = bluetooth_rx_log,
+        .restart   = bt_dbg_restart,
+    };
+
+    bt_debug_init(&io);
+}
 
 /* Ask for a screen: the K1 application repaints when gUpdateDisplay is set
  * (app/app.c calls GUI_DisplayScreen). */
@@ -343,6 +379,8 @@ static void print_help(void)
               "          A force the BK4815 AF open (bypass squelch) to test audio\n"
               "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
               "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
+              "          BT: F then MENU opens the BT screen (switch, pairing, gains)\n"
+              "          !? BT debug lines (!s status, !t1 trace, !a<AT>, !i<line>)\n"
               "          G VFO screen   2 VFO   3 menu   M menu   4 boot screen\n"
               "          1 back to the K1 GUI\n"
               "          5 save settings   6 flash write test   e flash dump\n"
@@ -582,11 +620,10 @@ static void rf_report(void)
 /* The K1 firmware's audio path is a GPIO of its own -- `GPIO_PIN_AUDIO_PATH` =
  * PA8 on that board, driven HIGH to enable through `AUDIO_AudioPathOn()` -- and
  * that is the call this port replaced with a callback.  On this board the line
- * the stock holds asserted is PC13 (`FUN_080177A8` raises it and its
- * `config+0x38` gate is 0 on this codeplug, so it stays HIGH), which leaves PC13
- * as the amplifier-enable candidate.  It is a *static* line: nothing in the
- * squelch path touches it, so `C` inverts it and the speaker can be listened to
- * with the line both ways.
+ * is PC13 (`FUN_080177A8`): stock holds it high while BT is off/unlinked and
+ * follows the codeplug Speak Switch while linked (low on this radio).  Its
+ * physical destination is not established; `C` manually toggles it for
+ * comparison, and the user's mic test saw no change.
  *
  * PA13/PA14 are *not* this line: they are the status LED (PA13 red, PA14 green,
  * both active high -- measured), which lives in `driver/led.c` behind the
@@ -598,9 +635,9 @@ static void audio_path_toggle(void)
     uart_printf("\nRF: PC13 (audio-path line) -> %s (IDR %s)\n",
                 audio_path_is_on() ? "high" : "low",
                 gpio_read(AUDIO_PATH_PORT, AUDIO_PATH_PIN) ? "high" : "low");
-    uart_puts("  the stock raises this line from its T/R path and holds it high on\n"
-              "  this codeplug; receive audio was validated with it high.  What it\n"
-              "  switches is not measured -- see docs/ra89r_rffeatures.md.\n");
+    uart_puts("  stock: high when BT is off/unlinked; when linked it follows Speak\n"
+              "  Switch (low on this codeplug). Its destination is not measured --\n"
+              "  see docs/ra89r_rffeatures.md.\n");
 }
 
 /* The console's 'K': bring the RF up and retune, reporting what landed.  The
@@ -1798,6 +1835,18 @@ int main(void)
     RADIO_SelectVfos();
     SETTINGS_FixupVfoPointers();
 
+    /* Bluetooth service: bring the transport up (after settings, so the saved
+     * switch/mode/name are known) and apply the saved switch.  The 10 ms slice
+     * below pumps it. */
+    bt_init();
+    bt_set_mode(gEeprom.BT_Mode);
+    bt_set_name(gEeprom.BT_Name);
+    bt_set_speaker_switch(SETTINGS_BluetoothSpeakerSwitch());
+    bt_set_gain_levels(gEeprom.BT_MicGain, gEeprom.BT_SpkGain);
+    bt_set_linked_name(gEeprom.BT_PairedName);
+    bt_set_enabled(gEeprom.BT_Switch);
+    bt_debug_start();
+
     /* Sample the pack before any screen is drawn.  The status bar (and the
      * welcome screen) would otherwise show level 0 until the first 500 ms
      * slice, which reads as the battery jumping from 0% to the real value.
@@ -1892,7 +1941,12 @@ int main(void)
                 uart_printf("%c", ch);
             }
 
-            switch (ch) {
+            /* '!' lines are the Bluetooth debug console (app/bt_debug.h,
+             * tools/ra89r_bt.py): every letter here is taken, so it gets
+             * whole lines instead. */
+            if (ch == '!' || bt_debug_active()) {
+                bt_debug_feed(ch);
+            } else switch (ch) {
             case 'h':
                 print_help();
                 break;
@@ -2522,6 +2576,20 @@ int main(void)
             }
         } else {
             systick_delay_ms(1);
+        }
+
+        /* Drain USART3 on every pass, whatever the panel mode: the module's
+         * boot banner is ~100 bytes in ~9 ms, so a 10 ms poll lets the 1-byte
+         * receive register overrun and drops `+IM_READY`.  Only USART3 is
+         * touched, so the no-NOR rule holds.  `bt_service_tick()` (the state
+         * machine's clock) stays on the 10 ms slice in the K1-app branch. */
+        static uint32_t bt_tick10;
+
+        bt_poll();
+        if ((uint32_t)(now - bt_tick10) >= 10u) {
+            bt_tick10 = now;
+            bt_service_tick();
+            bt_debug_tick();
         }
 
         if (bench_panel) {

@@ -9,6 +9,7 @@
 static uint16_t s_reg36;
 static uint16_t s_reg33 = 0x9000u;
 static uint16_t s_compare;
+static bool s_bt_audio;
 
 /* The band state pa_select_band() applied.  s_uhf is the VHF/UHF band index (the
  * codeplug's 108-174 / 400-520 bands, split at 280 MHz); s_main is the stock's
@@ -114,6 +115,22 @@ void pa_set_chip_path_mode(uint8_t mode)
 
 uint16_t pa_chip_path_reg(void) { return BK4819_ReadRegister(BK4819_REG_33); }
 
+static void pa_apply_bt_audio(void)
+{
+    /* FUN_080137D4(mask=4, value=4|0) changes output bit 0x0010 and always
+     * clears its paired configuration bit 0x1000.  Do not use the imported K1
+     * ToggleGpioOut here: it intentionally leaves that paired bit alone. */
+    s_reg33 = BK4819_ToggleGpioOutStock(0x04u, s_bt_audio ? 0x04u : 0u);
+}
+
+void pa_set_bt_audio(bool on)
+{
+    s_bt_audio = on;
+    pa_apply_bt_audio();
+}
+
+bool pa_bt_audio(void) { return s_bt_audio; }
+
 void pa_set_rx_lane(bool use_4815)
 {
     const bool changed = (use_4815 != s_rx_lane_4815);
@@ -191,7 +208,8 @@ static void pa_apply_chip_path(void)
              * source().  BK4819_ToggleGpioOut read-modify-writes the driver's
              * output shadow, so the 0x9000 bits BK4819_Init() set survive, and
              * pin 0 (RX_ENABLE), which RADIO_SetupRegisters sets, is preserved.
-             * See docs/ra89r_rfpath.md. */
+             * The stock's BT pin 2 is applied by pa_apply_bt_audio() after this
+             * switch.  See docs/ra89r_rfpath.md. */
             BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, !s_rx_lane_4815);
             BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, s_rx_lane_4815);
             BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, false);
@@ -199,6 +217,9 @@ static void pa_apply_chip_path(void)
         default:                /* LEAVE: touch nothing */
             break;
     }
+    /* The K1 LNA writes use a different GPIO helper; reapply the stock BT pin
+     * and paired-bit state after those shadow writes. */
+    pa_apply_bt_audio();
 }
 
 void pa_select_band(uint32_t freq_10hz)
@@ -268,8 +289,23 @@ void pa_tx_enable(uint8_t power)
      * override (`pa_tx_path_bits()`), AUTO being the frequency's band. */
     const uint8_t gain = s_uhf ? PA_REG36_GAIN_UHF : PA_REG36_GAIN_VHF;
 
-    s_reg33 = (uint16_t)(pa_tx_path_bits() | PA_REG33_TR);
-    BK4819_WriteRegister(BK4819_REG_33, s_reg33);
+    /* The stock uses masked GPIO writes, not a replacement 0x33 word, so the
+     * paired-bit rule and the other outputs survive.  The 'x' override's band
+     * bits (0x40 VHF = pin 0, 0x20 UHF = pin 1), the T/R pin (pin 5) and the
+     * BT audio pin (pin 2) are applied through the stock helper. */
+    {
+        const uint16_t path = pa_tx_path_bits();
+        uint8_t band = 0u;
+
+        if ((path & PA_REG33_BAND_VHF) != 0u)
+            band |= 0x01u;                  /* pin 0 */
+        if ((path & PA_REG33_BAND_UHF) != 0u)
+            band |= 0x02u;                  /* pin 1 */
+
+        s_reg33 = BK4819_ToggleGpioOutStock(0x03u, band);
+        s_reg33 = BK4819_ToggleGpioOutStock(0x20u, 0x20u);
+        s_reg33 = BK4819_ToggleGpioOutStock(0x04u, s_bt_audio ? 0x04u : 0u);
+    }
 
     /* The K1's BK4819_SetupPowerAmplifier: 0x36 = (bias << 8) | PA-CTL | gain.
      * The RA89R's own power knob is the PB14 bias PWM, so the same setting
@@ -282,8 +318,10 @@ void pa_tx_enable(uint8_t power)
 
 void pa_rx_enable(void)
 {
-    /* Back to the receive path (`pa_apply_chip_path()`, AUTO by default), and
-     * no PA-CTL. */
+    /* The stock clears both TX band pins and T/R before restoring RX. */
+    s_reg33 = BK4819_ToggleGpioOutStock(0x03u, 0u);
+    s_reg33 = BK4819_ToggleGpioOutStock(0x20u, 0u);
+    /* Back to the receive path (AUTO by default), and no PA-CTL. */
     pa_apply_chip_path();
     s_reg36 = 0x0000u;
     BK4819_WriteRegister(BK4819_REG_36, s_reg36);

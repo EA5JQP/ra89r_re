@@ -20,6 +20,9 @@ void host_systick_advance(uint32_t milliseconds);
  * on every 10 ms slice. */
 unsigned host_flash_erase_count(void);
 
+/* Set one synthetic stock-codeplug byte by absolute SPI-flash offset. */
+void host_set_codeplug_byte(uint32_t offset, uint8_t value);
+
 /* The host's model of the amplifier enable (PC13): the beeper's DAC tone only
  * reaches the speaker through it, so a beep must drive it on.  `host_beeper_*`
  * count beeper_play() calls and how many of them saw the path on (see

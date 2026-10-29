@@ -15,10 +15,12 @@
 
 #include "app/app.h"
 #include "app/action.h"
+#include "app/bt.h"
 #include "app/chFrScanner.h"
 #include "app/fm.h"
 #include "app/menu.h"
 #include "audio.h"
+#include "driver/audio_path.h"
 #include "driver/backlight.h"
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
@@ -41,9 +43,104 @@
 #include "driver/scheduler.h"
 #include "ui/menu.h"
 #include "ui/status.h"
+#include "ui/bt.h"
+#include <string.h>
 
 /* State assertions this preview checks (the panel rendering is eyeballed). */
 static int failures;
+
+static void check_bt_speaker_switch(void)
+{
+    static const uint32_t setting_address = 8224u + 9u;
+    static const struct {
+        uint8_t value;
+        bool expected;
+        const char *name;
+    } cases[] = {
+        { 0x20u, true,  "Speak Switch bit set" },
+        { 0xFFu, false, "erased Speak Switch defaults off" },
+        { 0x00u, false, "Speak Switch bit clear" }
+    };
+    unsigned i;
+
+    for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        bool got;
+
+        host_set_codeplug_byte(setting_address, cases[i].value);
+        SETTINGS_InitEEPROM();
+        got = SETTINGS_BluetoothSpeakerSwitch();
+
+        printf("[codeplug] %s %s\n", got == cases[i].expected ? "ok  " : "FAIL",
+               cases[i].name);
+        if (got != cases[i].expected)
+            failures++;
+    }
+
+    /* Restore the host's factory-erased settings block for the rest of preview. */
+    host_set_codeplug_byte(setting_address, 0xFFu);
+    SETTINGS_InitEEPROM();
+}
+
+static void check_bt_gains(void)
+{
+    /* Stock FUN_0801AE8C sends the module gains from codeplug byte 8 on connect
+     * (`FUN_080075A0`); the port seeds BT_MicGain/BT_SpkGain from it. */
+    bool ok;
+
+    host_set_codeplug_byte(8224u + 8u, 0x43u);   /* mic 4, speaker 3 */
+    SETTINGS_InitEEPROM();
+    ok = gEeprom.BT_MicGain == 4u && gEeprom.BT_SpkGain == 3u;
+    printf("[codeplug] %s byte 8 -> BT gains mic=%u spk=%u (want 4/3)\n",
+           ok ? "ok  " : "FAIL", (unsigned)gEeprom.BT_MicGain,
+           (unsigned)gEeprom.BT_SpkGain);
+    if (!ok) failures++;
+
+    host_set_codeplug_byte(8224u + 8u, 0xFFu);   /* erased -> keep defaults */
+    SETTINGS_InitEEPROM();
+    ok = gEeprom.BT_MicGain == 2u && gEeprom.BT_SpkGain == 2u;
+    printf("[codeplug] %s erased byte 8 keeps the gain defaults (2/2)\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+}
+
+static void check_bt_audio_path_policy(void)
+{
+    bool ok;
+
+    bt_set_enabled(true);
+    bt_set_speaker_switch(false);
+    bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
+    ok = !audio_path_is_on();
+    printf("[audio route] %s BT link initially mutes the local path\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+
+    /* PC13's destination is not proven to be a local-only amp.  The radio test
+     * with the BT-exclusive clamp muted both local and BT receive audio, so do
+     * not block the K1 audio feed on this line until its role is mapped. */
+    GPIO_EnableAudioPath();
+    ok = audio_path_is_on();
+    printf("[audio route] %s BT link does not clamp the shared audio-path request\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+
+    gCurrentFunction = FUNCTION_RECEIVE;
+    gEeprom.BEEP_CONTROL = true;
+    host_beeper_reset_counts();
+    AUDIO_PlayKeyBeep(BEEP_1KHZ_60MS_OPTIONAL);
+    ok = host_beeper_play_count() == 1u &&
+         host_beeper_plays_path_on() == 1u && !audio_path_is_on();
+    printf("[audio route] %s key beep uses and restores the audio path\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+
+    bt_service_event(BT_EV_BT_DISCONNECT, NULL, 0);
+    ok = audio_path_is_on();
+    printf("[audio route] %s BT disconnect restores the local audio path\n",
+           ok ? "ok  " : "FAIL");
+    if (!ok) failures++;
+    bt_set_enabled(false);
+}
 
 /* One pass of the firmware's own loop (firmware/App/main.c): the application
  * state machine and panel, the port's transmit check, then the 10 ms slice --
@@ -103,7 +200,11 @@ static void render(const char *title)
 int main(void)
 {
     ST7565_Init();
-    SETTINGS_InitEEPROM(); SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
+    SETTINGS_InitEEPROM();
+    check_bt_speaker_switch();
+    check_bt_gains();
+    check_bt_audio_path_policy();
+    SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
 
     /* ---- the image: the import must have given the K1 real channels -------
      *
@@ -423,6 +524,23 @@ int main(void)
                saved, loaded, (unsigned)gEeprom.SQUELCH_LEVEL,
                (unsigned)gEeprom.CHANNEL_DISPLAY_MODE);
         printf("[storage] write test=%d\n", storage_write_test(&bad));
+
+        /* BT fields round-trip through the same blob. */
+        {
+            bool ok;
+
+            gEeprom.BT_Switch = true;
+            gEeprom.BT_Mode   = 1;
+            saved = storage_save_settings();
+            gEeprom.BT_Switch = false;
+            gEeprom.BT_Mode   = 0;
+            loaded = storage_load_settings();
+
+            ok = saved && loaded && gEeprom.BT_Switch && gEeprom.BT_Mode == 1;
+            printf("[storage] bt save=%d load=%d -> switch=%d mode=%u (expected 1/1)\n",
+                   saved, loaded, (int)gEeprom.BT_Switch, (unsigned)gEeprom.BT_Mode);
+            if (!ok) failures++;
+        }
 
         /* The per-VFO RF transceiver choice is part of the port's extra blob,
          * so it needs the full save path (SETTINGS_SaveSettings), not the bare
@@ -879,6 +997,192 @@ int main(void)
         printf("\n[beep] %s the beep drives the amp on (%u/%u plays with the path on)\n",
                ok ? "ok  " : "FAIL",
                host_beeper_plays_path_on(), host_beeper_play_count());
+        if (!ok) failures++;
+    }
+
+    /* Menu key feedback must not be suppressed merely because the receiver
+     * remains in FUNCTION_RECEIVE.  Exercise the K1's normal key loop and the
+     * BT menu's direct handler, then prove held/disabled events stay silent. */
+    {
+        bool ok;
+        unsigned int i;
+        unsigned int plays_at_press;
+
+        gCurrentFunction = FUNCTION_RECEIVE;
+        gEeprom.BEEP_CONTROL = true;
+        gScreenToDisplay = DISPLAY_MENU;
+        gRequestDisplayScreen = DISPLAY_INVALID;
+        host_set_key(KEY_INVALID);
+        for (i = 0; i < 4u; i++)
+            CheckKeys();
+        gBeepToPlay = BEEP_NONE;
+        host_beeper_reset_counts();
+        host_set_key(KEY_UP);
+        for (i = 0; i < 4u; i++)
+            CheckKeys();
+        plays_at_press = host_beeper_play_count();
+        host_set_key(KEY_INVALID);
+        for (i = 0; i < 4u; i++)
+            CheckKeys();
+        ok = plays_at_press == 1u &&
+             host_beeper_play_count() == plays_at_press &&
+             gCurrentFunction == FUNCTION_RECEIVE;
+        printf("[beep] %s normal menu press beeps once in RECEIVE (%u/%u plays, function %u)\n",
+               ok ? "ok  " : "FAIL", plays_at_press,
+               host_beeper_play_count(), (unsigned)gCurrentFunction);
+        if (!ok) failures++;
+
+        gScreenToDisplay = DISPLAY_BT;
+        host_beeper_reset_counts();
+        BT_ProcessKeys(KEY_DOWN, true, false);
+        ok = host_beeper_play_count() == 1u;
+        printf("[beep] %s BT menu key beeps in RECEIVE (%u plays)\n",
+               ok ? "ok  " : "FAIL", host_beeper_play_count());
+        if (!ok) failures++;
+
+        host_beeper_reset_counts();
+        BT_ProcessKeys(KEY_DOWN, true, true);
+        ok = host_beeper_play_count() == 0u;
+        printf("[beep] %s held BT menu key does not repeat a beep\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        gEeprom.BEEP_CONTROL = false;
+        host_beeper_reset_counts();
+        BT_ProcessKeys(KEY_DOWN, true, false);
+        ok = host_beeper_play_count() == 0u;
+        printf("[beep] %s disabled Beep setting suppresses BT menu feedback\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+        gEeprom.BEEP_CONTROL = true;
+    }
+
+    /* The Bluetooth menu: its own screen (F + MENU), so the main menu stays
+     * short.  The item table is the stock's nine entries.  Run last: pressing
+     * keys changes the backlight countdown the checks above rely on. */
+    {
+        bool ok;
+        static const char found_device[] = "A1B2C3D4E5F6,Test headset,-42";
+        uint8_t before_connecting[sizeof gFrameBuffer];
+        uint8_t before_connected[sizeof gFrameBuffer];
+        unsigned int i;
+
+        gScreenToDisplay      = DISPLAY_MAIN;
+        gRequestDisplayScreen = DISPLAY_INVALID;
+        for (i = 0; i < 4u; i++)        /* let the app settle on DISPLAY_MAIN */
+            step();
+        gWasFKeyPressed       = true;
+        gKeyInputCountdown    = key_input_timeout_500ms;
+        gBeepToPlay = BEEP_NONE;
+        gEeprom.BEEP_CONTROL = true;
+        host_beeper_reset_counts();
+        press(KEY_MENU);
+
+        ok = host_beeper_play_count() == 1u;
+        printf("[beep] %s F+MENU transition beeps once (%u plays)\n",
+               ok ? "ok  " : "FAIL", host_beeper_play_count());
+        if (!ok) failures++;
+
+        ok = (gScreenToDisplay == DISPLAY_BT);
+        printf("\n[bt] %s F+MENU -> screen %u (DISPLAY_BT = %u, not DISPLAY_MENU)\n",
+               ok ? "ok  " : "FAIL", (unsigned)gScreenToDisplay,
+               (unsigned)DISPLAY_BT);
+        if (!ok) failures++;
+
+        ok = (BT_MenuCount() == 9u) &&
+             (strcmp(BT_MenuName(0), "Switch") == 0);
+        printf("[bt] %s menu has %u items, first '%s'\n",
+               ok ? "ok  " : "FAIL", BT_MenuCount(), BT_MenuName(0));
+        if (!ok) failures++;
+
+        gScreenToDisplay = DISPLAY_BT;
+        UI_DisplayBT();
+        render("UI_DisplayBT(): the Bluetooth menu");
+
+        /* Paired (item 2) with a saved device: the K1 MEM-CH layout. */
+        strcpy(gEeprom.BT_PairedName, "Ear (stick)");
+        UI_DisplayBT();
+        render("UI_DisplayBT(): Paired (saved device)");
+
+        /* Pairing scans only with the module on; enter it (item 1) and render
+         * the scan/device screen. */
+        gEeprom.BT_Switch = true;
+        bt_set_enabled(true);
+        BT_ProcessKeys(KEY_UP, true, false);     /* cursor -> Pair from Paired */
+        UI_DisplayBT();
+        render("UI_DisplayBT(): Pair (not entered)");
+        BT_ProcessKeys(KEY_MENU, true, false);   /* enter Pairing */
+        UI_DisplayBT();
+        render("UI_DisplayBT(): Pairing (scanning)");
+
+        gUpdateDisplay = false;
+        bt_service_event(BT_EV_EARDEV, found_device,
+                         (unsigned)(sizeof found_device - 1u));
+        ok = bt_found_count() == 1u && gUpdateDisplay;
+        printf("[bt] %s found device refreshes pairing screen immediately\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+        UI_DisplayBT();
+        render("UI_DisplayBT(): found device");
+        bt_service_event(BT_EV_EARDEV, "1122334455AB,Long Headset Name,-81",
+                         (unsigned)strlen("1122334455AB,Long Headset Name,-81"));
+        BT_ProcessKeys(KEY_DOWN, true, false);   /* the second device */
+        UI_DisplayBT();
+        render("UI_DisplayBT(): second found device (long name)");
+        BT_ProcessKeys(KEY_DOWN, true, false);   /* wraps back to the first */
+        UI_DisplayBT();
+        memcpy(before_connecting, gFrameBuffer, sizeof before_connecting);
+
+        BT_ProcessKeys(KEY_MENU, true, false);   /* select and connect */
+        UI_DisplayBT();
+        ok = memcmp(before_connecting, gFrameBuffer, sizeof before_connecting) != 0;
+        printf("[bt] %s MENU selection visibly shows connection progress\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+        memcpy(before_connected, gFrameBuffer, sizeof before_connected);
+
+        bt_service_event(BT_EV_BT_EAR_CONN, NULL, 0);
+        UI_DisplayBT();
+        ok = bt_connected() &&
+             memcmp(before_connected, gFrameBuffer, sizeof before_connected) != 0;
+        printf("[bt] %s successful connection visibly confirms the device "
+               "(linked=%u changed=%u)\n", ok ? "ok  " : "FAIL",
+               (unsigned)bt_connected(),
+               memcmp(before_connected, gFrameBuffer, sizeof before_connected) != 0);
+        if (!ok) failures++;
+        render("UI_DisplayBT(): connection confirmation");
+
+        /* UI_DisplayBT must stay inside gFrameBuffer[0..6]: a 7th item row
+         * would run off the end into gStatusLine, and the inverse highlight
+         * must not write before the row (the old call corrupted [0][127]). */
+        memset(gStatusLine, 0xAA, sizeof gStatusLine);
+        memset(gFrameBuffer, 0xAA, sizeof gFrameBuffer);
+        UI_DisplayBT();
+        ok = (gFrameBuffer[0][127] == 0);
+        for (i = 0; i < sizeof gStatusLine; i++)
+            if (gStatusLine[i] != 0xAA) { ok = false; break; }   /* untouched */
+        printf("[bt] %s UI_DisplayBT stays inside gFrameBuffer[0..6]\n",
+               ok ? "ok  " : "FAIL");
+        if (!ok) failures++;
+
+        for (i = 0; i < BT_MenuCount(); i++)
+            (void)BT_MenuName(i);
+    }
+
+    /* The status line shows a BT indicator while the module is on. */
+    {
+        bool    ok;
+        uint8_t before[LCD_WIDTH];
+
+        bt_set_enabled(false);
+        UI_DisplayStatus();
+        memcpy(before, gStatusLine, sizeof before);
+
+        bt_set_enabled(true);
+        UI_DisplayStatus();
+        ok = (memcmp(before, gStatusLine, sizeof before) != 0);
+        printf("[bt] %s the status line shows BT when the module is on\n",
+               ok ? "ok  " : "FAIL");
         if (!ok) failures++;
     }
 

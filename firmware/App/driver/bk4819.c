@@ -392,6 +392,31 @@ bool BK4819_IsGpioOutSet(BK4819_GPIO_PIN_t Pin)
     return (gBK4819_GpioOutState & (0x40u >> Pin)) != 0;
 }
 
+/* Port addition: mirror stock FUN_080137D4(mask, value) exactly.  The K1 helper
+ * above only changes output bits; the RA89R helper also clears the paired
+ * configuration bit 14-pin for each pin in `mask`.  Keeping this as a separate
+ * entry point avoids changing the imported K1 API's semantics for other users. */
+uint16_t BK4819_ToggleGpioOutStock(uint8_t mask, uint8_t value)
+{
+    unsigned pin;
+
+    for (pin = 0; pin < 7u; pin++) {
+        const uint16_t pin_mask = (uint16_t)(1u << pin);
+        const uint16_t out_mask = (uint16_t)(0x40u >> pin);
+        const uint16_t pair_mask = (uint16_t)(1u << (14u - pin));
+
+        if ((mask & pin_mask) == 0u)
+            continue;
+
+        gBK4819_GpioOutState &= (uint16_t)~(out_mask | pair_mask);
+        if ((value & pin_mask) != 0u)
+            gBK4819_GpioOutState |= out_mask;
+    }
+
+    BK4819_WriteRegister(BK4819_REG_33, gBK4819_GpioOutState);
+    return gBK4819_GpioOutState;
+}
+
 void BK4819_SetCDCSSCodeWord(uint32_t CodeWord)
 {
     // REG_51
