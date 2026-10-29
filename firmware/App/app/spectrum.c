@@ -41,6 +41,21 @@
 #include "driver/py25q16.h"
 #endif
 
+/* Port addition: a console trace of the spectrum's key, peak and listen
+ * events (115200 on the console jack).  The blocking screen does not service
+ * the console, so this is the only view into it on the radio.  Bring-up aid;
+ * build with -DSPECTRUM_TRACE=0 to drop it. */
+#ifndef SPECTRUM_TRACE
+#define SPECTRUM_TRACE 1
+#endif
+#if SPECTRUM_TRACE
+#include "driver/systick.h"
+#include "driver/uart.h"
+#define SPEC_TRACE(...) uart_printf(__VA_ARGS__)
+#else
+#define SPEC_TRACE(...) do { } while (0)
+#endif
+
 struct FrequencyBandInfo
 {
     uint32_t lower;
@@ -554,6 +569,7 @@ static bool IsListeningSignalPresent(uint16_t rssi)
 
 static void ResetPeak()
 {
+    SPEC_TRACE("spec: reset-peak (was %u)\r\n", (uint32_t)peak.f);
     peak.t = 0;
     peak.rssi = 0;
     peak.f = 0;
@@ -637,6 +653,8 @@ uint32_t GetFEnd()
 
 static void TuneToPeak()
 {
+    SPEC_TRACE("spec: tune-peak f=%u i=%u rssi=%u\r\n", (uint32_t)peak.f,
+               (uint32_t)peak.i, (uint32_t)peak.rssi);
     scanInfo.f = peak.f;
     scanInfo.rssi = peak.rssi;
     scanInfo.i = peak.i;
@@ -645,6 +663,7 @@ static void TuneToPeak()
 
 static void DeInitSpectrum()
 {
+    SPEC_TRACE("spec: exit initial=%u\r\n", (uint32_t)initialFreq);
     activeChip = SPECTRUM_CHIP_4829;
     SetF(initialFreq);
     RestoreRegisters();
@@ -710,6 +729,8 @@ static void ToggleRX(bool on)
     }
     #endif
     isListening = on;
+    SPEC_TRACE("spec: rx %s peak=%u fMeasure=%u trig=%u\r\n", on ? "on" : "off",
+               (uint32_t)peak.f, (uint32_t)fMeasure, (uint32_t)settings.rssiTriggerLevel);
 
     //RADIO_SetupAGC(settings.modulationType == MODULATION_AM, lockAGC);
     RADIO_SetupAGC(false, lockAGC);
@@ -2255,6 +2276,13 @@ static bool HandleUserInput()
 
     if (kbd.counter == 3 || kbd.counter == 16)
     {
+        SPEC_TRACE("spec: key=%u n=%u state=%u listen=%u chip=%u cur=%u peak=%u "
+                   "fMeasure=%u scan=%u i=%u/%u step=%u\r\n",
+                   (uint32_t)kbd.current, (uint32_t)kbd.counter, (uint32_t)currentState,
+                   (uint32_t)isListening, (uint32_t)activeChip, (uint32_t)currentFreq,
+                   (uint32_t)peak.f, (uint32_t)fMeasure, (uint32_t)scanInfo.f,
+                   (uint32_t)scanInfo.i, (uint32_t)scanInfo.measurementsCount,
+                   (uint32_t)GetScanStep());
         if (currentState == SPECTRUM && kbd.current == KEY_MENU)
         {
             if (kbd.counter == 3)
@@ -2389,6 +2417,24 @@ static void FinalizeCompletedSweep()
             newMax = 10;
         settings.dbMax = newMax;
     }
+
+#if SPECTRUM_TRACE
+    {
+        static uint32_t lastMs, sweeps;
+        const uint32_t now = systick_millis();
+
+        sweeps++;
+        if (now - lastMs >= 1000u) {
+            SPEC_TRACE("spec: sweeps=%u/%ums chip=%u rssi=%u..%u fPeak=%u peak=%u trig=%u floor=%u\r\n",
+                       sweeps, now - lastMs, (uint32_t)activeChip,
+                       (uint32_t)scanInfo.rssiMin, (uint32_t)scanInfo.rssiMax,
+                       (uint32_t)scanInfo.fPeak, (uint32_t)peak.f,
+                       (uint32_t)settings.rssiTriggerLevel, (uint32_t)autoNoiseFloor);
+            lastMs = now;
+            sweeps = 0;
+        }
+    }
+#endif
 
     // Next full sweep starts from the opposite side to avoid directional bias.
     scanStartFromLeft = !scanStartFromLeft;
@@ -2705,6 +2751,15 @@ void APP_RunSpectrum()
     #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
         SETTINGS_WriteCurrentState();
     #endif
+
+    SPEC_TRACE("spec: enter vfo=%u rxf=%u cur=%u range=%u steps=%u step=%u chip=%u\r\n",
+               (uint32_t)vfo, (uint32_t)gTxVfo->pRX->Frequency, (uint32_t)currentFreq,
+#ifdef ENABLE_SCAN_RANGES
+               (uint32_t)gScanRangeStart,
+#else
+               0u,
+#endif
+               (uint32_t)GetStepsCount(), (uint32_t)GetScanStep(), (uint32_t)activeChip);
 
     BackupRegisters();
 
