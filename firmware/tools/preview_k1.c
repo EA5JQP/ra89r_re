@@ -491,8 +491,8 @@ int main(void)
      * blocking screen is not host-driven. */
     {
         const bool ok =
-            spectrum_rf_decode_chip(spectrum_rf_encode_chip(SPECTRUM_CHIP_BOTH)) == SPECTRUM_CHIP_BOTH &&
-            spectrum_rf_step_chip(SPECTRUM_CHIP_BOTH, 1) == SPECTRUM_CHIP_4815;
+            spectrum_rf_decode_chip(spectrum_rf_encode_chip(SPECTRUM_CHIP_4815)) == SPECTRUM_CHIP_4815 &&
+            spectrum_rf_next_chip(SPECTRUM_CHIP_4815) == SPECTRUM_CHIP_4829;
         printf("[spectrum] %s the chip policy is linked and round-trips\n", ok ? "ok  " : "FAIL");
         if (!ok) failures++;
     }

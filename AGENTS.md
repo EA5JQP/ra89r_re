@@ -201,7 +201,7 @@ State (each has its own doc — read it before touching the feature):
 | battery | protocol decoded and implemented; the chip never answers (`docs/ra89r_battery.md`) |
 | eeprom (`py25q16.c`, `spi_flash.c`) | read + full dump validated; the write-validation test has not run (`docs/ra89r_eeprom.md`) |
 | port | merged; the K1 GUI boots on the radio (`docs/ra89r_port.md`) |
-| `origin/spectrum` | open, unmerged: per-chip spectrum display (`docs` in-repo); do not assume it works |
+| spectrum (`app/spectrum.c`, branch `spectrum`) | open, unmerged, **unvalidated**: the K1/F4HWN spectrum screen (F+5) on the BK4829 *or* the BK4815, routed through `pa_set_rx_lane()`/`pa_select_band()` like the receiver; no "both" mode, for the shared-pins reason `FAST BOTH` was removed (`docs/ra89r_spectrum.md`) |
 
 ## RF architecture (read before touching the RF code)
 

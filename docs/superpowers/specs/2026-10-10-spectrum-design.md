@@ -1,5 +1,12 @@
 # RA89R spectrum design
 
+> **2026-10-29: the `Both` setting was removed.**  The two chips share one set
+> of `0x33` receive-path pins, so the chip they are not set for is deaf (the
+> reason the scanner's `FAST BOTH` was removed, `docs/ra89r_scan.md`), and the
+> per-bin alternation was never faster (one bus, one bin at a time).  The
+> spectrum is BK4829 *or* BK4815; `docs/ra89r_spectrum.md` is current.  What
+> follows is kept as the record of the original design.
+
 **Status:** Proposed design; awaiting user review. No spectrum implementation is
 authorized by this document yet.
 

@@ -27,6 +27,7 @@
 
 #include "driver/backlight.h"
 #include "driver/bk4815.h"
+#include "driver/pa.h"
 #include "driver/rx.h"
 #include "frequencies.h"
 #include "ui/helper.h"
@@ -72,7 +73,10 @@ ScanInfo scanInfo;
 static KeyboardState kbd = {KEY_INVALID, KEY_INVALID, 0};
 static bool menuKeyPendingShort = false;
 static bool menuKeyLongHandled = false;
-static bool chipKeyLongHandled = false;   /* port addition: KEY_6 one-shot */
+/* Port addition: KEY_6 is handled like KEY_MENU -- short press (listen BW) on
+ * release, long press (the chip toggle) one-shot at counter == 16. */
+static bool chipKeyPendingShort = false;
+static bool chipKeyLongHandled = false;
 
 #ifdef ENABLE_SCAN_RANGES
 static uint16_t blacklistFreqs[15];
@@ -392,32 +396,32 @@ void SetState(State state)
 
 // Radio functions
 
-/* Port addition: the chip the current operation targets.  For the BOTH setting
- * the spectrum alternates the chip per swept step (spectrum_rf_step_chip). */
+/* Port addition: the chip the spectrum sweeps, peaks and listens on --
+ * settings.chip, applied on entry and by the in-screen toggle. */
 static spectrum_chip_t activeChip = SPECTRUM_CHIP_4829;
 
-static spectrum_chip_t StepChip(uint16_t index)
+/* Port addition: route the receive path and the band to the active chip, the
+ * way the port's receiver does (driver/rx.c).  pa_set_rx_lane() owns the 0x33
+ * receive-path pins -- pin 0 for the BK4829, pin 4 for the BK4815, never both
+ * (radio 2026-10-21: with both set the BK4815 hears nothing) -- and
+ * pa_select_band() the band state, the BK4815's 0x75 included.  Upstream relies
+ * on BK4819_PickRXFilterPathBasedOnFrequency() for this, which is a no-op on
+ * this board (driver/bk4819.c). */
+static void SetChipRoute(uint32_t f)
 {
-    return spectrum_rf_step_chip(settings.chip, index);
-}
-
-/* Port addition: the receive RF-path pin (the BK4829's 0x33 pin 4) follows the
- * chip: the stock sets it for the BK4815 branch and clears it for the BK4829
- * (docs/ra89r_rfpath.md, driver/rx.c's rf_dual_refresh).  Without it the BK4815
- * reads through the BK4829 path and finds nothing. */
-static void SetChipPath(spectrum_chip_t chip)
-{
-    BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, chip == SPECTRUM_CHIP_4815);
+    pa_set_rx_lane(activeChip == SPECTRUM_CHIP_4815);
+    pa_select_band(f);
 }
 
 static void ToggleAFBit(bool on)
 {
+    /* Port addition: the BK4815's audio reaches the amplifier through the
+     * BK4829's AF output, so a BK4815 listen opens its own AF (0x49) *and*
+     * the BK4829's 0x47 below (radio 2026-10-27: 0x47 = 0x6040 gave no audio,
+     * 0x6142 a clean voice -- driver/rx.c, rx_apply_audio_gate()). */
     if (activeChip == SPECTRUM_CHIP_4815)
-    {
-        /* The BK4815's own AF (0x49); the BK4829's 0x47 does not apply. */
         bk4815_set_af(on);
-        return;
-    }
+
     uint16_t reg = BK4819_ReadRegister(BK4819_REG_47);
     reg &= ~(1 << 8);
     if (on)
@@ -460,9 +464,6 @@ static void RestoreRegisters()
 
 static void ToggleAFDAC(bool on)
 {
-    if (activeChip == SPECTRUM_CHIP_4815)
-        return;   /* the BK4815 has no DAC bit; its AF is set in ToggleAFBit() */
-
     uint32_t Reg = BK4819_ReadRegister(BK4819_REG_30);
     Reg &= ~(1 << 9);
     if (on)
@@ -481,17 +482,22 @@ static void SetF(uint32_t f)
     f = NormalizeScanFrequency(f);
     fMeasure = f;
 
-    SetChipPath(activeChip);
-
     if (activeChip == SPECTRUM_CHIP_4815)
     {
+        /* Port addition: the BK4815's receive entry, as rx_scan_commit() runs
+         * it (tune, demod/AF block, channel spacing), with the BK4829 tuned to
+         * the same channel: the BK4815's audio rides the BK4829's RX chain,
+         * and on another frequency that chain's noise sums into it (driver/
+         * rx.c, rf_dual_refresh()). */
         bk4815_set_frequency(fMeasure, false);
-        bk4815_write_reg(0x75, (fMeasure >= 28000000u) ? 0x0Au : 0x11u);
+        bk4815_receive_entry(settings.listenBw == BK4819_FILTER_BW_WIDE);
+        BK4819_SetFrequency(fMeasure);
+        SetChipRoute(fMeasure);
         return;
     }
 
     BK4819_SetFrequency(fMeasure);
-    BK4819_PickRXFilterPathBasedOnFrequency(fMeasure);
+    SetChipRoute(fMeasure);
     uint16_t reg = BK4819_ReadRegister(BK4819_REG_30);
     BK4819_WriteRegister(BK4819_REG_30, 0);
     BK4819_WriteRegister(BK4819_REG_30, reg);
@@ -504,21 +510,21 @@ static void SetF(uint32_t f)
 // cutting the SPI bus activity that causes SPI-induced audio interference.
 static void SetFScan(uint32_t f)
 {
-    activeChip = StepChip(scanInfo.i);
-    SetChipPath(activeChip);
     f = NormalizeScanFrequency(f);
 
     if (activeChip == SPECTRUM_CHIP_4815)
     {
+        /* Port addition: the FAST scanner's BK4815 probe (app/chFrScanner.c,
+         * ScanFast4815Read): tune + band register; the settle is in GetRssi(). */
         fMeasure = f;
         bk4815_set_frequency(f, false);
-        bk4815_write_reg(0x75, (f >= 28000000u) ? 0x0Au : 0x11u);
+        bk4815_set_band((f >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
         return;
     }
 
     // Refresh RF path only when crossing the VHF/UHF boundary (280 MHz)
     if ((f < 28000000) != (fMeasure < 28000000))
-        BK4819_PickRXFilterPathBasedOnFrequency(f);
+        SetChipRoute(f);   // Port adaptation: the board's band/route, not the K1 LNA pins
     fMeasure = f;
     BK4819_SetFrequency(f);
     BK4819_WriteRegister(BK4819_REG_30, 0);
@@ -634,7 +640,6 @@ static void TuneToPeak()
     scanInfo.f = peak.f;
     scanInfo.rssi = peak.rssi;
     scanInfo.i = peak.i;
-    activeChip = StepChip(peak.i);
     SetF(scanInfo.f);
 }
 
@@ -643,8 +648,9 @@ static void DeInitSpectrum()
     activeChip = SPECTRUM_CHIP_4829;
     SetF(initialFreq);
     RestoreRegisters();
-    /* Port addition: a 4815/Both session leaves the BK4815 tuned mid-sweep;
-     * re-apply the receive routing so normal receive resumes on exit. */
+    /* Port addition: a 4815 session leaves the BK4815 tuned mid-sweep and the
+     * receive lane on it; re-apply the receive routing so normal receive
+     * resumes on exit (rx_service() re-asserts the VFO's own lane). */
     rf_dual_reapply();
     isInitialized = false;
 }
@@ -656,12 +662,10 @@ uint8_t GetBWRegValueForScan()
 
 uint16_t GetRssi()
 {
-    activeChip = StepChip(scanInfo.i);
-
     if (activeChip == SPECTRUM_CHIP_4815)
     {
-        /* The BK4815 has no glitch indicator.  Let its PLL/AGC settle for the
-         * same fixed 350 us used by the validated FAST BOTH scan lane before
+        /* Port addition: the BK4815 has no glitch indicator.  Let its PLL/AGC
+         * settle for the fixed delay of the FAST scanner's BK4815 probe before
          * discarding the first read and using the next. */
         SYSTICK_DelayUs(spectrum_rf_rssi_settle_us(SPECTRUM_CHIP_4815));
         // Discard first read (AGC may still be transitioning), keep second.
@@ -706,13 +710,6 @@ static void ToggleRX(bool on)
     }
     #endif
     isListening = on;
-
-    /* Port addition: the listen target is the peak, so resolve its chip before
-     * branching the AF/bandwidth below.  Doing it here (not in the caller) keeps
-     * every ToggleRX(true) site correct: a BOTH sweep would otherwise use the
-     * last swept step's chip. */
-    if (on)
-        activeChip = StepChip(peak.i);
 
     //RADIO_SetupAGC(settings.modulationType == MODULATION_AM, lockAGC);
     RADIO_SetupAGC(false, lockAGC);
@@ -807,7 +804,7 @@ static void InitScan()
     // Mask bit 9 (AF DAC enable) so the cached value is always correct for
     // scanning regardless of whether audio was on when InitScan() was called
     // (RelaunchScan calls InitScan before ToggleRX(false)).
-    BK4819_PickRXFilterPathBasedOnFrequency(scanInfo.f);
+    SetChipRoute(scanInfo.f);   // Port adaptation: see SetChipRoute()
     scanReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~(1u << 9);
 }
 
@@ -1016,7 +1013,7 @@ static void ResetSpectrumToDefaults()
     settings.listenBw = BK4819_FILTER_BW_WIDE;
     settings.modulationType = gTxVfo->Modulation;
     settings.rssiTriggerLevel = RSSI_MAX_VALUE;
-    settings.chip = SPECTRUM_CHIP_4829;
+    settings.chip = activeChip = SPECTRUM_CHIP_4829;
     autoNoiseFloor = RSSI_MAX_VALUE;
 
     // Keep frequency/range unchanged; recompute move step from fresh scan params.
@@ -1751,10 +1748,9 @@ static void DrawNums()
 #endif
         GUI_DisplaySmallest(String, 0, 1, false, true);
 
-        // Port addition: the transceiver choice (BK4829 / BK4815 / Both),
+        // Port addition: the transceiver choice (BK4829 / BK4815),
         // beside the step/count the spectrum already draws here.
-        sprintf(String, "%s", settings.chip == SPECTRUM_CHIP_4829 ? "4829"
-                            : settings.chip == SPECTRUM_CHIP_4815 ? "4815" : "BOTH");
+        sprintf(String, "%s", settings.chip == SPECTRUM_CHIP_4815 ? "4815" : "4829");
         GUI_DisplaySmallest(String, 20, 1, false, true);
 
         sprintf(String, "%u.%02uk", GetScanStep() / 100, GetScanStep() % 100);
@@ -2241,9 +2237,20 @@ static bool HandleUserInput()
             menuKeyLongHandled = false;
         }
 
-        /* Port addition: re-arm the chip toggle only after KEY_6 is released. */
-        if (kbd.current != KEY_6)
+        /* Port addition: KEY_6's short press fires on release, unless the long
+         * press already toggled the chip. */
+        if (kbd.current == KEY_INVALID && kbd.prev == KEY_6)
+        {
+            if (chipKeyPendingShort && !chipKeyLongHandled)
+                OnKeyDownCommon(KEY_6);
+            chipKeyPendingShort = false;
             chipKeyLongHandled = false;
+        }
+        else if (kbd.current != KEY_6 && kbd.prev != KEY_6)
+        {
+            chipKeyPendingShort = false;
+            chipKeyLongHandled = false;
+        }
     }
 
     if (kbd.counter == 3 || kbd.counter == 16)
@@ -2264,20 +2271,26 @@ static bool HandleUserInput()
             return true;
         }
 
-        /* Port addition: long-press KEY_6 cycles the spectrum's chip
-         * (4829 / 4815 / Both) once per press.  Short-press KEY_6 keeps
-         * toggling the listen bandwidth in OnKeyDownCommon(). */
-        if (currentState == SPECTRUM && kbd.current == KEY_6 && kbd.counter == 16 &&
-            !chipKeyLongHandled)
+        /* Port addition: long-press KEY_6 toggles the spectrum's chip
+         * (4829 / 4815) once per press; the sweep restarts on the new chip,
+         * whose RSSI scale and noise floor differ. */
+        if (currentState == SPECTRUM && kbd.current == KEY_6)
         {
-            chipKeyLongHandled = true;
-            switch (settings.chip)
+            if (kbd.counter == 3)
             {
-            case SPECTRUM_CHIP_4829: settings.chip = SPECTRUM_CHIP_4815; break;
-            case SPECTRUM_CHIP_4815: settings.chip = SPECTRUM_CHIP_BOTH; break;
-            default:                 settings.chip = SPECTRUM_CHIP_4829; break;
+                chipKeyPendingShort = true;
+                chipKeyLongHandled = false;
             }
-            redrawStatus = true;
+            else if (kbd.counter == 16 && !chipKeyLongHandled)
+            {
+                chipKeyPendingShort = false;
+                chipKeyLongHandled = true;
+                ToggleRX(false);
+                settings.chip = activeChip = spectrum_rf_next_chip(settings.chip);
+                RequestAutoTriggerRecalibration();
+                RelaunchScan();
+                redrawStatus = true;
+            }
             return true;
         }
 
@@ -2587,9 +2600,7 @@ static void Tick()
     if (gNextTimeslice)
     {
         gNextTimeslice = false;
-        /* Port adaptation: this repo's driver names the tickless update
-         * BACKLIGHT_UpdateTickless() (the K1 calls it BACKLIGHT_Update()). */
-        BACKLIGHT_UpdateTickless();
+        BACKLIGHT_Update();
     }
 
 #ifdef ENABLE_SCAN_RANGES
@@ -2668,6 +2679,7 @@ void APP_RunSpectrum()
 #ifdef ENABLE_FEAT_F4HWN_SPECTRUM
     LoadSettings();
 #endif
+    activeChip = settings.chip;   // Port addition: the persisted chip choice
     // set the current frequency in the middle of the display
 #ifdef ENABLE_SCAN_RANGES
     if (gScanRangeStart)
