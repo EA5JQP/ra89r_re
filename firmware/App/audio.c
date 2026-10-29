@@ -23,6 +23,7 @@
     #include "driver/bk1080.h"
 #endif
 #include "driver/bk4819.h"
+#include "driver/audio_path.h"
 #include "driver/beeper.h"
 #include "driver/gpio.h"
 #include "driver/system.h"
@@ -75,8 +76,16 @@ void AUDIO_PlayBeep(BEEP_Type_t Beep)
      * so it needs none of the chip's mute/restore dance -- but the tone reaches
      * the speaker through the same amplifier as the receiver (PC13), which the
      * idle receive path leaves off.  Turn it on for the beep and put it back,
-     * which is what the K1's own AUDIO_PlayBeep did around the chip's tone. */
-    AUDIO_AudioPathOn();
+     * which is what the K1's own AUDIO_PlayBeep did around the chip's tone.
+     * The K1 then waits 60 ms before the first tone: the amplifier needs it to
+     * come up.  Since the receive gate drives PC13 every poll (2026-10-22) the
+     * amplifier is off whenever the squelch is closed, and a 60 ms key beep
+     * played straight after switching it on was lost entirely (radio
+     * 2026-10-29: the boot beep heard, every key beep silent, PC13 0). */
+    if (!audio_path_is_on()) {
+        AUDIO_AudioPathOn();
+        SYSTEM_DelayMs(60);
+    }
 
     for (uint8_t i = 0; i < BEEP_Classic_array[Beep][BEEP_REPEATS]; i++) {
         beeper_play(BEEP_Classic_array[Beep][BEEP_TONE],

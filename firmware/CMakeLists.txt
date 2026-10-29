@@ -89,7 +89,7 @@ set(APP_SOURCES
     App/app/generic.c
     App/app/common.c
     App/app/chFrScanner.c
-    App/app/scan_dual.c
+    App/app/scan_rate.c
     App/app/dtmf.c
     App/app/scanner.c
     App/cat.c

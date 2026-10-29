@@ -345,11 +345,6 @@ void rx_apply_audio_gate(void);
 
 bool rx_squelch_open(void);
 
-/* The gate has been closed for at least `polls` consecutive polls.  The LISTEN
- * sweep waits for this (docs/ra89r_scan.md): a single corrupted 0x67 read used
- * to be enough to start a probe batch, which then collided with the poller and
- * turned the audio into noise. */
-bool rx_squelch_quiet(uint8_t polls);
 uint16_t rx_rssi(void);
 
 /* The marks actually in force right now: the active lane's learned floor plus
@@ -403,18 +398,24 @@ void rf_dual_refresh(void);
  * frequency. */
 void rf_dual_reapply(void);
 
-/* A temporary scan-hit receive route.  While set, the receiver follows the scan
- * hit's chip and frequency instead of the selected VFO's transceiver; clearing
- * it restores the saved per-VFO route.  Used by the dual-transceiver scan while
- * a hit is paused.  Never persisted. */
-typedef enum {
-    RX_SCAN_SOURCE_DEFAULT = 0,   /* the selected VFO's own transceiver */
-    RX_SCAN_SOURCE_BK4829  = 1,
-    RX_SCAN_SOURCE_BK4815  = 2
-} rx_scan_source_t;
+/* ---- the scan's receive route ---------------------------------------------
+ * While a scan runs, rx_service() no longer follows the VFOs (the scanner owns
+ * the chips and walks gRxVfo as its cursor), so the scanner says explicitly
+ * where a full tune lands: the selected VFO's own transceiver.  Without this a
+ * BK4815 VFO was never retuned during a scan: RADIO_SetupRegisters() skips the
+ * BK4829 for it, the coordinator yields, and the squelch kept reading the
+ * BK4815 on the pre-scan channel. */
+/* Commit a scan's full tune: tune the VFO's chip to `freq_10hz`, select it as
+ * the audio/squelch lane and start the gate closed.
+ * Called by the scanner after RADIO_SetupRegisters() on every candidate it
+ * keeps; never for the precheck probes. */
+void rx_scan_commit(uint32_t freq_10hz);
 
-void             rx_set_scan_source_override(rx_scan_source_t source);
-void             rx_clear_scan_source_override(void);
-rx_scan_source_t rx_scan_source_override(void);
+/* The opening mark for `use_4815`'s lane at `freq_10hz` (0 = the active lane's
+ * frequency), from that lane/band/modulation's learned floor -- or its measured
+ * prior when that slot has never been learned.  The scanner probes frequencies
+ * the receiver has not sat on, so the active lane's mark (or the floor-unknown
+ * 0xCF fallback) would be on the wrong scale or band there. */
+uint16_t rx_squelch_open_mark_for(bool use_4815, uint32_t freq_10hz);
 
 #endif /* DRIVER_RX_H */

@@ -808,7 +808,8 @@ void RADIO_SetupRegisters(bool switchToForeground)
      * (COMMON_SwitchVFOs -> gFlagReconfigureVfos), so without this the BK4829
      * is yanked off the other VFO's frequency and the BK4815's path pin is
      * dropped, and two VFOs on different chips can never stay apart.  The port
-     * tunes both chips from rx_service() -> rf_dual_refresh(). */
+     * tunes both chips from rx_service() -> rf_dual_refresh(), and during a
+     * scan from rx_scan_commit(). */
     if (SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) != RF_XCVR_BK4815)
     {
         BK4819_SetFrequency(Frequency);

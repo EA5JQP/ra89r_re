@@ -4,7 +4,7 @@
 
 #include "app/app.h"
 #include "app/chFrScanner.h"
-#include "app/scan_dual.h"
+#include "app/scan_rate.h"
 #include "audio.h"
 #include "driver/bk4815.h"
 #include "driver/pa.h"
@@ -63,10 +63,6 @@ scan_next_chan_t    currentScanList;
 uint32_t            initialFrqOrChan;
 uint8_t             initialCROSS_BAND_RX_TX;
 
-/* The ordinal the shared candidate cursor hands out (CHFRSCANNER_NextCandidate
- * below).  Reset when a scan starts. */
-static uint32_t scanCandidateOrdinal;
-
 #ifndef ENABLE_FEAT_F4HWN
     uint32_t lastFoundFrqOrChan;
 #else
@@ -78,20 +74,12 @@ static void NextFreqChannel(void);
 static void NextMemChannel(void);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 static void ScanFastResetState(void);
-static void ScanBothReset(void);
 #endif
 
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
 static bool ScanFastEnabled(void)
 {
     return gSetting_set_scn != (uint8_t)SCAN_MODE_NORMAL;
-}
-
-/* Listen-while-scanning: the selected VFO keeps its chip while the other one
- * sweeps (ScanRangeFastPrecheckListen). */
-static bool ScanListenEnabled(void)
-{
-    return gSetting_set_scn == (uint8_t)SCAN_MODE_LISTEN;
 }
 #endif
 
@@ -281,24 +269,8 @@ static void CHFRSCANNER_AbortActiveReception(void)
 #define SCAN_FAST_RSSI_MARGIN       16
 #define SCAN_FAST_SQUELCH_MARGIN     8
 #define SCAN_FAST_WEAK_MARGIN        8
-/* The BK4815 reports a 7-bit RSSI (0x44), about a quarter of the BK4829's
- * 9-bit scale (0x67), so the dual lane uses its own, smaller margins rather
- * than comparing scales.  Radio 2026-10-21: the part's noise floor at 446 MHz
- * read 16-17 while the SQL-1 mark was 16, i.e. inside the noise, and the lane
- * stopped the scan on it every batch -- hence 8 (two marks' worth of margin)
- * after the seed-only first sample.  Still unvalidated as a *threshold*; the
- * floor-relative rule is what keeps it honest. */
-#define SCAN_FAST4815_RSSI_MARGIN    12
-#define SCAN_FAST4815_SQUELCH_MARGIN 4
-#define SCAN_FAST4815_WEAK_MARGIN    4
-
-/* A candidate is confirmed with one more probe of the same frequency before it
- * is handed to the expensive full tune.  Radio 2026-10-21: at 145.5 the BK4815
- * lane's floor was seeded from a 3-7 sample and its own 10-12 jitter then read
- * as a hit every batch, so FAST BOTH spent ~53 ms/batch on full re-tunes
- * (1.08x over FAST) while the same sweep at 446 MHz ran at 1.67x. */
-/* The BK4815's 7-bit RSSI is scaled into the BK4829's 9-bit range (127*4 ~ 508)
- * when both lanes feed the one sparkline series. */
+/* The BK4815's 7-bit RSSI (0x44) is scaled into the BK4829's 9-bit range
+ * (127*4 ~ 508) for the sparkline, so the graph reads the same on either chip. */
 #define SCAN_FAST4815_RSSI_SCALE     4
 #define SCAN_FAST_RECHECK_DELAY_US 350
 #define SCAN_FAST_FINE_STEP_LIMIT   250
@@ -306,15 +278,6 @@ static void CHFRSCANNER_AbortActiveReception(void)
 #define SCAN_FAST_FINE_REFINE_MAX    80
 #define SCAN_FAST_FINE_RSSI_DROP      8
 #define SCAN_FAST_RSSI_MAX          65535u
-// Settle loop guard: at most this many 1us waits while the BK4819 glitch
-// indicator stays above SCAN_FAST_GLITCH_THRESHOLD. Caps the worst-case
-// settling time per step at ~50us before we read the RSSI anyway.
-/* A noisy band (the airband) keeps the glitch indicator above the threshold, so
- * waiting up to SCAN_FAST_GLITCH_GUARD_MAX times costs ~15 ms per candidate
- * (each probe is a bit-banged RF-bus read) and makes a whole scan step ~90 ms --
- * which starves the UI and the keys.  A few samples settle it just as well. */
-#define SCAN_FAST_GLITCH_GUARD_MAX  4
-#define SCAN_FAST_GLITCH_THRESHOLD  200
 // HF/VHF boundary in Hz: BK4819_PickRXFilterPathBasedOnFrequency() switches
 // the front-end filter path here, so we only re-run that (relatively
 // expensive) call when we actually cross the boundary.
@@ -327,14 +290,27 @@ typedef enum {
 } scan_fast_result_t;
 
 static uint16_t scanFastReg30;
+/* The frequency the BK4829 was last probed on: the scanner's mark is taken for
+ * that band (rx_squelch_open_mark_for()), not for wherever the receiver sat. */
+static uint32_t scanFastMarkFreq;
+
+/* Console '%': per-probe scan trace (range and memory FAST, full tunes,
+ * resumes) on the UART.  Blocking output, so it slows the sweep; a
+ * bench diagnostic, off by default. */
+static bool scanTrace;
+
+bool CHFRSCANNER_ToggleTrace(void)
+{
+    scanTrace = !scanTrace;
+    return scanTrace;
+}
+
+bool CHFRSCANNER_TraceOn(void)
+{
+    return scanTrace;
+}
 static uint16_t scanFastNoiseFloor   = SCAN_FAST_RSSI_MAX;
 static uint32_t scanFastPrevFrequency;
-/* The LISTEN sweep's cursor.  The walk advances gRxVfo's frequency, but gRxVfo
- * is the *listen* VFO there, so the cursor is carried here instead and the
- * listen record is restored after every batch (radio 2026-10-22: without this
- * the receiver ended a scan 75 kHz off its channel). 0 = start from the listen
- * frequency. */
-static uint32_t scanListenCursor;
 static bool     scanFastLastFullTuneCandidate;
 static VFO_Info_t scanFastDisplayVfo;
 static bool       scanFastDisplayVfoValid;
@@ -407,10 +383,8 @@ static void ScanFastResetState(void)
     // stale calibration into a later sweep.
     scanFastNoiseFloor            = SCAN_FAST_RSSI_MAX;
     scanFastPrevFrequency         = 0;
-    scanListenCursor              = 0;
     scanFastLastFullTuneCandidate = false;
     scanFastDisplayVfoValid       = false;
-    ScanBothReset();
 }
 
 static void ScanFastResetNoiseFloor(void)
@@ -418,17 +392,87 @@ static void ScanFastResetNoiseFloor(void)
     scanFastNoiseFloor = SCAN_FAST_RSSI_MAX;
 }
 
+/* The BK4829's 0x67 right after ScanFastTune()'s REG_30 restart is not the
+ * channel: the meter restarts low and climbs while the AGC recovers.  Radio,
+ * 2026-10-27 (a per-probe trace), PMR + airband list, keyed carrier on PMR1:
+ *   - read at once (the K1's glitch guard never waited -- the indicator is
+ *     low right after the restart): 14-15 on every channel, carrier included;
+ *   - read at the first value over 28 (~1.1-1.6 ms): 30-39, PMR1 only 43.
+ * A live receiver sits at 49-61 UHF / 96-103 VHF, and a carrier far above.
+ * So follow the meter (~135 us per read on this bus) until it holds still:
+ * SCAN_FAST_PLATEAU_READS reads in a row within SCAN_FAST_PLATEAU_TOL of a
+ * reference reading, which restarts whenever a read leaves that band -- a ramp
+ * up after a restart, or a fall from the previous channel's level after a
+ * plain retune.  The result is the *mean* of the plateau reads: the peak of
+ * 8-40 noisy reads put plain noise at 90-110 UHF / 80-90 VHF, above the
+ * receive gate's single-read marks (75-81), and every pass started with false
+ * hits (radio, same session); a keyed carrier read 222 either way.  The cap
+ * keeps a dead chip from stalling the scan. */
+#define SCAN_FAST_PLATEAU_READS     8u
+#define SCAN_FAST_PLATEAU_TOL       6u
+#define SCAN_FAST_SETTLE_MAX_US 20000u
+
 static uint16_t ScanFastReadRssi(void)
 {
-    uint8_t guard = SCAN_FAST_GLITCH_GUARD_MAX;
-    while (guard-- && BK4819_GetGlitchIndicator() >= SCAN_FAST_GLITCH_THRESHOLD)
+    const uint32_t t0 = systick_micros();
+    uint16_t ref  = BK4819_GetRSSI();
+    uint16_t last = ref;
+    uint8_t  flat = 0;
+    uint32_t sum  = 0;    /* the reads inside the band around `ref` */
+
+    while (flat < SCAN_FAST_PLATEAU_READS &&
+           (uint32_t)(systick_micros() - t0) < SCAN_FAST_SETTLE_MAX_US)
     {
-        SYSTICK_DelayUs(1);
+        const uint16_t r    = BK4819_GetRSSI();
+        const uint16_t diff = (r > ref) ? (uint16_t)(r - ref) : (uint16_t)(ref - r);
+
+        last = r;
+        if (diff > SCAN_FAST_PLATEAU_TOL) {
+            ref  = r;
+            flat = 0;
+            sum  = 0;
+        } else {
+            flat++;
+            sum += r;
+        }
     }
 
-    // Discard first read: after fast tuning the RSSI/AGC value may still be stale.
-    BK4819_GetRSSI();
-    return BK4819_GetRSSI();
+    /* Timed out still moving: the latest reading is the best estimate. */
+    return flat ? (uint16_t)((sum + flat / 2u) / flat) : last;
+}
+
+/* REG_30 as the chip holds it (read at each batch's seed), so the plain-write
+ * tune below only rewrites it when the AF DAC mute is not applied yet. */
+static uint16_t scanFastReg30Chip;
+
+/* Seed the probe's REG_30: the chip's current value with the AF DAC cleared, so
+ * the sweep is silent.  ScanFastTune() writes 0 and then this value in the
+ * restart mode, so without the seed the chip would be left disabled. */
+static void ScanFastSeedReg30(void)
+{
+    scanFastReg30Chip = BK4819_ReadRegister(BK4819_REG_30);
+    scanFastReg30     = scanFastReg30Chip & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
+}
+
+/* How a probe retunes the BK4829.  The K1 restarts the receiver
+ * (REG_30 = 0, then the old value) after the 0x38/0x39 write; on this board the
+ * meter then restarts at ~0 and climbs for 1-14 ms (docs/ra89r_scan.md), which
+ * ScanFastReadRssi() has to wait out.  The plain write only moves the
+ * synthesizer and leaves the AGC running.  Console '#' switches back to the restart for an A/B with `J`. */
+static bool scanFastPlainTune = true;
+
+/* The plain write is only for a step: the restart it skips also runs the
+ * BK4829's VCO calibration (REG_30's VCO_CALIB bit), and after a long jump the
+ * synthesizer is still settling when the meter is read.  Radio 2026-10-28,
+ * range 446.00625-447.00625: the wrap back to 446.00625 (a 1 MHz jump) read a
+ * keyed PMR1 carrier as 84, noise level.  Anything further than this from the
+ * previous probe (10 Hz units: 100 kHz) takes the restart. */
+#define SCAN_FAST_PLAIN_MAX_JUMP 10000u
+
+bool CHFRSCANNER_TogglePlainTune(void)
+{
+    scanFastPlainTune = !scanFastPlainTune;
+    return scanFastPlainTune;
 }
 
 static void ScanFastTune(uint32_t frequency)
@@ -440,10 +484,28 @@ static void ScanFastTune(uint32_t frequency)
         BK4819_PickRXFilterPathBasedOnFrequency(frequency);
     }
 
+    const uint32_t jump = (frequency > scanFastPrevFrequency)
+                              ? frequency - scanFastPrevFrequency
+                              : scanFastPrevFrequency - frequency;
+    const bool     plain = scanFastPlainTune && scanFastPrevFrequency != 0 &&
+                           jump <= SCAN_FAST_PLAIN_MAX_JUMP;
+
     scanFastPrevFrequency = frequency;
+    scanFastMarkFreq      = frequency;
     BK4819_SetFrequency(frequency);
+
+    if (plain) {
+        /* Only the AF DAC mute, once per batch; no restart. */
+        if (scanFastReg30Chip != scanFastReg30) {
+            BK4819_WriteRegister(BK4819_REG_30, scanFastReg30);
+            scanFastReg30Chip = scanFastReg30;
+        }
+        return;
+    }
+
     BK4819_WriteRegister(BK4819_REG_30, 0);
     BK4819_WriteRegister(BK4819_REG_30, scanFastReg30);
+    scanFastReg30Chip = scanFastReg30;
 }
 
 const VFO_Info_t *CHFRSCANNER_GetScanDisplayVfo(void)
@@ -530,7 +592,10 @@ static uint16_t ScanFastGetNoiseTrigger(void)
  * so the scanner and the audio agree on what "a signal" is. */
 static uint16_t ScanFastReceiveMark(void)
 {
-    return rx_squelch_open_mark_now();
+    /* The BK4829's own scale, at the probed band: the *active* lane's mark is
+     * on the BK4815's 7-bit scale when the VFO is on that chip, and on the
+     * receiver's band rather than the probe's. */
+    return rx_squelch_open_mark_for(false, scanFastMarkFreq);
 }
 
 /* Squelch off (level 0) keeps the K1's rule: no fast precheck at all. */
@@ -599,6 +664,40 @@ static bool ScanFastIsCandidate(uint16_t rssi)
         scanFastNoiseFloor = (uint16_t)((7u * scanFastNoiseFloor + rssi + 4u) >> 3);
 
     return false;
+}
+
+/* The single-lane FAST precheck probes the chip the full tune will land on --
+ * the selected VFO's transceiver (rx_scan_commit()).  It used to probe the
+ * BK4829 unconditionally: with the VFO on the BK4815 that chip's receive-path
+ * pins are set for the BK4815 lane (~16 dB down on the BK4829 at VHF) and the
+ * mark was on the other chip's scale. */
+static bool ScanFastLaneIs4815(void)
+{
+    return SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815;
+}
+
+/* One BK4815 probe: tune + band, the fixed settle, a discarded first read. */
+static uint16_t ScanFast4815Read(uint32_t frequency)
+{
+    bk4815_set_frequency(frequency, false);
+    bk4815_set_band((frequency >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+    SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
+    bk4815_read_rssi();
+    return (uint16_t)(bk4815_read_rssi() & 0x7fu);
+}
+
+/* A BK4815-lane candidate: at or over the lane's mark on two probes.  The
+ * confirmation keeps a single noisy sample from costing a full tune.  `display` gets the reading scaled
+ * into the 9-bit sparkline range. */
+static bool ScanFast4815Probe(uint32_t frequency, uint16_t *display)
+{
+    const uint16_t mark = rx_squelch_open_mark_for(true, frequency);
+    const uint16_t raw  = ScanFast4815Read(frequency);
+
+    if (display)
+        *display = (uint16_t)(raw * SCAN_FAST4815_RSSI_SCALE);
+
+    return raw >= mark && ScanFast4815Read(frequency) >= mark;
 }
 
 static void ScanFastApplyChannelShape(ModulationMode_t modulation)
@@ -699,7 +798,7 @@ static scan_fast_result_t ScanRangeFastPrecheck(void)
     // Mute AF DAC during the precheck sweep: avoids audio glitches and
     // saves a few uA on each silent step. The bit is restored on the real
     // tune by RADIO_SetupRegisters() in NextFreqChannel().
-    scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
+    ScanFastSeedReg30();
 
     for (uint8_t i = 0; i < SCAN_FAST_PRECHECK_STEPS; ++i)
     {
@@ -719,14 +818,40 @@ static scan_fast_result_t ScanRangeFastPrecheck(void)
             ScanFastResetState();
         }
 
+        if (ScanFastLaneIs4815())
+        {
+            uint16_t display = 0;
+            const bool hit = ScanFast4815Probe(freq, &display);
+
+            if (scanTrace)
+                uart_printf("rng %u 4815 rssi %u mark %u -> %s\n", (unsigned)freq,
+                            (unsigned)(display / SCAN_FAST4815_RSSI_SCALE),
+                            (unsigned)rx_squelch_open_mark_for(true, freq),
+                            hit ? "HIT" : "-");
+            scan_candidate_rate_add(&scanCandidateRate, 1u);
+#ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
+            ScanRssiSparklinePush(display);
+#endif
+            if (hit)
+                return SCAN_FAST_CANDIDATE;
+            continue;
+        }
+
         ScanFastTune(freq);
 
         const uint16_t rssi = ScanFastReadCandidateRssi();
+        const uint16_t trace_floor = scanFastNoiseFloor;
+        const bool     hit = ScanFastIsCandidate(rssi);
+
+        if (scanTrace)
+            uart_printf("rng %u 4829 rssi %u floor %u mark %u -> %s\n", (unsigned)freq,
+                        (unsigned)rssi, (unsigned)trace_floor,
+                        (unsigned)ScanFastReceiveMark(), hit ? "HIT" : "-");
         scan_candidate_rate_add(&scanCandidateRate, 1u);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
         ScanRssiSparklinePush(rssi);
 #endif
-        if (ScanFastIsCandidate(rssi))
+        if (hit)
         {
             ScanRangeFastRefineCandidate(rssi);
             return SCAN_FAST_CANDIDATE;
@@ -738,139 +863,6 @@ static scan_fast_result_t ScanRangeFastPrecheck(void)
 #endif
 
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
-/* Listen-while-scanning (`SetScn = LISTEN`): the selected VFO keeps receiving
- * on its own transceiver while the other one sweeps the range.  Only the scan
- * lane's chip is written:
- *   - the listen lane is left exactly as the coordinator tuned it, so the
- *     poller's RSSI/squelch/audio keep working on it;
- *   - the AF DAC is not muted (unlike the FAST precheck): the listen lane's
- *     audio reaches the amplifier through that node;
- *   - probes outside the listen lane's band are skipped, because a cross-band
- *     probe would move the shared front-end path under the receiver.
- * The walk still uses gRxVfo as its cursor (that is how the K1's range scan
- * steps), which is why rx_service() must not re-tune the lanes while a scan is
- * running -- it yields, see rx.c.  See
- * docs/superpowers/plans/2026-10-19-listen-while-scanning.md. */
-/* One LISTEN probe of the scan lane, returning its raw RSSI (9-bit on the
- * BK4829, 7-bit on the BK4815).  The candidate decision is made by the caller,
- * which also re-probes before accepting a hit: a single noise sample used to
- * move the listen VFO onto a non-signal and the scan then sat there ("the
- * sweep does not resume", radio 2026-10-22). */
-static uint16_t ScanListenProbe(uint32_t freq, bool listen4815, bool listen_uhf)
-{
-    if (listen4815) {
-        /* Scan lane: the BK4829. */
-        BK4819_SetFrequency(freq);
-        return ScanFastReadRssi();
-    }
-
-    /* Scan lane: the BK4815. */
-    bk4815_set_frequency(freq, false);
-    bk4815_set_band(listen_uhf ? 0x0Au : 0x11u);
-    SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
-    bk4815_read_rssi();                       /* discard the stale read */
-    return (uint16_t)(bk4815_read_rssi() & 0x7fu);
-}
-
-static scan_fast_result_t ScanRangeFastPrecheckListen(void)
-{
-    const bool     listen4815 = (SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) == RF_XCVR_BK4815);
-    const uint32_t listen_f   = gEeprom.VfoInfo[gEeprom.RX_VFO].freq_config_RX.Frequency;
-    const bool     listen_uhf = (listen_f >= PA_BAND_SPLIT);
-
-    if (!gScanRangeStart)
-        return SCAN_FAST_DISABLED;
-
-    if (!ScanFastSquelchEnabled())
-        return SCAN_FAST_DISABLED;
-
-    /* The walk below uses gRxVfo as its cursor, and gRxVfo *is* the listen
-     * lane's VFO, so every quiet batch would leave the receiver tuned to the
-     * last probe: radio 2026-10-22 measured the listen VFO 75 kHz off its
-     * channel after one scan, carrier lost (0x67 269 -> 95, squelch closed).
-     * Save the record and put it back when the batch finds nothing; a hit is
-     * left in place for the caller's full tune. */
-    const FREQ_Config_t saved_rx = gRxVfo->freq_config_RX;
-    bool hit = false;
-
-    /* Give the walk the saved cursor (0 = the listen frequency, via the record
-     * just saved) and let it advance gRxVfo; the listen record is put back at
-     * the end. */
-    if (scanListenCursor != 0u) {
-        gRxVfo->freq_config_RX.Frequency = scanListenCursor;
-        RADIO_ApplyOffset(gRxVfo);
-    }
-
-    for (uint8_t i = 0; i < SCAN_FAST_PRECHECK_STEPS; ++i)
-    {
-        gRxVfo->freq_config_RX.Frequency = ScanRangeNextFrequency();
-        RADIO_ApplyOffset(gRxVfo);
-
-        const uint32_t freq = gRxVfo->pRX->Frequency;
-
-        /* Wrap detection, as in ScanRangeFastPrecheck(). */
-        if (scanFastPrevFrequency != 0 &&
-            ((gScanStateDir > 0 && freq < scanFastPrevFrequency) ||
-             (gScanStateDir < 0 && freq > scanFastPrevFrequency)))
-        {
-            ScanFastResetState();
-        }
-
-        /* Stay in the listen lane's band: a probe elsewhere would move the
-         * shared band path and make the receiver deaf for that step. */
-        if ((freq >= PA_BAND_SPLIT) != listen_uhf)
-            continue;
-
-        uint16_t       rssi;
-        bool           is_hit;
-        const uint16_t mark4815 = rx_squelch_open_mark_from_floor(true, listen_uhf,
-                                                                 gEeprom.SQUELCH_LEVEL, 0u);
-
-        {
-            const uint16_t raw = ScanListenProbe(freq, listen4815, listen_uhf);
-
-            rssi   = listen4815 ? raw : (uint16_t)(raw * SCAN_FAST4815_RSSI_SCALE);
-            is_hit = listen4815 ? ScanFastIsCandidate(raw) : (raw >= mark4815);
-
-            if (is_hit) {
-                /* Confirm on a second probe before moving the receiver. */
-                const uint16_t again = ScanListenProbe(freq, listen4815, listen_uhf);
-
-                is_hit = listen4815 ? ScanFastIsCandidate(again) : (again >= mark4815);
-            }
-        }
-
-        scan_candidate_rate_add(&scanCandidateRate, 1u);
-#ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
-        ScanRssiSparklinePush(rssi);
-#endif
-
-        if (is_hit) {
-            hit = true;
-            break;
-        }
-    }
-
-    /* Where the walk got to becomes the next batch's start; the listen VFO goes
-     * back to its own channel either way (a hit leaves it for the caller's full
-     * tune below, which re-applies the hit frequency itself). */
-    scanListenCursor = gRxVfo->freq_config_RX.Frequency;
-    gRxVfo->freq_config_RX = saved_rx;
-    RADIO_ApplyOffset(gRxVfo);
-
-    if (hit) {
-        uart_printf("\nLISTEN hit %u.%05u MHz on the %s lane\n",
-                    (unsigned)(scanListenCursor / 100000u),
-                    (unsigned)(scanListenCursor % 100000u),
-                    listen4815 ? "BK4829" : "BK4815");
-        gRxVfo->freq_config_RX.Frequency = scanListenCursor;
-        RADIO_ApplyOffset(gRxVfo);
-        return SCAN_FAST_CANDIDATE;
-    }
-
-    return SCAN_FAST_QUIET_BATCH;
-}
-
 static bool MemChannelFastPrecheck(uint16_t channel)
 {
     uint32_t frequency;
@@ -888,19 +880,35 @@ static bool MemChannelFastPrecheck(uint16_t channel)
         return true;
     }
 
-    ScanFastApplyChannelShape(modulation);
+    bool     hit;
+    uint16_t rssi = 0;
+    if (ScanFastLaneIs4815())
+    {
+        hit = ScanFast4815Probe(frequency, &rssi);
+    }
+    else
+    {
+        ScanFastApplyChannelShape(modulation);
 
-    // Mute AF DAC for the same reason as in ScanRangeFastPrecheck().
-    scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
-    ScanFastTune(frequency);
+        // Mute AF DAC for the same reason as in ScanRangeFastPrecheck().
+        ScanFastSeedReg30();
+        ScanFastTune(frequency);
 
-    const uint16_t rssi = ScanFastReadCandidateRssi();
+        rssi = ScanFastReadCandidateRssi();
+        hit  = ScanFastIsCandidate(rssi);
+    }
+
+
+    if (scanTrace)
+        uart_printf("mem ch%u %u %s rssi %u -> %s\n", (unsigned)(channel + 1u),
+                    (unsigned)frequency, ScanFastLaneIs4815() ? "4815(x4)" : "4829",
+                    (unsigned)rssi, hit ? "HIT" : "-");
     scan_candidate_rate_add(&scanCandidateRate, 1u);
 #ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
     ScanRssiSparklinePush(rssi);
 #endif
 
-    if (ScanFastIsCandidate(rssi))
+    if (hit)
     {
         scanFastLastFullTuneCandidate = true;
         return true;  // signal detected: let the full tune path follow
@@ -931,327 +939,16 @@ static void SetMemScanProgressChannel(uint16_t channel)
 #endif
 
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
-/* The "Both" scan: two lanes, one per transceiver.  The candidate stream is
- * split by ordinal (scan_dual_assign_candidate) and each lane keeps its own
- * RSSI floor, because the BK4829 (0x67) and BK4815 (0x44) report RSSI on
- * different scales.  The RF path is shared, so the lanes are time-multiplexed,
- * not simultaneous; this whole path is radio-validated work (docs/ra89r_scan.md).
- *
- * Only the frequency range is interleaved for now: the scan list keeps the K1's
- * single-lane fast precheck, which the spec allows as the conservative
- * fallback, so list priority/rotation stays exactly as validated. */
-static scan_dual_state_t scanBothState;
-static uint8_t           scanBothLastBand = 0xFFu;
-static uint8_t           scanBothBandWritten = 0xFFu;   /* last 0x75 band value */
-static uint32_t          scanBothPrevFrequency;
-
-/* Where the dual-lane batch spends its time, printed by console J: the
- * candidate pull, the tunes and the reads, accumulated in microseconds plus a
- * batch counter.  Profiling only -- it never changes a decision. */
-static uint32_t scanBothProfUs[5];      /* 0 pull, 1 tune, 2 read, 3 wall, 4 gap */
-static uint32_t scanBothProfBatches;
-static uint32_t scanBothProfProbes;
-static uint32_t scanBothProfLastEnd;
-
-void CHFRSCANNER_GetScanBothProfile(uint32_t us[5], uint32_t *batches,
-                                    uint32_t *probes)
+/* Diagnostics (console 'J'): probes and wall time since the scan started. */
+void CHFRSCANNER_GetScanRate(scan_candidate_rate_stats_t *out)
 {
-    unsigned i;
-
-    for (i = 0; i < 5u && us != 0; i++)
-        us[i] = scanBothProfUs[i];
-    if (batches != 0)
-        *batches = scanBothProfBatches;
-    if (probes != 0)
-        *probes = scanBothProfProbes;
-}
-
-void CHFRSCANNER_ResetScanBothProfile(void)
-{
-    unsigned i;
-
-    for (i = 0; i < 5u; i++)
-        scanBothProfUs[i] = 0u;
-    scanBothProfBatches = 0u;
-    scanBothProfProbes  = 0u;
-    scanBothProfLastEnd = 0u;
-}
-
-static bool ScanBothEnabled(void)
-{
-    return ScanFastEnabled() &&
-           gSetting_set_scn == (uint8_t)SCAN_MODE_FAST_BOTH;
-}
-
-static void ScanBothReset(void)
-{
-    scan_dual_reset(&scanBothState);
-    scanBothState.mode   = (uint8_t)SCAN_MODE_FAST_BOTH;
-    scanBothState.active = true;
-    scanBothLastBand     = 0xFFu;
-    scanBothBandWritten  = 0xFFu;
-    scanBothPrevFrequency = 0;
-}
-
-#ifdef ENABLE_SCAN_RANGES
-/* Point the shared front-end at a candidate's band and tune that candidate's
- * chip.  The band switch only happens when the band actually changes. */
-static void ScanBothTune(const scan_candidate_t *c)
-{
-    const uint32_t t0 = systick_micros();
-
-    if (c->band != scanBothLastBand) {
-        pa_select_band(c->frequency_10hz);
-        scanBothLastBand = c->band;
-    }
-
-    if (scan_dual_assign_candidate(c) == SCAN_LANE_BK4815) {
-        bk4815_set_frequency(c->frequency_10hz, false);
-        if (c->band != scanBothBandWritten) {
-            bk4815_set_band((c->frequency_10hz >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
-            scanBothBandWritten = c->band;
-        }
-    } else {
-        ScanFastTune(c->frequency_10hz);
-    }
-
-    scanBothProfUs[1] += systick_micros() - t0;
-}
-
-/* Read a tuned lane's RSSI.  The BK4829 read keeps its glitch-indicator settle
- * and near-candidate re-check; the BK4815 read keeps its fixed settle and the
- * discarded first sample (see ScanBothProbe()'s old form). */
-static uint16_t ScanBothRead(scan_lane_chip_t lane, bool already_settled)
-{
-    const uint32_t t0 = systick_micros();
-    uint16_t       rssi;
-
-    if (lane == SCAN_LANE_BK4815) {
-        /* The fixed settle is only needed when nothing else covered it: in a
-         * pair the BK4829 read runs first and takes longer than this delay. */
-        if (!already_settled)
-            SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
-        bk4815_read_rssi();          /* discard the first, possibly stale read */
-        rssi = bk4815_read_rssi();
-    } else {
-        rssi = ScanFastReadCandidateRssi();
-    }
-
-    scanBothProfUs[2] += systick_micros() - t0;
-    return rssi;
-}
-
-/* One candidate, tune then read: the confirmation probe and the non-pipelined
- * fallback. */
-static uint16_t ScanBothProbeOne(const scan_candidate_t *c)
-{
-    ScanBothTune(c);
-    return ScanBothRead(scan_dual_assign_candidate(c), false);
-}
-
-/* A pair of consecutive candidates on different chips in the same band is
- * probed as a pipeline: tune both, then read both.  The second tune's bus time
- * (and, for a BK4815 in the pair, its settle delay) covers the first chip's
- * settling, so the pair costs less than two independent probes.  The shared
- * front end forbids pairing across bands -- a band switch would move the path
- * under the first chip before it is read -- so those fall back to one probe at
- * a time. */
-static bool ScanBothPairUsable(const scan_candidate_t *a, const scan_candidate_t *b)
-{
-    return a->band == b->band &&
-           scan_dual_assign_candidate(a) != scan_dual_assign_candidate(b);
-}
-
-/* Tune and read a pair; `rssi[0]`/`rssi[1]` follow the candidates' order.  The
- * BK4815 is always tuned and read last, so the BK4829's read runs after both
- * tunes and its duration covers the BK4815's settle -- which is therefore
- * skipped.  Only the stranded 4815 case (a pair that could not be pipelined)
- * still pays the fixed delay. */
-static void ScanBothProbePair(const scan_candidate_t *a, const scan_candidate_t *b,
-                              uint16_t *rssi)
-{
-    const scan_lane_chip_t lane_a = scan_dual_assign_candidate(a);
-    const scan_lane_chip_t lane_b = scan_dual_assign_candidate(b);
-
-    if (lane_a == SCAN_LANE_BK4815) {
-        ScanBothTune(b);
-        ScanBothTune(a);
-        rssi[1] = ScanBothRead(lane_b, false);   /* BK4829: covers a's settle */
-        rssi[0] = ScanBothRead(lane_a, true);
-    } else {
-        ScanBothTune(a);
-        ScanBothTune(b);
-        rssi[0] = ScanBothRead(lane_a, false);   /* BK4829: covers b's settle */
-        rssi[1] = ScanBothRead(lane_b, true);
-    }
-}
-
-/* How many candidate pairs one interval probes.  The K1's scanner runs one
- * precheck batch per app pass, and everything outside the precheck (the 10 ms
- * scheduler slot plus the throttled redraw) was ~10.6 ms per batch on
- * 2026-10-21, so a longer batch amortizes it: 48 candidates at 27.8 ms in the
- * batch plus the gap.  A hit is still reported at the end of the batch, i.e.
- * within ~40 ms of sweep.  */
-#define SCAN_BOTH_PRECHECK_PAIRS 24u
-
-/* One interval of the dual-lane range sweep, in ordinal order; the earliest
- * ordinal wins if both lanes hit.  No candidate array is kept: the pairs are
- * pulled and evaluated as they are probed, so the batch costs no extra stack. */
-static scan_fast_result_t ScanBothFastPrecheck(void)
-{
-    const unsigned   target = 2u * SCAN_BOTH_PRECHECK_PAIRS;
-    unsigned         pulled = 0;
-    bool             have_hit = false;
-    uint32_t         best_ordinal = 0;
-    uint32_t         best_frequency = 0;
-    scan_lane_chip_t sel = SCAN_LANE_NONE;
-
-    if (!ScanFastSquelchEnabled())
-        return SCAN_FAST_DISABLED;
-
-    /* Seed the BK4829 control register the way ScanRangeFastPrecheck does, with
-     * the AF DAC bit cleared: ScanFastTune() writes 0 and then this value, so
-     * without it the chip would be left with 0x30 = 0 (disabled). */
-    scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
-    scanBothState.selected_hit = SCAN_LANE_NONE;
-
-    {
-        const uint32_t batch_t0 = systick_micros();
-
-        if (scanBothProfLastEnd != 0u)
-            scanBothProfUs[4] += batch_t0 - scanBothProfLastEnd;
-
-    while (pulled < target) {
-        scan_candidate_t c[2];
-        uint16_t         rssi[2] = { 0u, 0u };
-        unsigned         have    = 0;
-        unsigned         k;
-        const uint32_t   pull_t0 = systick_micros();
-
-        while (have < 2u && pulled < target &&
-               CHFRSCANNER_NextCandidate(&c[have])) {
-            have++;
-            pulled++;
-        }
-        scanBothProfUs[0] += systick_micros() - pull_t0;
-        if (have == 0u)
-            break;
-
-        scanBothProfProbes += have;
-
-        if (have == 2u && ScanBothPairUsable(&c[0], &c[1]))
-            ScanBothProbePair(&c[0], &c[1], rssi);
-        else {
-            for (k = 0; k < have; k++) {
-                ScanBothTune(&c[k]);
-                rssi[k] = ScanBothRead(scan_dual_assign_candidate(&c[k]), false);
-            }
-        }
-
-        for (k = 0; k < have; k++) {
-            const scan_lane_chip_t lane = scan_dual_assign_candidate(&c[k]);
-            scan_lane_state_t     *lane_state = &scanBothState.lanes[lane];
-            const bool             is_4815 = (lane == SCAN_LANE_BK4815);
-            const uint16_t         squelch = is_4815
-                                                 ? rx_squelch_open_mark(true,
-                                                                       c[k].frequency_10hz >= PA_BAND_SPLIT,
-                                                                       gEeprom.SQUELCH_LEVEL)
-                                                 : ScanFastReceiveMark();
-            const uint16_t         noise_margin = is_4815 ? SCAN_FAST4815_RSSI_MARGIN
-                                                          : SCAN_FAST_RSSI_MARGIN;
-            const uint16_t         squelch_margin = is_4815 ? SCAN_FAST4815_SQUELCH_MARGIN
-                                                            : SCAN_FAST_SQUELCH_MARGIN;
-            const uint16_t         weak_margin = is_4815 ? SCAN_FAST4815_WEAK_MARGIN
-                                                         : SCAN_FAST_WEAK_MARGIN;
-
-            scan_candidate_rate_add(&scanCandidateRate, 1u);
-
-#ifdef ENABLE_FEAT_F4HWN_SCAN_RSSI
-            /* Feed the graph from both lanes.  The BK4829 reports 9-bit RSSI
-             * (0x67) and the BK4815 7-bit (0x44), so the BK4815 value is scaled
-             * into the same range; otherwise the series would sawtooth as lanes
-             * alternate. */
-            ScanRssiSparklinePush(is_4815
-                                      ? (uint16_t)(rssi[k] * SCAN_FAST4815_RSSI_SCALE)
-                                      : rssi[k]);
-#endif
-
-            /* A range wrap (forward and lower, or backward and higher) is a new
-             * pass: re-warm both lanes' floors, as the Default precheck does. */
-            if (scanBothPrevFrequency != 0 &&
-                ((gScanStateDir > 0 && c[k].frequency_10hz < scanBothPrevFrequency) ||
-                 (gScanStateDir < 0 && c[k].frequency_10hz > scanBothPrevFrequency)))
-            {
-                ScanBothReset();
-                scanFastReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~BK4819_REG_30_MASK_ENABLE_AF_DAC;
-            }
-            scanBothPrevFrequency = c[k].frequency_10hz;
-
-            lane_state->last_frequency_10hz = c[k].frequency_10hz;
-            lane_state->candidates++;
-
-            if (scan_dual_rssi_candidate(lane_state, rssi[k], squelch,
-                                         noise_margin, squelch_margin, weak_margin)) {
-                /* Confirm on one more probe before the expensive full tune: a
-                 * single noisy sample used to cost a whole re-tune every batch
-                 * (see SCAN_BOTH_CONFIRM_RSSI_DROP). */
-                const uint16_t again = ScanBothProbeOne(&c[k]);
-                const bool     still =
-                    (again >= ScanFastSaturatingAdd(lane_state->noise_floor, noise_margin)) &&
-                    (again >= ScanFastSaturatingSub(squelch, squelch_margin));
-
-                if (still && (!have_hit || c[k].ordinal < best_ordinal)) {
-                    have_hit       = true;
-                    best_ordinal   = c[k].ordinal;
-                    best_frequency = c[k].frequency_10hz;
-                    sel            = lane;
-                }
-            }
-        }
-    }
-
-    if (pulled == 0u)
-        return SCAN_FAST_DISABLED;
-
-    scanBothProfBatches++;
-    scanBothProfUs[3] += systick_micros() - batch_t0;
-    scanBothProfLastEnd = systick_micros();
-
-    if (have_hit) {
-        gRxVfo->freq_config_RX.Frequency = best_frequency;
-        scanBothState.selected_hit = sel;
-        rx_set_scan_source_override(sel == SCAN_LANE_BK4815
-                                        ? RX_SCAN_SOURCE_BK4815
-                                        : RX_SCAN_SOURCE_BK4829);
-        return SCAN_FAST_CANDIDATE;
-    }
-
-    return SCAN_FAST_QUIET_BATCH;
-    }   /* batch_t0 scope */
-}
-#endif /* ENABLE_SCAN_RANGES */
-
-/* Diagnostics (console 'J'): the dual-lane snapshot.  `active` is only true
- * while a Both scan is actually running. */
-bool CHFRSCANNER_GetScanDualStats(scan_dual_stats_t *out)
-{
-    if (out == 0)
-        return false;
-
-    scan_dual_get_stats(&scanBothState, out);
-    out->mode   = gSetting_set_scn;
-    out->active = scanBothState.active && ScanBothEnabled() && gScanStateDir != SCAN_OFF;
-    scan_candidate_rate_snapshot(&scanCandidateRate, systick_millis(), &out->rate);
-    return out->active;
+    scan_candidate_rate_snapshot(&scanCandidateRate, systick_millis(), out);
 }
 #else
-bool CHFRSCANNER_GetScanDualStats(scan_dual_stats_t *out)
+void CHFRSCANNER_GetScanRate(scan_candidate_rate_stats_t *out)
 {
-    if (out != 0) {
+    if (out != 0)
         memset(out, 0, sizeof *out);
-        out->selected_hit = SCAN_LANE_NONE;
-    }
-    return false;
 }
 #endif /* ENABLE_FEAT_F4HWN_SCAN_FASTER */
 
@@ -1277,7 +974,6 @@ void CHFRSCANNER_BenchmarkArm(uint32_t start_10hz, uint32_t stop_10hz)
 {
     const uint8_t rx = gEeprom.RX_VFO;
 
-    CHFRSCANNER_ResetScanBothProfile();
     scanBench.armed        = true;
     scanBench.rx_vfo       = rx;
     scanBench.screen       = gEeprom.ScreenChannel[rx];
@@ -1301,27 +997,27 @@ void CHFRSCANNER_BenchmarkArm(uint32_t start_10hz, uint32_t stop_10hz)
     gScanRangeStop  = stop_10hz;
 }
 
-void CHFRSCANNER_BenchmarkRun(uint8_t mode)
+void CHFRSCANNER_BenchmarkRun(void)
 {
     if (!scanBench.armed)
         return;
 
-    gSetting_set_scn = mode ? (uint8_t)SCAN_MODE_FAST_BOTH : (uint8_t)SCAN_MODE_FAST;
+    gSetting_set_scn = (uint8_t)SCAN_MODE_FAST;
     CHFRSCANNER_Start(true, SCAN_FWD);
 }
 
 void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out)
 {
-    scan_dual_stats_t st;
+    scan_candidate_rate_stats_t st;
 
     if (gScanStateDir != SCAN_OFF)
         CHFRSCANNER_Stop();
 
-    CHFRSCANNER_GetScanDualStats(&st);
+    CHFRSCANNER_GetScanRate(&st);
     if (out != 0) {
-        out->probes            = st.rate.candidates;
-        out->elapsed_ms        = st.rate.elapsed_ms;
-        out->probes_per_second = st.rate.candidates_per_second;
+        out->probes            = st.candidates;
+        out->elapsed_ms        = st.elapsed_ms;
+        out->probes_per_second = st.candidates_per_second;
     }
 }
 
@@ -1351,7 +1047,7 @@ void CHFRSCANNER_BenchmarkArm(uint32_t start_10hz, uint32_t stop_10hz)
     (void)stop_10hz;
 }
 
-void CHFRSCANNER_BenchmarkRun(uint8_t mode) { (void)mode; }
+void CHFRSCANNER_BenchmarkRun(void) { }
 
 void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out)
 {
@@ -1363,19 +1059,6 @@ void CHFRSCANNER_BenchmarkFinish(scan_bench_result_t *out)
 }
 
 void CHFRSCANNER_BenchmarkDisarm(void) { }
-
-void CHFRSCANNER_GetScanBothProfile(uint32_t us[5], uint32_t *batches,
-                                    uint32_t *probes)
-{
-    if (us != 0)
-        us[0] = us[1] = us[2] = us[3] = us[4] = 0u;
-    if (batches != 0)
-        *batches = 0u;
-    if (probes != 0)
-        *probes = 0u;
-}
-
-void CHFRSCANNER_ResetScanBothProfile(void) { }
 #endif
 
 #if defined(ENABLE_FEAT_F4HWN_RESUME_STATE) || defined(ENABLE_SCAN_RANGES)
@@ -1411,8 +1094,6 @@ void CHFRSCANNER_Start(const bool storeBackupSettings, const int8_t scan_directi
     gNextMrChannel   = gRxVfo->CHANNEL_SAVE;
     currentScanList = SCAN_NEXT_CHAN_SCANLIST1;
     gScanStateDir    = scan_direction;
-    scanCandidateOrdinal = 0;
-    rx_clear_scan_source_override();
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
     if (storeBackupSettings)
         scan_candidate_rate_reset(&scanCandidateRate, systick_millis());
@@ -1498,10 +1179,10 @@ void CHFRSCANNER_ContinueScanning(void)
 
 void CHFRSCANNER_ContinueScanning(void)
 {
-    /* A resumed scan is a fresh pass: drop any paused-hit receive override so
-     * the receiver follows the saved VFO route again until the next hit. */
-    rx_clear_scan_source_override();
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+    if (scanTrace)
+        uart_printf("CONT fn %u sql %u rssi %u\n", (unsigned)gCurrentFunction,
+                    (unsigned)g_SquelchLost, (unsigned)rx_rssi());
     if (scanFastLastFullTuneCandidate &&
         gCurrentFunction != FUNCTION_INCOMING &&
         !g_SquelchLost)
@@ -1611,7 +1292,8 @@ void CHFRSCANNER_Stop(void)
     }
     
     gScanStateDir = SCAN_OFF;
-    rx_clear_scan_source_override();
+    /* The scan wrote the chips under the coordinator: re-apply both lanes. */
+    rf_dual_reapply();
 #if defined(ENABLE_FEAT_F4HWN_SCAN_FASTER) && defined(ENABLE_FEAT_F4HWN_SCAN_RSSI)
     ScanRssiSparklineReset();
 #endif
@@ -1666,63 +1348,7 @@ static void NextFreqChannel(void)
 #ifdef ENABLE_SCAN_RANGES
     if(gScanRangeStart) {
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
-        if (ScanBothEnabled())
-        {
-            const scan_fast_result_t bothResult = ScanBothFastPrecheck();
-
-            if (bothResult == SCAN_FAST_QUIET_BATCH)
-            {
-                scanFastLastFullTuneCandidate = false;
-                gScanPauseDelayIn_10ms = 1;
-                ScanRequestDisplay();
-                return;
-            }
-
-            if (bothResult == SCAN_FAST_DISABLED)
-            {
-                scanFastLastFullTuneCandidate = false;
-                gRxVfo->freq_config_RX.Frequency = ScanRangeNextFrequency();
-            }
-            else
-            {
-                scanFastLastFullTuneCandidate = true;
-            }
-        }
-        else if (ScanListenEnabled())
-        {
-            /* Priority for the listener: while its squelch is open, do not
-             * touch the other chip at all.  Its LO stepping through the shared
-             * front end perturbs the listener -- measured 2026-10-22, a
-             * steady -20 dBm carrier on 446.00625 swung 0x67 between 269 and
-             * 86 as the BK4815 swept 445.5-446.5 -- so a sweep during a
-             * reception is audible as chopping.  The sweep resumes when the
-             * listen lane goes quiet. */
-            if (!rx_squelch_quiet(5u)) {
-                gScanPauseDelayIn_10ms = 1;
-                return;
-            }
-
-            const scan_fast_result_t listenResult = ScanRangeFastPrecheckListen();
-
-            if (listenResult == SCAN_FAST_QUIET_BATCH)
-            {
-                scanFastLastFullTuneCandidate = false;
-                gScanPauseDelayIn_10ms = 1;
-                ScanRequestDisplay();
-                return;
-            }
-
-            if (listenResult == SCAN_FAST_DISABLED)
-            {
-                scanFastLastFullTuneCandidate = false;
-                gRxVfo->freq_config_RX.Frequency = ScanRangeNextFrequency();
-            }
-            else
-            {
-                scanFastLastFullTuneCandidate = true;
-            }
-        }
-        else if (ScanFastEnabled())
+        if (ScanFastEnabled())
         {
             const scan_fast_result_t fastResult = ScanRangeFastPrecheck();
 
@@ -1765,6 +1391,14 @@ static void NextFreqChannel(void)
     RADIO_ApplyOffset(gRxVfo);
     RADIO_ConfigureSquelchAndOutputPower(gRxVfo);
     RADIO_SetupRegisters(true);
+    /* Put the receiving chip on the candidate (see rx_scan_commit()). */
+    rx_scan_commit(gRxVfo->pRX->Frequency);
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+    if (scanTrace && scanFastLastFullTuneCandidate)
+        uart_printf("TUNE %u on %s, 0x0C %04X\n",
+                    (unsigned)gRxVfo->pRX->Frequency, rx_audio_is_4815() ? "4815" : "4829",
+                    (unsigned)BK4819_ReadRegister(BK4819_REG_0C));
+#endif
 
 #ifdef ENABLE_FASTER_CHANNEL_SCAN
     gScanPauseDelayIn_10ms = 9;   // 90ms
@@ -1778,8 +1412,7 @@ static void NextFreqChannel(void)
 /* The memory-scan cursor: pick the next valid list channel, honouring the
  * configured scan list, the two priority channels, the direction and the wrap.
  * It updates currentScanList/gNextMrChannel exactly as the K1 does; the RF work
- * and the fast precheck stay in NextMemChannel(), and CHFRSCANNER_NextCandidate
- * reuses it for the dual-lane path. */
+ * and the fast precheck stay in NextMemChannel(). */
 static uint16_t CHFRSCANNER_NextMemCursor(const bool enabled)
 {
     static uint16_t prev_mr_chan = 0;
@@ -1929,6 +1562,14 @@ static void NextMemChannel(void)
 
         RADIO_ConfigureChannel(gEeprom.RX_VFO, VFO_CONFIGURE_RELOAD);
         RADIO_SetupRegisters(true);
+        /* Put the receiving chip on the channel (see rx_scan_commit()). */
+        rx_scan_commit(gRxVfo->pRX->Frequency);
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
+        if (scanTrace)
+            uart_printf("TUNE ch%u %u on %s, 0x0C %04X\n", (unsigned)(gNextMrChannel + 1u),
+                        (unsigned)gRxVfo->pRX->Frequency, rx_audio_is_4815() ? "4815" : "4829",
+                        (unsigned)BK4819_ReadRegister(BK4819_REG_0C));
+#endif
 
         gUpdateDisplay = true;
     }
@@ -1946,47 +1587,4 @@ static void NextMemChannel(void)
         if (++currentScanList >= SCAN_NEXT_NUM)
             currentScanList = SCAN_NEXT_CHAN_SCANLIST1;  // back round we go
 #endif
-}
-
-/* The shared candidate cursor the dual-lane scanner draws from.  It advances
- * the same K1 order as NextFreqChannel()/NextMemChannel() -- range
- * step/limits/skip for a frequency sweep, list membership/priority/direction/
- * wrap for channels -- and tags each item with a monotonically increasing
- * ordinal.  It does not tune or precheck; the caller does.  Returns false when
- * there is nothing to visit. */
-bool CHFRSCANNER_NextCandidate(scan_candidate_t *out)
-{
-    if (out == 0)
-        return false;
-
-#ifdef ENABLE_SCAN_RANGES
-    if (gScanRangeStart)
-    {
-        out->frequency_10hz    = ScanRangeNextFrequency();
-        out->channel           = 0;
-        out->band              = (uint8_t)FREQUENCY_GetBand(out->frequency_10hz);
-        out->is_memory_channel = false;
-        out->ordinal           = scanCandidateOrdinal++;
-        return true;
-    }
-#endif
-
-    {
-        const bool     enabled = (gEeprom.SCAN_LIST_DEFAULT > 0 && gEeprom.SCAN_LIST_DEFAULT <= MR_CHANNELS_LIST + 1) ? gEeprom.SCAN_LIST_ENABLED : true;
-        const uint16_t chan    = CHFRSCANNER_NextMemCursor(enabled);
-        ChannelScanDisplayInfo_t info;
-
-        if (!IS_MR_CHANNEL(chan))
-            return false;
-
-        if (!SETTINGS_FetchChannelScanDisplayInfo(gEeprom.RX_VFO, chan, &info))
-            return false;
-
-        out->channel           = chan;
-        out->is_memory_channel = true;
-        out->frequency_10hz    = info.rx.Frequency;
-        out->band              = (uint8_t)FREQUENCY_GetBand(out->frequency_10hz);
-        out->ordinal           = scanCandidateOrdinal++;
-        return true;
-    }
 }

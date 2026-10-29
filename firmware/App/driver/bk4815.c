@@ -155,8 +155,8 @@ void bk4815_set_band(uint16_t band)
  * entry"):
  *
  *   0x01  common: channel spacing, bit 15 = 1 for 25 kHz, 0 for 12.5 kHz.
- *         The stock sends 0x0044 (narrow) or 0x8044 (wide, its channel byte
- *         0x91 == 2); the port picks by the VFO's CHANNEL_BANDWIDTH.
+ *         The stock sends 0x0044 (narrow: its channel byte 0x91 == 2) or
+ *         0x8044 (wide/mid); the port picks by the VFO's CHANNEL_BANDWIDTH.
  *   0x16  VOX module (the stock writes it on receive entry as well)
  *   0x2B  RAMP: ramp up/down enable + speeds
  *   0x6D  PA output power control, the receive value 0x6618

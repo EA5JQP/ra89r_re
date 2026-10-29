@@ -127,6 +127,27 @@ static void test_force_open(void)
     check(!s.open, "it closes on the next absent poll after release");
 }
 
+static void test_scan_mark_scale(void)
+{
+    /* The scanner's BK4829 mark from the measured priors, SQL 5: it must sit
+     * above the band's noise and well under a -30 dBm carrier (187 VHF,
+     * 205+ UHF) -- the old floor-unknown fallback (0xCF) did not. */
+    const uint16_t vhf = rx_squelch_open_mark_from_floor(false, false, 5u,
+                                                         RX_FLOOR_PRIOR_4829_FM_VHF);
+    const uint16_t uhf = rx_squelch_open_mark_from_floor(false, true, 5u,
+                                                         RX_FLOOR_PRIOR_4829_FM_UHF);
+    const uint16_t am  = rx_squelch_open_mark_from_floor(false, false, 5u,
+                                                         RX_FLOOR_PRIOR_4829_AM_VHF);
+    const uint16_t b15 = rx_squelch_open_mark_from_floor(true, true, 5u,
+                                                         RX_FLOOR_PRIOR_4815);
+
+    printf("scanner marks from the priors (SQL 5)\n");
+    check(vhf > RX_FLOOR_PRIOR_4829_FM_VHF && vhf < 187u, "BK4829 VHF FM mark between floor and carrier");
+    check(uhf > RX_FLOOR_PRIOR_4829_FM_UHF && uhf < 187u, "BK4829 UHF FM mark between floor and carrier");
+    check(am  > RX_FLOOR_PRIOR_4829_AM_VHF && am  < 195u, "BK4829 AM mark between floor and carrier");
+    check(b15 > RX_FLOOR_PRIOR_4815 && b15 < 47u,         "BK4815 mark between floor and carrier");
+}
+
 int main(void)
 {
     printf("squelch counter test (the stock's 0..10 shape)\n\n");
@@ -136,6 +157,7 @@ int main(void)
     test_noise_does_not_chatter();
     test_close_from_full();
     test_force_open();
+    test_scan_mark_scale();
 
     printf("\n%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

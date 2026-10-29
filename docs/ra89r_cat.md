@@ -87,7 +87,7 @@ have no FT-817 equivalent, so a host can drive a whole test matrix:
 
 | key | action |
 |---|---|
-| `o` | cycle `SetScn` NORMAL -> FAST -> FAST BOTH -> LISTEN |
+| `o` | toggle `SetScn` NORMAL <-> FAST (FAST BOTH and LISTEN were removed, `ra89r_scan.md`) |
 | `7` | cycle the squelch level 0..9 (prints the marks that result) |
 | `8` | switch the selected VFO A/B (what the physical EXIT does) |
 | `9` / `I` | cycle `TrVfoA` / `TrVfoB` between BK4829 and BK4815 |
