@@ -127,19 +127,6 @@ static void test_force_open(void)
     check(!s.open, "it closes on the next absent poll after release");
 }
 
-static void test_scan_route(void)
-{
-    printf("scan route (which chip a scan's full tune lands on)\n");
-    check(!rx_scan_route_is_4815(RX_SCAN_SOURCE_DEFAULT, false),
-          "no override, BK4829 VFO -> BK4829");
-    check(rx_scan_route_is_4815(RX_SCAN_SOURCE_DEFAULT, true),
-          "no override, BK4815 VFO -> BK4815 (was never retuned)");
-    check(rx_scan_route_is_4815(RX_SCAN_SOURCE_BK4815, false),
-          "BK4815 hit on a BK4829 VFO -> BK4815");
-    check(!rx_scan_route_is_4815(RX_SCAN_SOURCE_BK4829, true),
-          "BK4829 hit on a BK4815 VFO -> BK4829");
-}
-
 static void test_scan_mark_scale(void)
 {
     /* The scanner's BK4829 mark from the measured priors, SQL 5: it must sit
@@ -170,7 +157,6 @@ int main(void)
     test_noise_does_not_chatter();
     test_close_from_full();
     test_force_open();
-    test_scan_route();
     test_scan_mark_scale();
 
     printf("\n%d checks, %d failed\n", checks, failures);

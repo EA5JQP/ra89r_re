@@ -187,7 +187,7 @@ State (each has its own doc — read it before touching the feature):
 | audiocontrol, pa, tx, rx | merged; **transmit works** (voice heard on a second radio) — the measured chain is `driver/pa.c` + `driver/tx.c` (`docs/ra89r_rfpath.md`).  Receive gate: per-(lane, band) noise floor + level margin, driven every poll (`driver/rx.c`, `rx.h`) |
 | bk4829 | merged; the shared 3-wire bus, both transceivers, ids/config/tuning/RSSI validated (`docs/ra89r_bk4829.md`, `docs/ra89r_bk4815.md`) |
 | dual-rf (`driver/rf_dual.c`) | merged; per-VFO transceiver selection, host-tested (`test_rf_dual`) |
-| scan (`app/scan_dual.c`) | merged; dual-transceiver `FAST BOTH` scan **and `LISTEN`**, validated on the radio (`docs/ra89r_scan.md`): 671/s FAST BOTH (1.67x FAST) in both bands, LISTEN pauses the sweep while the listener hears a signal and resumes at 180-436/s |
+| scan (`app/chFrScanner.c`) | `SetScn` NORMAL / FAST on the VFO's own chip; the memory scan locks in both on either transceiver (radio 2026-10-27).  `FAST BOTH` and `LISTEN` were **removed** on `driver/scan-route`: the chips share one set of receive-path pins, so the chip they are not set for hears nothing (`docs/ra89r_scan.md`) |
 | usbc / CAT (`App/cat.c`, `cat_radio.c`) | merged; FT-817 CAT on the USB-C serial port, validated (`docs/ra89r_cat.md`, `ra89r_carserial.md`); enabled by `ENABLE_CAT` in `k1_features.h`, console kept |
 | fm (`driver/bk1080.c`, `app/fm.c`) | merged but **unvalidated on the radio** (`docs/ra89r_bk1080.md`) |
 | airband | merged; the receive demodulation is chosen by band (108.0-137.0 MHz is AM), so an airband range scan demodulates AM; validated on the radio (clean AM tone at boot, a 108-137 scan stops on the carrier) (`docs/ra89r_airband.md`) |

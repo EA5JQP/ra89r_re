@@ -846,20 +846,15 @@ static void bk4815_bench(void)
 /* The scan mode the SetScn menu shows (scan_mode_t). */
 static const char *scan_mode_name(void)
 {
-    switch (gSetting_set_scn) {
-        case SCAN_MODE_FAST_BOTH: return "FAST BOTH";
-        case SCAN_MODE_FAST:      return "FAST";
-        case SCAN_MODE_LISTEN:    return "LISTEN";
-        default:                  return "NORMAL";
-    }
+    return (gSetting_set_scn == (uint8_t)SCAN_MODE_FAST) ? "FAST" : "NORMAL";
 }
 
-/* A controlled Default-vs-Both range-scan comparison, run by the console's 'J'.
- * It forces the selected RX VFO onto a frequency channel over one shared range,
- * then runs each mode for SCAN_BENCH_MS, pumping the same app loop the main loop
- * runs, and reports probes over elapsed wall time.  The timing is wall-clock, so
- * the display and bit-banged bus cost are included, as they are when scanning by
- * hand.  It restores the saved VFO, range and scan mode before returning. */
+/* A controlled FAST range-scan measurement, run by the console's 'J'.  It forces
+ * the selected RX VFO onto a frequency channel over a 1 MHz range, runs FAST for
+ * SCAN_BENCH_MS, pumping the same app loop the main loop runs, and reports
+ * probes over elapsed wall time.  The timing is wall-clock, so the display and
+ * bit-banged bus cost are included, as they are when scanning by hand.  It
+ * restores the saved VFO, range and scan mode before returning. */
 #define SCAN_BENCH_MS 3000u
 
 static void scan_rate_benchmark(void)
@@ -867,11 +862,10 @@ static void scan_rate_benchmark(void)
     const uint32_t step  = gRxVfo->StepFrequency ? gRxVfo->StepFrequency : 2500u;
     const uint32_t start = FREQUENCY_RoundToStep(gRxVfo->freq_config_RX.Frequency, (uint16_t)step);
     const uint32_t stop  = start + 100000u;   /* 1 MHz, in 10 Hz units */
-    static const char *const names[2] = { "FAST     ", "FAST BOTH" };
-    scan_bench_result_t res[2];
-    unsigned m;
+    scan_bench_result_t res;
+    uint32_t t0;
 
-    uart_printf("\nscan benchmark: %u.%05u .. %u.%05u MHz, step %u.%01u kHz, %u ms per mode\n",
+    uart_printf("\nscan benchmark: %u.%05u .. %u.%05u MHz, step %u.%01u kHz, %u ms\n",
                 (unsigned)(start / 100000u), (unsigned)(start % 100000u),
                 (unsigned)(stop / 100000u), (unsigned)(stop % 100000u),
                 (unsigned)(step / 100u), (unsigned)((step % 100u) / 10u),
@@ -880,32 +874,20 @@ static void scan_rate_benchmark(void)
                 (unsigned)gEeprom.SCAN_RESUME_MODE, scan_mode_name());
 
     CHFRSCANNER_BenchmarkArm(start, stop);
-    for (m = 0; m < 2u; m++) {
-        uint32_t t0;
-
-        CHFRSCANNER_BenchmarkRun((uint8_t)m);
-        t0 = systick_millis();
-        while ((uint32_t)(systick_millis() - t0) < SCAN_BENCH_MS) {
-            APP_Update();
-            APP_TimeSlice10ms();
-        }
-        CHFRSCANNER_BenchmarkFinish(&res[m]);
-        uart_printf("  %s probes=%u elapsed=%u ms  %u probes/s\n",
-                    names[m], (unsigned)res[m].probes, (unsigned)res[m].elapsed_ms,
-                    (unsigned)res[m].probes_per_second);
+    CHFRSCANNER_BenchmarkRun();
+    t0 = systick_millis();
+    while ((uint32_t)(systick_millis() - t0) < SCAN_BENCH_MS) {
+        APP_Update();
+        APP_TimeSlice10ms();
     }
+    CHFRSCANNER_BenchmarkFinish(&res);
     CHFRSCANNER_BenchmarkDisarm();
 
-    if (res[0].probes_per_second > 0u) {
-        const uint32_t pct = (res[1].probes_per_second * 100u) / res[0].probes_per_second;
-
-        uart_printf("  FAST BOTH / FAST = %u.%02ux  (%s)\n",
-                    (unsigned)(pct / 100u), (unsigned)(pct % 100u),
-                    (res[1].probes_per_second > res[0].probes_per_second)
-                        ? "faster" : "not faster");
-    } else {
+    uart_printf("  FAST      probes=%u elapsed=%u ms  %u probes/s\n",
+                (unsigned)res.probes, (unsigned)res.elapsed_ms,
+                (unsigned)res.probes_per_second);
+    if (res.probes_per_second == 0u)
         uart_puts("  FAST measured 0 probes/s: check squelch and the range\n");
-    }
 }
 
 /* The console's 'J': the live dual-RF state, without re-tuning anything.  Shows
@@ -928,26 +910,15 @@ static void dual_rf_diag(void)
                 (unsigned)a, (unsigned)b,
                 (unsigned)gEeprom.TX_VFO, (unsigned)gEeprom.RX_VFO);
     {
-        scan_dual_stats_t st;
+        scan_candidate_rate_stats_t st;
 
-        CHFRSCANNER_GetScanDualStats(&st);
-        uart_printf("  SetScn=%s (%u)   scan-source override=%u   scan dual active=%d hit=%u\n",
+        CHFRSCANNER_GetScanRate(&st);
+        uart_printf("  SetScn=%s (%u)   scan running=%d\n",
                     scan_mode_name(), (unsigned)gSetting_set_scn,
-                    (unsigned)rx_scan_source_override(),
-                    (int)st.active, (unsigned)st.selected_hit);
+                    (int)(gScanStateDir != SCAN_OFF));
         uart_printf("  scan probes=%u elapsed=%u ms rate=%u candidates/s\n",
-                    (unsigned)st.rate.candidates, (unsigned)st.rate.elapsed_ms,
-                    (unsigned)st.rate.candidates_per_second);
-        uart_printf("    lane BK4829: cand=%u last=%u.%05u MHz rssi=%u\n",
-                    (unsigned)st.candidates[0],
-                    (unsigned)(st.last_frequency_10hz[0] / 100000u),
-                    (unsigned)(st.last_frequency_10hz[0] % 100000u),
-                    (unsigned)st.last_rssi[0]);
-        uart_printf("    lane BK4815: cand=%u last=%u.%05u MHz rssi=%u\n",
-                    (unsigned)st.candidates[1],
-                    (unsigned)(st.last_frequency_10hz[1] / 100000u),
-                    (unsigned)(st.last_frequency_10hz[1] % 100000u),
-                    (unsigned)st.last_rssi[1]);
+                    (unsigned)st.candidates, (unsigned)st.elapsed_ms,
+                    (unsigned)st.candidates_per_second);
     }
     uart_printf("  tuned: BK4829<-VFO %d   BK4815<-VFO %d   bk4815_active=%d\n",
                 (int)roles.bk4829_vfo, (int)roles.bk4815_vfo,
@@ -998,29 +969,6 @@ static void dual_rf_diag(void)
                                                            (uint16_t)(bk4815_read_reg(0x44) & 0x7fu)));
 
     scan_rate_benchmark();
-
-    {
-        uint32_t us[5];
-        uint32_t batches = 0, probes = 0;
-
-        CHFRSCANNER_GetScanBothProfile(us, &batches, &probes);
-        if (batches != 0u) {
-            const uint32_t total = us[0] + us[1] + us[2];
-
-            uart_printf("  FAST BOTH profile: %u batches, %u probes, "
-                        "%u.%01u ms/batch in the batch, %u.%01u ms/batch wall\n",
-                        (unsigned)batches, (unsigned)probes,
-                        (unsigned)(total / batches / 1000u),
-                        (unsigned)((total / batches / 100u) % 10u),
-                        (unsigned)(us[3] / batches / 1000u),
-                        (unsigned)((us[3] / batches / 100u) % 10u));
-            uart_printf("    per batch: pull %u us  tune %u us  read %u us  "
-                        "precheck %u us  gap %u us\n",
-                        (unsigned)(us[0] / batches), (unsigned)(us[1] / batches),
-                        (unsigned)(us[2] / batches), (unsigned)(us[3] / batches),
-                        (unsigned)(us[4] / batches));
-        }
-    }
 
     uart_puts("  sampling 0x44 for ~5 s -- key a signal on the selected VFO now:\n");
 
@@ -2235,6 +2183,9 @@ int main(void)
             case 'J':
                 dual_rf_diag();
                 break;
+            case '%':
+                uart_printf("\nscan trace %s\n", CHFRSCANNER_ToggleTrace() ? "ON" : "off");
+                break;
             case '#':
                 uart_printf("\nscan probe retune: %s\n",
                             CHFRSCANNER_TogglePlainTune()
@@ -2246,17 +2197,13 @@ int main(void)
                 uart_printf("\nBK4815 AF forced %s\n",
                             rx_force_bk4815_af_on() ? "ON (squelch bypassed)" : "off");
                 break;
-            case 'o': {
-                /* Automation: cycle SetScn NORMAL -> FAST -> FAST BOTH -> LISTEN. */
-                static const uint8_t next[4] = { 1u, 2u, 3u, 0u };
-
-                gSetting_set_scn = next[gSetting_set_scn & 3u];
+            case 'o':
+                /* Automation: toggle SetScn NORMAL <-> FAST. */
+                gSetting_set_scn = (gSetting_set_scn == (uint8_t)SCAN_MODE_FAST)
+                                       ? (uint8_t)SCAN_MODE_NORMAL : (uint8_t)SCAN_MODE_FAST;
                 uart_printf("\nSetScn = %u (%s)\n", (unsigned)gSetting_set_scn,
-                            gSetting_set_scn == 1u ? "FAST" :
-                            gSetting_set_scn == 2u ? "FAST BOTH" :
-                            gSetting_set_scn == 3u ? "LISTEN" : "NORMAL");
+                            scan_mode_name());
                 break;
-            }
             case '7':
                 /* Automation: cycle the squelch level 0..9.  Ask for a VFO
                  * reconfigure so RADIO_ConfigureSquelchAndOutputPower() writes
@@ -2360,8 +2307,8 @@ int main(void)
                 break;
             case 'H': {
                 /* Read-only: the whole audio chain as it stands.  Plain receive
-                 * and scanning differ here (radio 2026-10-22: a tone in plain
-                 * receive, silence while a LISTEN scan ran). */
+                 * and scanning can differ here (radio 2026-10-27: a BK4815 hit
+                 * was silent while scanning, 0x47 held at 0x6040). */
                 uart_printf("\naudio chain: 0x30=%04X (bit9 = AF DAC) 0x37=%04X "
                             "0x47=%04X (bits 11:8 = AF select) 0x48=%04X 0x50=%04X "
                             "0x67=%04X\n",

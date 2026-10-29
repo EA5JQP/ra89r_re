@@ -45,10 +45,10 @@ $CC -std=c11 -I App -I App/driver tools/test_bk1080.c \
     App/driver/bk1080.c -o /tmp/ra89r_test_bk1080
 run /tmp/ra89r_test_bk1080
 
-echo "== test_scan_dual (dual-transceiver scan policy) =="
-$CC -std=c11 -I App -I App/driver tools/test_scan_dual.c \
-    App/app/scan_dual.c -o /tmp/ra89r_test_scan_dual
-run /tmp/ra89r_test_scan_dual
+echo "== test_scan_rate (scan throughput counter) =="
+$CC -std=c11 -I App -I App/driver tools/test_scan_rate.c \
+    App/app/scan_rate.c -o /tmp/ra89r_test_scan_rate
+run /tmp/ra89r_test_scan_rate
 
 echo "== test_cat (FT-817 CAT frame parser) =="
 $CC -std=c11 -I App -I App/driver tools/test_cat.c \
@@ -71,7 +71,7 @@ $CC $HOST_FLAGS -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
     App/helper/battery.c App/helper/boot.c App/driver/system.c App/font.c \
     App/bitmaps.c App/driver/st7565.c App/driver/keyboard.c \
     App/driver/backlight.c App/driver/audio_path.c App/driver/scheduler.c \
-    App/app/scan_dual.c \
+    App/app/scan_rate.c \
     -o /tmp/ra89r_preview_k1
 run /tmp/ra89r_preview_k1
 

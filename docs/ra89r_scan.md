@@ -1,10 +1,27 @@
 # The scan, and the dual-transceiver scan
 
 The K1/F4HWN frequency-range and scan-list scanners are imported almost
-unchanged (`app/scanner.c`, `app/chFrScanner.c`, `ui/scanner.c`).  What the port
-adds on top is a **dual-transceiver** mode: the `SetScn` menu item can run the
-scanner over both RF parts (BK4829 and BK4815) as interleaved lanes instead of
-only the selected VFO's chip.
+unchanged (`app/scanner.c`, `app/chFrScanner.c`, `ui/scanner.c`).  `SetScn` is
+**NORMAL** (the K1 step scan) or **FAST** (an RSSI precheck on the selected
+VFO's own chip, then the full tune), on either transceiver.
+
+> **2026-10-28: `FAST BOTH` and `LISTEN` were removed** (branch
+> `driver/scan-route`).  Both ran a chip on the *other* chip's receive path:
+> the two parts share one set of `0x33` receive-path pins (pin 0 the BK4829's,
+> pin 4 the BK4815's, `docs/ra89r_rfpath.md`), and the chip they are not set
+> for hears next to nothing -- radio 2026-10-28, VFO on the BK4815: the BK4829
+> read a keyed PMR1 carrier as **68**, the noise level, where with its own pins
+> it reads 220+.  FAST BOTH therefore missed every carrier that fell on the
+> deaf lane and stopped on the other lane's noise; LISTEN's sweeping chip is
+> always the deaf one.  Switching the pins per probe would cost a bus write per
+> probe, forbid the paired probe (FAST BOTH's only gain) and take the antenna
+> path away from the LISTEN listener -- i.e. turn it into time-sharing, which a
+> single-chip scan already is.  A saved FAST BOTH / LISTEN loads as FAST.  The
+> sections below that describe them (the candidate stream, the lane rule, the
+> RX scan-source override, the LISTEN runs) are kept as the record of what was
+> built and measured; the code (`app/scan_dual.*`, `tools/test_scan_dual.c`,
+> `rx_set_scan_source_override()`, `rx_squelch_quiet()`) is gone, and the
+> throughput counter it carried lives on as `app/scan_rate.*`.
 
 This file records what is implemented, what is a software fact, and what is still
 only radio-validated work.  Nothing here is called *verified* until it has run on
@@ -328,14 +345,35 @@ clean with the BK4829 left running.  Tried and not needed: powering the BK4829
 down under a BK4815 reception, as the stock does (`FUN_08021844` ->
 `FUN_080187E8`: `0x30 = 0`, `0x37 = 0x9D10`; with VOX, `FUN_0801754A`).
 
-**Radio gates still open:** a FAST and a FAST BOTH *range* hit on each lane
-with the plain write; a VHF range from a UHF VFO; LISTEN keeps
+**Range FAST, radio 2026-10-28** (446.00625-447.00625, 12.5 kHz, PMR1 keyed,
+per-probe console trace `%`): with the VFO on the BK4815 it locks and is fast.
+With the VFO on the BK4829 it locked only by luck: PMR1 is the first probe
+after the 1 MHz wrap, and the plain write read it as **84** (noise) -- the
+restart it skips also runs the BK4829's VCO calibration.  A probe that jumps
+more than 100 kHz now takes the restart (`SCAN_FAST_PLAIN_MAX_JUMP`); steps keep
+the plain write.  Still to be confirmed on the radio.
+
+**Radio gates still open:** a FAST *range* hit on the BK4829 every pass (the
+>100 kHz restart); a VHF range from a UHF VFO; LISTEN keeps
 the listener audible after a hit and resume.  Until they pass, the branch
 stays off `develop`.
 
 ## Diagnostics
 
-Console `J` (`App/main.c`) now also prints the `SetScn` mode, the override state,
+**Current (2026-10-28):** console `J` prints the `SetScn` mode and the scan's
+probes / elapsed / probes-per-second (`CHFRSCANNER_GetScanRate()`), then runs a
+3 s FAST benchmark over 1 MHz from the VFO's frequency.  Two bench toggles, off
+by default:
+
+* `%` -- the per-probe scan trace on the UART: `rng`/`mem` probe lines
+  (frequency, chip, RSSI, floor, mark, verdict), `TUNE` on a full tune, `SQL`
+  edges and `CONT` on a resume.  Blocking output, so it slows the sweep.
+* `#` -- the BK4829 probe's retune: the plain `0x38/0x39` write (default) or the
+  K1's `REG_30` restart, for an A/B with `J`.
+
+The rest of this section describes the removed FAST BOTH diagnostics.
+
+Console `J` (`App/main.c`) used to also print the `SetScn` mode, the override state,
 the `scan_dual_stats_t` snapshot (per-lane candidate counts, last frequency, last
 RSSI, selected hit), and **total RSSI probes / elapsed wall time / probes per
 second** via `CHFRSCANNER_GetScanDualStats()`.  Rate timing starts when a new

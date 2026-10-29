@@ -439,9 +439,7 @@ const char* const gSubMenu_SCRAMBLER[] =
         const char* const gSubMenu_SET_SCN[] =
         {
             "NORMAL",
-            "FAST",
-            "FAST BOTH",
-            "LISTEN"
+            "FAST"
         };
     #endif
 

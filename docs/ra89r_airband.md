@@ -66,10 +66,10 @@ console command uses 8.33 kHz because that is the real airband spacing.
 
 The stock's 134.0 MHz split (`docs/ra89r_rfpath.md`) puts 108-134 MHz on the
 BK4829, and the port's per-VFO lane choice plus the scanner's candidate rule
-follow it.  Above 134 MHz the stock hands the receive path to the BK4815, so
-the top 3 MHz of the airband (134.0-137.0) is the one place a `FAST BOTH` sweep
-would alternate chips; plain `FAST` stays on the selected VFO's chip and is the
-mode to use there.
+follow it.  Above 134 MHz the stock hands the receive path to the BK4815.  The
+scanner's `FAST` probes the selected VFO's own chip (`FAST BOTH`, which would
+have alternated chips over 134.0-137.0, was removed 2026-10-28,
+`ra89r_scan.md`).
 
 ## Radio gates
 
@@ -78,7 +78,6 @@ mode to use there.
 * A scan crossing 137.0 returns to FM at 145.000 (no stuck AM).
 * The menu's FM choice inside the band still gives AM (the band wins).
 * No TX on an airband channel.
-* `FAST BOTH` across 108-137 behaves as documented above.
 
 ## The gate in AM, and the noise during a scan (2026-10-22)
 

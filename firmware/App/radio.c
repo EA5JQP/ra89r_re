@@ -809,9 +809,8 @@ void RADIO_SetupRegisters(bool switchToForeground)
      * is yanked off the other VFO's frequency and the BK4815's path pin is
      * dropped, and two VFOs on different chips can never stay apart.  The port
      * tunes both chips from rx_service() -> rf_dual_refresh(), and during a
-     * scan the receive route (rx_scan_commit()) decides: a LISTEN hit on the
-     * BK4815 must not drag the BK4829 listener onto the hit. */
-    if (rx_bk4829_is_receiver())
+     * scan from rx_scan_commit(). */
+    if (SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) != RF_XCVR_BK4815)
     {
         BK4819_SetFrequency(Frequency);
 
