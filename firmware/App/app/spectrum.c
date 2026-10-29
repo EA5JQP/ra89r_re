@@ -26,6 +26,7 @@
 #include "driver/backlight.h"
 #include "driver/bk4815.h"
 #include "driver/pa.h"
+#include "driver/systick.h"
 #include "driver/rx.h"
 #include "frequencies.h"
 #include "ui/helper.h"
@@ -47,7 +48,6 @@
 #define SPECTRUM_TRACE 1
 #endif
 #if SPECTRUM_TRACE
-#include "driver/systick.h"
 #include "driver/uart.h"
 #define SPEC_TRACE(...) uart_printf(__VA_ARGS__)
 #else
@@ -657,6 +657,23 @@ static void TuneToPeak()
     scanInfo.rssi = peak.rssi;
     scanInfo.i = peak.i;
     SetF(scanInfo.f);
+#if SPECTRUM_TRACE
+    /* Bring-up: the BK4815's 0x44 step response after the jump to the peak,
+     * 1 sample per ms -- how long its meter really takes to settle. */
+    if (activeChip == SPECTRUM_CHIP_4815)
+    {
+        uint8_t step[32];
+
+        for (uint8_t n = 0; n < 32u; n++) {
+            step[n] = (uint8_t)bk4815_read_rssi();
+            SYSTICK_DelayUs(1000);
+        }
+        SPEC_TRACE("spec: 4815 step");
+        for (uint8_t n = 0; n < 32u; n++)
+            SPEC_TRACE(" %u", (uint32_t)step[n]);
+        SPEC_TRACE("\r\n");
+    }
+#endif
 }
 
 static void DeInitSpectrum()
@@ -677,17 +694,55 @@ uint8_t GetBWRegValueForScan()
     return scanStepBWRegValues[settings.scanStepIndex];
 }
 
+/* Port addition: the BK4815's settled RSSI.  A fixed 350 us + one read lags
+ * the sweep: radio 2026-10-29, a PMR2 carrier (446.01875) peaked anywhere
+ * from 445.62 to 446.32 MHz depending on the sweep direction, while the
+ * BK4829 put it on the channel.  Follow 0x44 the way the FAST scanner follows
+ * the BK4829's 0x67 (CHFRSCANNER_ReadRssiSettled()): SPEC4815_PLATEAU_READS
+ * reads in a row within SPEC4815_PLATEAU_TOL raw counts of a reference that
+ * restarts whenever a read leaves that band; the mean of the plateau.  The
+ * cap keeps a dead chip from stalling the sweep. */
+#define SPEC4815_PLATEAU_READS  6u
+#define SPEC4815_PLATEAU_TOL    2u
+#define SPEC4815_SETTLE_MAX_US  8000u
+
+static uint16_t Read4815Settled(void)
+{
+    const uint32_t t0 = systick_micros();
+    uint16_t ref  = bk4815_read_rssi();
+    uint16_t last = ref;
+    uint8_t  flat = 0;
+    uint32_t sum  = 0;
+
+    while (flat < SPEC4815_PLATEAU_READS &&
+           (uint32_t)(systick_micros() - t0) < SPEC4815_SETTLE_MAX_US)
+    {
+        const uint16_t r    = bk4815_read_rssi();
+        const uint16_t diff = (r > ref) ? (uint16_t)(r - ref) : (uint16_t)(ref - r);
+
+        last = r;
+        if (diff > SPEC4815_PLATEAU_TOL) {
+            ref  = r;
+            flat = 0;
+            sum  = 0;
+        } else {
+            flat++;
+            sum += r;
+        }
+    }
+
+    return flat ? (uint16_t)((sum + flat / 2u) / flat) : last;
+}
+
 uint16_t GetRssi()
 {
     if (activeChip == SPECTRUM_CHIP_4815)
     {
         /* Port addition: the BK4815 has no glitch indicator.  Let its PLL/AGC
-         * settle for the fixed delay of the FAST scanner's BK4815 probe before
-         * discarding the first read and using the next. */
+         * settle for the fixed delay of the FAST scanner's BK4815 probe, then
+         * follow 0x44 until it holds still (Read4815Settled()). */
         SYSTICK_DelayUs(spectrum_rf_rssi_settle_us(SPECTRUM_CHIP_4815));
-        // Discard first read (AGC may still be transitioning), keep second.
-        bk4815_read_rssi();
-        return spectrum_rf_normalize_rssi(SPECTRUM_CHIP_4815, bk4815_read_rssi());
+        return spectrum_rf_normalize_rssi(SPECTRUM_CHIP_4815, Read4815Settled());
     }
 
     /* Port adaptation: the FAST scanner's settled read instead of the K1's
@@ -826,7 +881,19 @@ static void InitScan()
      * assigned to it -- radio 2026-10-29: a 4815 sweep read 0x44 = 0 on every
      * bin.  Once per sweep (re)start, not per step. */
     if (activeChip == SPECTRUM_CHIP_4815)
+    {
+        /* ... and wait for it to come up: the first bins after the entry
+         * read 0x44 = 0 (radio 2026-10-29), which dragged the auto floor and
+         * the trigger down to the noise.  Capped, so a dead chip still sweeps. */
+        const uint32_t t0 = systick_micros();
+
+        bk4815_set_frequency(scanInfo.f, false);
         bk4815_receive_entry(settings.listenBw == BK4819_FILTER_BW_WIDE);
+        while (bk4815_read_rssi() == 0u &&
+               (uint32_t)(systick_micros() - t0) < 50000u)
+            SYSTICK_DelayUs(500);
+        SPEC_TRACE("spec: 4815 up after %uus\r\n", systick_micros() - t0);
+    }
     scanReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~(1u << 9);
 }
 
