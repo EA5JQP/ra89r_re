@@ -821,6 +821,12 @@ static void InitScan()
     // scanning regardless of whether audio was on when InitScan() was called
     // (RelaunchScan calls InitScan before ToggleRX(false)).
     SetChipRoute(scanInfo.f);   // Port adaptation: see SetChipRoute()
+    /* Port addition: put the BK4815 in receive.  Only rx_service() does that
+     * (the receive entry's 0x70 = 0 / 0xA000 restart), and only for a VFO
+     * assigned to it -- radio 2026-10-29: a 4815 sweep read 0x44 = 0 on every
+     * bin.  Once per sweep (re)start, not per step. */
+    if (activeChip == SPECTRUM_CHIP_4815)
+        bk4815_receive_entry(settings.listenBw == BK4819_FILTER_BW_WIDE);
     scanReg30 = BK4819_ReadRegister(BK4819_REG_30) & ~(1u << 9);
 }
 
