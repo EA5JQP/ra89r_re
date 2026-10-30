@@ -413,6 +413,10 @@ void SetState(State state)
  * settings.chip, applied on entry and by the in-screen toggle. */
 static spectrum_chip_t activeChip = SPECTRUM_CHIP_4829;
 
+/* Port addition: the BK4815's 0x0C T/R state on entry, put back on exit, so a
+ * 4815 session does not leave an unused BK4815 out of its parked state. */
+static uint16_t entry4815TR;
+
 /* Port addition: route the receive path and the band to the active chip, the
  * way the port's receiver does (driver/rx.c).  pa_set_rx_lane() owns the 0x33
  * receive-path pins -- pin 0 for the BK4829, pin 4 for the BK4815, never both
@@ -679,6 +683,9 @@ static void TuneToPeak()
 static void DeInitSpectrum()
 {
     SPEC_TRACE("spec: exit initial=%u\r\n", (uint32_t)initialFreq);
+    /* Restore by state, not by word: the part does not store every bit
+     * (0x0A03 reads back 0x0603, the parked 0xFFFB as 0xFFFF). */
+    bk4815_write_reg(0x0C, ((entry4815TR & 0x00FFu) == 0x0003u) ? 0x0A03u : 0xFFFBu);
     activeChip = SPECTRUM_CHIP_4829;
     SetF(initialFreq);
     RestoreRegisters();
@@ -887,6 +894,10 @@ static void InitScan()
          * the trigger down to the noise.  Capped, so a dead chip still sweeps. */
         const uint32_t t0 = systick_micros();
 
+        /* Its T/R state too: 0x0C is parked (0xFFFB) whenever the BK4829
+         * was at or below 134 MHz at boot or PTT, and a parked BK4815 reads
+         * 0x44 = 0 (radio 2026-10-30).  DeInitSpectrum() restores it. */
+        bk4815_write_reg(0x0C, 0x0A03u);
         bk4815_set_frequency(scanInfo.f, false);
         bk4815_receive_entry(settings.listenBw == BK4819_FILTER_BW_WIDE);
         while (bk4815_read_rssi() == 0u &&
@@ -2834,6 +2845,7 @@ void APP_RunSpectrum()
                (uint32_t)GetStepsCount(), (uint32_t)GetScanStep(), (uint32_t)activeChip);
 
     BackupRegisters();
+    entry4815TR = bk4815_read_reg(0x0C);   // Port addition: see DeInitSpectrum()
 
     isListening = true; // to turn off RX later
     newScanStart = true;
