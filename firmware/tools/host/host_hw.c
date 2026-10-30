@@ -143,6 +143,12 @@ void     bk4815_write_reg(uint8_t reg, uint16_t value) { (void)reg; (void)value;
 uint16_t bk4815_read_rssi(void) { return 0; }
 
 
+/* The spectrum screen (App/app/spectrum.c) is a blocking loop the preview does
+ * not drive, but App/app/main.c references APP_RunSpectrum() under
+ * ENABLE_SPECTRUM.  This stands in so the preview links; the target links the
+ * real module. */
+void APP_RunSpectrum(void) { }
+
 /* Keypad: the RA89R reads an ADC ladder, so the host stands in with a key the
  * preview sets by hand -- that is how the port's key loop (port_gui.c) is
  * exercised without a radio. */

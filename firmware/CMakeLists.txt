@@ -95,6 +95,8 @@ set(APP_SOURCES
     App/app/common.c
     App/app/chFrScanner.c
     App/app/scan_rate.c
+    App/app/spectrum.c
+    App/app/spectrum_rf.c
     App/app/dtmf.c
     App/app/scanner.c
     App/cat.c

@@ -27,7 +27,7 @@
 
 /* The K1's own `default` CMake preset, for the entries that only change how the
  * screens are drawn.  What that preset also turns on but the RA89R lacks (air
- * copy, NOAA, USB, voice prompts, spectrum, password) stays off, and so do the
+ * copy, NOAA, USB, voice prompts, password) stays off, and so do the
  * hardware features that need a module the port has not brought in yet (UART
  * console, TX1750, flashlight, DTMF calling). */
 #define ENABLE_BIG_FREQ 1
@@ -56,6 +56,14 @@
  * live (see App/main.c).  Stays on in the default build; with it off the port
  * is console-only.  See docs/ra89r_cat.md and docs/ra89r_carserial.md. */
 #define ENABLE_CAT 1
+
+/* Spectrum: the K1/F4HWN spectrum screen (App/app/spectrum.c, fagci) is imported
+ * verbatim; `ENABLE_FEAT_F4HWN_SPECTRUM` is the version with the persisted
+ * settings, the interlaced sweep and listen mode.  The port adds a per-spectrum
+ * transceiver choice (BK4829 / BK4815) through App/app/spectrum_rf.*; see
+ * docs/ra89r_spectrum.md for the deviation list.  Not validated on the radio. */
+#define ENABLE_SPECTRUM 1
+#define ENABLE_FEAT_F4HWN_SPECTRUM 1
 
 /* FM broadcast: the RA89R *does* carry a BK1080 FM receiver (docs/ra89r_bk1080.md),
  * on its own bus (PC14/PB2, driver/i2c_bus.c).  The K1's own feature is imported

@@ -79,6 +79,11 @@ $CC -std=c11 -I App -I App/driver tools/test_cat.c \
     App/cat.c -o /tmp/ra89r_test_cat
 run /tmp/ra89r_test_cat
 
+echo "== test_spectrum (spectrum chip policy) =="
+$CC -std=c11 -I App -I App/driver tools/test_spectrum.c \
+    App/app/spectrum_rf.c -o /tmp/ra89r_test_spectrum
+run /tmp/ra89r_test_spectrum
+
 echo "== preview_k1 (screens + keys + settings, on a PC) =="
 $CC $HOST_FLAGS -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
     -DBLUETOOTH_HOST_TEST \
@@ -97,7 +102,7 @@ $CC $HOST_FLAGS -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
     App/helper/battery.c App/helper/boot.c App/driver/system.c App/font.c \
     App/bitmaps.c App/driver/st7565.c App/driver/keyboard.c \
     App/driver/backlight.c App/driver/audio_path.c App/driver/scheduler.c \
-    App/app/scan_rate.c \
+    App/app/scan_rate.c App/app/spectrum_rf.c \
     -o /tmp/ra89r_preview_k1
 run /tmp/ra89r_preview_k1
 

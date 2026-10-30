@@ -27,6 +27,7 @@ Imported from the UV-K1/K5V3 project
 | `firmware/App/ui/main.c` `.h` | verbatim | the VFO screen (`UI_DisplayMain`) and its helpers |
 | `firmware/App/ui/menu.c` | verbatim | the menu screen (`UI_DisplayMenu`), the `MenuList[]` table, its sub-menu strings and its view/cursor state |
 | `firmware/App/app/app.c`, `app/main.c`, `app/generic.c`, `app/common.c`, `app/chFrScanner.c`, `app/dtmf.c`, `app/scanner.c`, `app/main.h` | verbatim | the application loop and key handling (`CheckKeys`, `APP_Update`, `APP_TimeSlice*`), the main-screen key actions (`MAIN_ProcessKeys`), the generic F/PTT keys, the common key actions, the channel/range scanner and DTMF |
+| `firmware/App/app/spectrum.c` `.h`, `App/app/keyboard_state.h` | adapted | the K1/F4HWN spectrum screen (fagci).  Upstream except one rename (`BACKLIGHT_Update()` → this repo's `BACKLIGHT_UpdateTickless()`) and a port addition: a per-spectrum transceiver choice (BK4829 / BK4815 / Both) through `App/app/spectrum_rf.*`.  See `docs/ra89r_spectrum.md` |
 | `firmware/App/driver/voice.h` | verbatim | the voice-prompt interface `audio.c` includes (voice prompts are off for the RA89R, so nothing calls it) |
 | `firmware/App/app/app.h` | adapted | one port addition: `CheckKeys()` is declared there, because `app/app.c` defines it but the K1 header does not |
 | `firmware/App/driver/bk4819.c` | adapted (port addition) | `BK4819_ToggleGpioOut` mirrors the two status-LED outputs (`GPIO5_PIN1_RED`, `GPIO6_PIN2_GREEN`) onto this board's MCU LED (`driver/led.c`, PA13/PA14); the chip register write is unchanged |

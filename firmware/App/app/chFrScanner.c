@@ -441,6 +441,11 @@ static uint16_t ScanFastReadRssi(void)
     return flat ? (uint16_t)((sum + flat / 2u) / flat) : last;
 }
 
+uint16_t CHFRSCANNER_ReadRssiSettled(void)
+{
+    return ScanFastReadRssi();
+}
+
 /* REG_30 as the chip holds it (read at each batch's seed), so the plain-write
  * tune below only rewrites it when the AF DAC mute is not applied yet. */
 static uint16_t scanFastReg30Chip;

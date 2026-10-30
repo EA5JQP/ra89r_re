@@ -451,9 +451,10 @@ here are the port's todo list:
     what it lacks is the stock's own values behind it);
   * the K1's channel and name *writes*, deliberately: they are writes into the
     stock's codeplug, and the stock's own journal is how that has to be done;
-  * features this hardware cannot run, kept off: `app/spectrum.c` (2,617),
-    `app/foxhunt.c` (1,504), `app/rxtx_log.c` (1,376), `app/aircopy.c` (482) +
+  * features this hardware cannot run, kept off: `app/foxhunt.c` (1,504), `app/rxtx_log.c` (1,376), `app/aircopy.c` (482) +
     `ui/aircopy.c`, `ui/multiboot.c` (576), `k5viewer.c`;
+    *the spectrum is no longer in this list either*: it is imported on the
+    `spectrum` branch, per chip (`docs/ra89r_spectrum.md`, unvalidated);
     *the FM broadcast feature is no longer in this list*: the RA89R does carry a
     BK1080 (`docs/ra89r_bk1080.md`), and the K1's `app/fm.c` + `ui/fmradio.c` +
     driver API are imported on branch `driver/fm` (unvalidated on the radio; the
