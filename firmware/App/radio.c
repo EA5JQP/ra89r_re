@@ -826,8 +826,10 @@ void RADIO_SetupRegisters(bool switchToForeground)
         gRxVfo->SquelchOpenNoiseThresh,   gRxVfo->SquelchCloseNoiseThresh,
         gRxVfo->SquelchCloseGlitchThresh, gRxVfo->SquelchOpenGlitchThresh);
 
-    // what does this in do ?
-    BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, true);
+    /* Port adaptation: the K1 sets GPIO0 ("RX_ENABLE") here.  On this board
+     * 0x33 pin 0 is the VHF transmit band path; set during receive it costs
+     * the BK4829 ~45-57 dB at VHF (driver/pa.c, pa_set_rx_lane()). */
+    BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, false);
 
     // AF RX Gain and DAC
     //BK4819_WriteRegister(BK4819_REG_48, 0xB3A8);  // 1011 00 111010 1000

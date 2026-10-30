@@ -335,6 +335,26 @@ clearing it gave 232 -- about 16 dB at the chip's 0.5 dB/step.  So a BK4815 VFO
 merely existing while the BK4829 is being listened to used to cost the BK4829
 that much; that is what the lane rule fixes.
 
+**2026-10-30: pin 0 is cleared on both lanes -- set on receive it deafens
+the BK4829 at VHF.**  tinySA CW carrier, the BK4829 lane selected, `0x67`
+(0.5 dB/step) with pin 0 toggled by console `g`:
+
+| frequency, level | pin 0 set (`0x8050`) | pin 0 clear (`0x8010`) | carrier off |
+|---|---|---|---|
+| 145.5 MHz, -40 dBm | 111 | 226 | ~97 |
+| 120.1 MHz, -40 dBm | 122 | 211 | 86 / 94 |
+| 446.01875 MHz, -38 dBm | 152 | 152 | 55 / 56 |
+
+About 57 dB at 2 m and 45 dB on the airband, nothing at UHF.  Pin 4 (the K1's
+"VHF LNA") does not help the BK4829 (`0x8054`: 85).  This fits the stock: its
+receive entry clears pins 0/1 on either lane and `FUN_0801BDE8` sets pin 0 as
+the VHF *transmit* band path.  The 2026-10-21 reading below ("pin 0 is the
+BK4829's path") was taken with the broken generator coupling.
+`pa_set_rx_lane()`, `pa_apply_chip_path()`, `RADIO_SetupRegisters()` and
+`BK4819_Conditional_RX_TurnOn_and_GPIO6_Enable()` now clear it on receive;
+`pa_tx_enable()` still sets it for a VHF transmission.  The weak-signal UHF
+case is unmeasured (the tinySA's high output starts at -38 dBm).
+
 **Pin 0 (`0x40`) is the other half of the lane rule.**  The K1 calls it
 `GPIO0_PIN28_RX_ENABLE` and sets it on every receive setup, but the stock's
 receive entry *clears* pins 0/1 (`FUN_080093EC` -> `FUN_080137D4(3, 0)`), and

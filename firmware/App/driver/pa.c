@@ -133,29 +133,29 @@ bool pa_bt_audio(void) { return s_bt_audio; }
 
 void pa_set_rx_lane(bool use_4815)
 {
-    const bool changed = (use_4815 != s_rx_lane_4815);
-
     s_rx_lane_4815 = use_4815;
 
     /* The 'F' experiment modes own the pins themselves; only AUTO re-applies. */
     if (s_chip_path != PA_CHIP_PATH_AUTO)
         return;
 
-    /* Whenever the BK4815 is the lane the pin is re-asserted, because the K1's
-     * own receive setup sets pin 0 on every reconfigure and would put the
-     * antenna path back on the BK4829. */
-    if (!changed && !use_4815)
-        return;
-
-    /* The stock's receive entry clears the band pins 0/1 (`FUN_080093EC` ->
-     * `FUN_080137d4(3, 0)`) and selects the receive branch with pin 4.  The K1
-     * calls pin 0 "RX_ENABLE" and sets it, so with a BK4815 lane the port used
-     * to leave *both* the BK4829 path (0x40) and the BK4815 path (0x04) set:
-     * the 4829 heard everything and the 4815 nothing (radio 2026-10-21, tinySA
-     * swept over 28 dB on both bands).  Follow the stock: pin 0 is the BK4829's
-     * path and is cleared when the 4815 is the lane. */
-    BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, !use_4815);
-    BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, use_4815);
+    /* Checked on every pass, because the app's radio setup and the scan probes
+     * write 0x33 too; written only on a difference (the driver's output shadow
+     * is what every 0x33 write goes through), so a settled lane costs no bus
+     * traffic.
+     *
+     * The stock's receive entry clears the band pins 0/1 (`FUN_080093EC` ->
+     * `FUN_080137d4(3, 0)`) on *either* lane and selects the receive branch
+     * with pin 4.  Pin 0 (0x40) is the VHF *transmit* band path
+     * (`FUN_0801BDE8`, pa_tx_enable()), not the K1's "RX_ENABLE": set during
+     * receive it costs the BK4829 ~57 dB at 145.5 MHz and ~45 dB at 120.1 MHz
+     * (0x67 111 vs 226 and 122 vs 211 with a -40 dBm carrier) and nothing at
+     * 446 MHz (152 either way) -- radio 2026-10-30, tinySA.  So it is cleared
+     * on both lanes; transmit sets it itself. */
+    if (BK4819_IsGpioOutSet(BK4819_GPIO0_PIN28_RX_ENABLE))
+        BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, false);
+    if (BK4819_IsGpioOutSet(BK4819_GPIO4_PIN32_VHF_LNA) != use_4815)
+        BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, use_4815);
 }
 
 bool pa_rx_lane_is_4815(void) { return s_rx_lane_4815; }
@@ -207,10 +207,11 @@ static void pa_apply_chip_path(void)
              * is set from the selected RX VFO's transceiver by rx_set_audio_
              * source().  BK4819_ToggleGpioOut read-modify-writes the driver's
              * output shadow, so the 0x9000 bits BK4819_Init() set survive, and
-             * pin 0 (RX_ENABLE), which RADIO_SetupRegisters sets, is preserved.
-             * The stock's BT pin 2 is applied by pa_apply_bt_audio() after this
-             * switch.  See docs/ra89r_rfpath.md. */
-            BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, !s_rx_lane_4815);
+             * pin 0 is cleared on either lane: it is the VHF transmit band
+             * path, and set during receive it costs the BK4829 ~45-57 dB at
+             * VHF (pa_set_rx_lane()).  The stock's BT pin 2 is applied by
+             * pa_apply_bt_audio() after this switch.  See docs/ra89r_rfpath.md. */
+            BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, false);
             BK4819_ToggleGpioOut(BK4819_GPIO4_PIN32_VHF_LNA, s_rx_lane_4815);
             BK4819_ToggleGpioOut(BK4819_GPIO3_PIN31_UHF_LNA, false);
             break;

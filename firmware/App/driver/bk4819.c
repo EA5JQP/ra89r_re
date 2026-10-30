@@ -1255,7 +1255,9 @@ void BK4819_Conditional_RX_TurnOn_and_GPIO6_Enable(void)
 {
     if (gRxIdleMode)
     {
-        BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, true);
+        /* Port adaptation: GPIO0 stays clear on receive -- on this board it
+         * is the VHF transmit band path (driver/pa.c, pa_set_rx_lane()). */
+        BK4819_ToggleGpioOut(BK4819_GPIO0_PIN28_RX_ENABLE, false);
         BK4819_RX_TurnOn();
     }
 }
