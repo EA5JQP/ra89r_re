@@ -432,12 +432,15 @@ static void SetChipRoute(uint32_t f)
 
 static void ToggleAFBit(bool on)
 {
-    /* Port addition: the BK4815's audio reaches the amplifier through the
-     * BK4829's AF output, so a BK4815 listen opens its own AF (0x49) *and*
-     * the BK4829's 0x47 below (radio 2026-10-27: 0x47 = 0x6040 gave no audio,
-     * 0x6142 a clean voice -- driver/rx.c, rx_apply_audio_gate()). */
+    /* Port addition: a BK4815 listen opens the BK4815's own AF (0x49) and
+     * keeps the BK4829's 0x47 muted -- on a BK4815 lane the BK4829 does not
+     * hear the carrier, so its AF only adds noise (driver/rx.c,
+     * rx_apply_audio_gate(); the BK4815's output needs 0x0C = 0x0203). */
     if (activeChip == SPECTRUM_CHIP_4815)
+    {
         bk4815_set_af(on);
+        on = false;
+    }
 
     uint16_t reg = BK4819_ReadRegister(BK4819_REG_47);
     reg &= ~(1 << 8);
@@ -502,10 +505,9 @@ static void SetF(uint32_t f)
     if (activeChip == SPECTRUM_CHIP_4815)
     {
         /* Port addition: the BK4815's receive entry, as rx_scan_commit() runs
-         * it (tune, demod/AF block, channel spacing), with the BK4829 tuned to
-         * the same channel: the BK4815's audio rides the BK4829's RX chain,
-         * and on another frequency that chain's noise sums into it (driver/
-         * rx.c, rf_dual_refresh()). */
+         * it (tune, demod/AF block, channel spacing).  The BK4829 is tuned to
+         * the same channel as rf_dual_refresh()'s mirror does; with its AF
+         * muted on a BK4815 listen (ToggleAFBit()) that no longer matters. */
         bk4815_set_frequency(fMeasure, false);
         bk4815_receive_entry(settings.listenBw == BK4819_FILTER_BW_WIDE);
         BK4819_SetFrequency(fMeasure);
@@ -684,8 +686,11 @@ static void DeInitSpectrum()
 {
     SPEC_TRACE("spec: exit initial=%u\r\n", (uint32_t)initialFreq);
     /* Restore by state, not by word: the part does not store every bit
-     * (0x0A03 reads back 0x0603, the parked 0xFFFB as 0xFFFF). */
-    bk4815_write_reg(0x0C, ((entry4815TR & 0x00FFu) == 0x0003u) ? 0x0A03u : 0xFFFBu);
+     * (the parked 0xFFFB reads back 0xFFFF).  The receive state goes back as
+     * the quiet word; rf_dual_reapply() below makes rx_service() rewrite the
+     * audio word if the selected VFO is on the BK4815. */
+    bk4815_write_reg(0x0C, ((entry4815TR & 0x00FFu) == 0x0003u) ? BK4815_PWR_RX_QUIET
+                                                                 : 0xFFFBu);
     activeChip = SPECTRUM_CHIP_4829;
     SetF(initialFreq);
     RestoreRegisters();
@@ -912,10 +917,12 @@ static void InitScan()
          * the trigger down to the noise.  Capped, so a dead chip still sweeps. */
         const uint32_t t0 = systick_micros();
 
-        /* Its T/R state too: 0x0C is parked (0xFFFB) whenever the BK4829
+        /* Its power word too: 0x0C is parked (0xFFFB) whenever the BK4829
          * was at or below 134 MHz at boot or PTT, and a parked BK4815 reads
-         * 0x44 = 0 (radio 2026-10-30).  DeInitSpectrum() restores it. */
-        bk4815_write_reg(0x0C, 0x0A03u);
+         * 0x44 = 0 (radio 2026-10-30); the receive word must also power its
+         * audio output for a listen to be heard (bk4815.h).
+         * DeInitSpectrum() restores it. */
+        bk4815_write_reg(0x0C, BK4815_PWR_RX_AUDIO);
         bk4815_set_frequency(scanInfo.f, false);
         bk4815_receive_entry(settings.listenBw == BK4819_FILTER_BW_WIDE);
         while (bk4815_read_rssi() == 0u &&

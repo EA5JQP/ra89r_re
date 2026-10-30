@@ -133,11 +133,13 @@ receiver (`driver/rx.c`):
   Waiting for two updates costs ~23 ms a bin: a 64-bin round trip takes ~3 s on
   the BK4815 against ~1 s on the BK4829.
 
-The listen AF and the mirrored BK4829 tune follow what `develop` measured: the
-BK4815's audio reaches the amplifier only through the BK4829's AF output (radio
-2026-10-27: `0x47 = 0x6040` no audio, `0x6142` a clean voice), and an
-unassigned BK4829 on another frequency sums its demodulated noise into that path
-(`rf_dual_refresh()`).
+The listen AF follows what `develop` measured on 2026-10-30
+(`docs/ra89r_bk4815.md`, top note): the BK4815 is heard through its own
+output once its `0x0C` is `0x0203`, so a BK4815 listen writes that word on the
+sweep (re)start, opens the BK4815's `0x49` and keeps the BK4829's `0x47`
+muted -- on a BK4815 lane the BK4829 does not hear the carrier and its AF only
+adds noise.  The BK4829 is still tuned to the listen channel (the old mirror),
+which no longer matters.
 
 The BK4829's receive registers are backed up and restored on entry/exit
 (`BackupRegisters`/`RestoreRegisters`); on exit the BK4829 is retuned, and
@@ -167,8 +169,10 @@ drops it.
 
 - **VHF on either chip is not measured** (the tinySA was on its high-output
   connector).  The BK4815 below 134 MHz is unproven.
-- **BK4815 listen audio** from the spectrum: routed as the receiver routes it,
-  not yet heard (the bench carrier was unmodulated).
+- **BK4815 listen audio** from the spectrum: before the `0x0C` fix a tinySA FM
+  tone on 446.01875 locked (`0x44` ~95) but played only noise (2026-10-30, the
+  BK4815's output unpowered); with `0x0C = 0x0203` and the BK4829 AF muted it
+  is routed as the validated receiver routes it, not yet heard on the radio.
 - **One unexplained BK4815 open** at 445.69375 (RSSI 120, −325 kHz from the
   carrier) around a generator switch, once in a 90 s run.
 - **BK4815 bandwidth:** upstream changes `0x43` per step; the BK4815's spacing
