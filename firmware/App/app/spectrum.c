@@ -2713,6 +2713,25 @@ static void UpdateListening()
 
 static void Tick()
 {
+    /* Port adaptation: the K1 raises gNextTimeslice (10 ms) and
+     * gNextTimeslice_500ms from its SysTick handler; this port's main loop
+     * paces APP_TimeSlice10ms()/500ms() from its own clock and never sets
+     * them, so inside this blocking loop the backlight fade and the large-
+     * sweep redraw below would never run.  Raise them from the uptime. */
+    {
+        static uint32_t last10, last500;
+        const uint32_t now = systick_millis();
+
+        if (now - last10 >= 10u) {
+            last10 = now;
+            gNextTimeslice = true;
+        }
+        if (now - last500 >= 500u) {
+            last500 = now;
+            gNextTimeslice_500ms = true;
+        }
+    }
+
 #ifdef ENABLE_FEAT_F4HWN_K5VIEWER
     // Parse incoming packets on every tick so serial keys are never missed,
     // regardless of whether the screen needs redrawing.
