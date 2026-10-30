@@ -1345,6 +1345,19 @@ static void ToggleModulation()
 
 static void ToggleListeningBW()
 {
+    /* Port addition: the BK4815's only bandwidth control is the 25 / 12.5 kHz
+     * spacing bit its receive entry writes (0x01 bit 15), and nothing else
+     * applies settings.listenBw to it -- a 6 press changed the label but not
+     * the sound (radio 2026-10-30).  Toggle wide/narrow and apply it now. */
+    if (activeChip == SPECTRUM_CHIP_4815)
+    {
+        settings.listenBw = (settings.listenBw == BK4819_FILTER_BW_WIDE)
+                                ? BK4819_FILTER_BW_NARROW : BK4819_FILTER_BW_WIDE;
+        bk4815_receive_entry(settings.listenBw == BK4819_FILTER_BW_WIDE);
+        redrawScreen = true;
+        return;
+    }
+
     if (settings.listenBw == BK4819_FILTER_BW_NARROWER)
     {
         settings.listenBw = BK4819_FILTER_BW_WIDE;

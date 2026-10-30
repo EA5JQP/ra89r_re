@@ -155,6 +155,10 @@ receive-path pins.
 | BK4829 listen audio | PMR2 **audible** (2026-10-29) |
 | BK4815, tinySA -60 dBm on 446.01875 | peak on **446.01875** (bin 31, RSSI 376 scaled) against noise 88–96, trigger 104; one listen per carrier-on, no false opens (2026-10-30, after the driver's `0x75` bit-10 fix) |
 | long-press 6 toggles the chip, label updates | ✔ |
+| BK4815 listen audio, tinySA FM tone on 446.01875 | **tone heard** (2026-10-30, after `0x0C = 0x0203` and the BK4829 AF muted; before, only noise) |
+| short-press 6 on the BK4829 | bandwidth audibly changes (2026-10-30) |
+| the chip choice survives a power cycle | ✔ (2026-10-30) |
+| short-press 6 on the BK4815 | bandwidth audibly changes (2026-10-30).  The BK4815's only bandwidth control is the 25 / 12.5 kHz spacing bit (`0x01` bit 15) of its receive entry, so 6 toggles wide / narrow there and reruns the entry at once; before, it changed the label only |
 
 The BK4815 result depends on two driver fixes found on this branch's bench and
 kept on `driver/bk4815-tuning` (`docs/ra89r_bk4815.md`, top notes): `0x75` bit
@@ -169,13 +173,5 @@ drops it.
 
 - **VHF on either chip is not measured** (the tinySA was on its high-output
   connector).  The BK4815 below 134 MHz is unproven.
-- **BK4815 listen audio** from the spectrum: before the `0x0C` fix a tinySA FM
-  tone on 446.01875 locked (`0x44` ~95) but played only noise (2026-10-30, the
-  BK4815's output unpowered); with `0x0C = 0x0203` and the BK4829 AF muted it
-  is routed as the validated receiver routes it, not yet heard on the radio.
 - **One unexplained BK4815 open** at 445.69375 (RSSI 120, −325 kHz from the
   carrier) around a generator switch, once in a 90 s run.
-- **BK4815 bandwidth:** upstream changes `0x43` per step; the BK4815's spacing
-  comes from its receive entry (25 / 12.5 kHz), set on a full tune only.
-- **Short-press 6 on release, and the chip choice surviving a power cycle**,
-  are not checked on the radio.
