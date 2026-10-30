@@ -379,6 +379,36 @@ static void test_bk4815_synth(void)
     check_hex((uint16_t)((log_[1].data[4] << 8) | log_[1].data[5]), 0x91B9u,
               "446.00625 MHz reg 0x72");
 
+    /* 0x7E/0x7F: in every VCO band the word is the same -137 kHz (the IF) in
+     * that band's units, Hz = word * 26 MHz / (Ndiv * 2^24) -- the reason
+     * bit 10 of 0x75 must select low-side injection (radio 2026-10-30). */
+    {
+        static const uint32_t band_freq[4] = { 44600625u, 20000000u, 30000000u, 14575000u };
+        uint8_t b;
+
+        for (b = 0; b < 4u; b++) {
+            int32_t word;
+            int64_t hz;
+
+            log_reset();
+            bk4815_set_frequency(band_freq[b], false);
+            word = (int32_t)(((uint32_t)log_[2].data[0] << 24) | ((uint32_t)log_[2].data[1] << 16) |
+                             ((uint32_t)log_[2].data[2] << 8) | log_[2].data[3]);
+            hz = ((int64_t)word * 26000000) /
+                 ((int64_t)bk4815_vco_divider(bk4815_vco_band(band_freq[b])) << 24);
+            check(hz > -137050 && hz < -136950, "0x7E/0x7F is the -137 kHz IF in each band");
+        }
+    }
+
+    /* The band register keeps bit 10 set: low-side injection (LO + IF = f). */
+    other_bk4815 = 0x0000u;
+    log_reset();
+    bk4815_set_band(0x0Au);
+    check(log_len == 2 && !log_[1].is_read && xfer_is(&log_[1], BK4815_CS_PIN, 0xEA),
+          "set_band reads then writes reg 0x75");
+    check_hex((uint16_t)((log_[1].data[0] << 8) | log_[1].data[1]), 0x040Au,
+              "0x75 = band 0x0A with bit 10 (low-side) set");
+
     log_reset();
     bk4815_set_tone(1000u);
     check(log_len == 1 && xfer_is(&log_[0], BK4815_CS_PIN, 0x44),
