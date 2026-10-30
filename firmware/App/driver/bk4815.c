@@ -127,6 +127,22 @@ void bk4815_configure(void)
         bk4815_write_reg(bk4815_config[i].reg, bk4815_config[i].value);
 }
 
+/* Bench switch for 0x75 bit 10 (console '^').  The default keeps the
+ * 2026-10-21 choice below (bit 10 = 0); see bk4815.h for why it is in doubt. */
+static bool s_bit10;
+
+void bk4815_set_lo_bit10(bool set)
+{
+    s_bit10 = set;
+    bk4815_write_reg(0x75u, (uint16_t)((bk4815_read_reg(0x75u) & 0xfbffu) |
+                                       (set ? 0x0400u : 0u)));
+}
+
+bool bk4815_lo_bit10(void)
+{
+    return s_bit10;
+}
+
 void bk4815_set_band(uint16_t band)
 {
     /* The stock's FUN_08013790 is a read-modify-write: `0x75 = (read & 0xFFC0)
@@ -144,7 +160,8 @@ void bk4815_set_band(uint16_t band)
      *   - the low six bits are the band code.
      *
      * Bits 15:11 and 9:6 (RX-audio source, tone-to-audio) are preserved. */
-    bk4815_write_reg(0x75u, (uint16_t)((bk4815_read_reg(0x75u) & 0xfbc0u) | (band & 0x3fu)));
+    bk4815_write_reg(0x75u, (uint16_t)((bk4815_read_reg(0x75u) & 0xfbc0u) |
+                                       (s_bit10 ? 0x0400u : 0u) | (band & 0x3fu)));
 }
 
 /* --------------------------------------------------------- receive entry --- */

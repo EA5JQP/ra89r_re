@@ -142,6 +142,15 @@ void bk4815_set_tone(uint32_t tone_hz);
  * the VHF values, 0x0A/0x12 the UHF ones. */
 void bk4815_set_band(uint16_t band);
 
+/* Bench switch (console '^'): 0x75 bit 10, the LO injection side, applied at
+ * once and kept by every later bk4815_set_band().  Default 0 (the 2026-10-21
+ * choice).  In doubt since 2026-10-30: 0x7E/0x7F hold -137 kHz (the IF) in
+ * each band's word units, so the LO sits at f - 137 kHz, and a BK4815 lane was
+ * measured receiving f - 275 kHz = LO - IF, i.e. high-side, at 405/446/515 MHz
+ * (tinySA, -68 dBm). */
+void bk4815_set_lo_bit10(bool set);
+bool bk4815_lo_bit10(void);
+
 /* The chip's RSSI indicator: register 0x44, bits 6:0. */
 uint16_t bk4815_read_rssi(void);
 
