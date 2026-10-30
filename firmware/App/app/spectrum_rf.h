@@ -5,7 +5,7 @@
  * set for hears next to nothing (radio 2026-10-28, docs/ra89r_scan.md -- the
  * reason the scanner's FAST BOTH was removed).  This module owns the
  * host-testable decisions: how the BK4815's 7-bit RSSI is normalized into the
- * BK4829's scale, its settle delay, and how the setting is stored in the
+ * BK4829's scale, and how the setting is stored in the
  * spectrum's EEPROM byte.
  *
  * Device-header free and driver-free on purpose, so it links on a PC
@@ -29,11 +29,6 @@ spectrum_chip_t spectrum_rf_next_chip(spectrum_chip_t chip);
  * 0x44 value is masked and multiplied by 4 (127 * 4 = 508), the same scaling
  * the FAST scanner's BK4815 lane uses; the BK4829's is unchanged. */
 uint16_t spectrum_rf_normalize_rssi(spectrum_chip_t chip, uint16_t raw);
-
-/* The BK4829 waits on its glitch indicator before reading.  The BK4815 has no
- * equivalent indicator, so it gets the fixed 350 us settle of the FAST
- * scanner's BK4815 probe (app/chFrScanner.c, SCAN_FAST_RECHECK_DELAY_US). */
-uint32_t spectrum_rf_rssi_settle_us(spectrum_chip_t chip);
 
 /* The persisted byte for the setting (the spectrum's Data[4]); an out-of-range
  * chip encodes to 0 and any byte but 1 decodes to BK4829 -- including 2, the

@@ -18,11 +18,6 @@ uint16_t spectrum_rf_normalize_rssi(spectrum_chip_t chip, uint16_t raw)
     return (uint16_t)((raw & 0x7Fu) * 4u);
 }
 
-uint32_t spectrum_rf_rssi_settle_us(spectrum_chip_t chip)
-{
-    return (chip == SPECTRUM_CHIP_4815) ? 350u : 0u;
-}
-
 uint8_t spectrum_rf_encode_chip(spectrum_chip_t chip)
 {
     return (chip == SPECTRUM_CHIP_4815) ? (uint8_t)SPECTRUM_CHIP_4815

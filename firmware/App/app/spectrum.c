@@ -701,54 +701,47 @@ uint8_t GetBWRegValueForScan()
     return scanStepBWRegValues[settings.scanStepIndex];
 }
 
-/* Port addition: the BK4815's settled RSSI.  A fixed 350 us + one read lags
- * the sweep: radio 2026-10-29, a PMR2 carrier (446.01875) peaked anywhere
- * from 445.62 to 446.32 MHz depending on the sweep direction, while the
- * BK4829 put it on the channel.  Follow 0x44 the way the FAST scanner follows
- * the BK4829's 0x67 (CHFRSCANNER_ReadRssiSettled()): SPEC4815_PLATEAU_READS
- * reads in a row within SPEC4815_PLATEAU_TOL raw counts of a reference that
- * restarts whenever a read leaves that band; the mean of the plateau.  The
- * cap keeps a dead chip from stalling the sweep. */
-#define SPEC4815_PLATEAU_READS  6u
-#define SPEC4815_PLATEAU_TOL    2u
-#define SPEC4815_SETTLE_MAX_US  8000u
+/* Port addition: the BK4815's settled RSSI.  Its 0x44 meter is a
+ * sample-and-hold that updates about every 8 ms, and the first update after a
+ * retune still carries the old frequency's level: radio 2026-10-30, 1 sample
+ * per ms after a jump, 0x44 = 0 0 0 0 0 20 x8 10 x8 13 ... -- settled on the
+ * second/third update, 13-21 ms after the tune.  A fixed 350 us (or a
+ * plateau of back-to-back reads, which all see the same held value) therefore
+ * reads earlier bins: a PMR2 carrier peaked anywhere from 445.62 to 446.32 MHz
+ * with the sweep direction (radio 2026-10-29).  So wait for the meter's own
+ * updates: return the value after its SPEC4815_UPDATES-th change, capped (a
+ * level that does not change produces no edge). */
+#define SPEC4815_UPDATES        2u
+#define SPEC4815_POLL_US        250u
+#define SPEC4815_SETTLE_MAX_US  24000u
 
 static uint16_t Read4815Settled(void)
 {
     const uint32_t t0 = systick_micros();
-    uint16_t ref  = bk4815_read_rssi();
-    uint16_t last = ref;
-    uint8_t  flat = 0;
-    uint32_t sum  = 0;
+    uint16_t value   = bk4815_read_rssi();
+    uint8_t  updates = 0;
 
-    while (flat < SPEC4815_PLATEAU_READS &&
+    while (updates < SPEC4815_UPDATES &&
            (uint32_t)(systick_micros() - t0) < SPEC4815_SETTLE_MAX_US)
     {
-        const uint16_t r    = bk4815_read_rssi();
-        const uint16_t diff = (r > ref) ? (uint16_t)(r - ref) : (uint16_t)(ref - r);
+        const uint16_t r = bk4815_read_rssi();
 
-        last = r;
-        if (diff > SPEC4815_PLATEAU_TOL) {
-            ref  = r;
-            flat = 0;
-            sum  = 0;
-        } else {
-            flat++;
-            sum += r;
+        if (r != value) {
+            value = r;
+            updates++;
         }
+        SYSTICK_DelayUs(SPEC4815_POLL_US);
     }
 
-    return flat ? (uint16_t)((sum + flat / 2u) / flat) : last;
+    return value;
 }
 
 uint16_t GetRssi()
 {
     if (activeChip == SPECTRUM_CHIP_4815)
     {
-        /* Port addition: the BK4815 has no glitch indicator.  Let its PLL/AGC
-         * settle for the fixed delay of the FAST scanner's BK4815 probe, then
-         * follow 0x44 until it holds still (Read4815Settled()). */
-        SYSTICK_DelayUs(spectrum_rf_rssi_settle_us(SPECTRUM_CHIP_4815));
+        /* Port addition: the BK4815 has no glitch indicator; wait out its
+         * meter's sample-and-hold instead (Read4815Settled()). */
         return spectrum_rf_normalize_rssi(SPECTRUM_CHIP_4815, Read4815Settled());
     }
 

@@ -38,10 +38,6 @@ int main(void)
           "4815 rssi full scale -> 508");
     check(spectrum_rf_normalize_rssi(SPECTRUM_CHIP_4815, 0xFF) == 508,
           "4815 rssi masked to 7 bits");
-    check(spectrum_rf_rssi_settle_us(SPECTRUM_CHIP_4829) == 0u,
-          "4829 keeps its glitch-indicator settle path");
-    check(spectrum_rf_rssi_settle_us(SPECTRUM_CHIP_4815) == 350u,
-          "4815 gets the FAST scanner's BK4815 settle delay");
 
     /* The persisted byte round-trips; anything else decodes to 4829. */
     check(spectrum_rf_decode_chip(spectrum_rf_encode_chip(SPECTRUM_CHIP_4829)) == SPECTRUM_CHIP_4829,
