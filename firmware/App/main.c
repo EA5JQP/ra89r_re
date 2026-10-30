@@ -379,6 +379,7 @@ static void print_help(void)
               "          n BK4815 (PB13): dump all registers, boot config, tune, meters\n"
               "          J dual-RF live state: roles, audio source, BK4815 regs/meters\n"
               "          A force the BK4815 AF open (bypass squelch) to test audio\n"
+              "          ( cycle the BK4815 0x0C power word   [ BK4829 AF on a BK4815 lane\n"
               "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
               "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
               "          BT: F then MENU opens the BT screen (switch, pairing, gains)\n"
@@ -934,6 +935,29 @@ static void scan_rate_benchmark(void)
  * receive audio, the squelch state, and the BK4815's own registers/meters, then
  * samples its 0x44 RSSI.  This is the one that reflects what the running radio
  * is actually doing. */
+/* Console '(' / '[': one second of the BK4815's receive meters -- 0x0C read
+ * back, 0x44 RSSI, and 0x49 bits 14:07, the datasheet's read-only RX audio
+ * level -- with the BK4829's 0x67 and AF word alongside. */
+static void bk4815_audio_sample(void)
+{
+    unsigned n, lo = 0xFFu, hi = 0u, sum = 0u, rssi_hi = 0u;
+
+    for (n = 0; n < 50u; n++) {
+        const unsigned lvl  = (bk4815_read_reg(0x49u) >> 7) & 0xFFu;
+        const unsigned rssi = bk4815_read_rssi();
+
+        lo = (lvl < lo) ? lvl : lo;
+        hi = (lvl > hi) ? lvl : hi;
+        sum += lvl;
+        rssi_hi = (rssi > rssi_hi) ? rssi : rssi_hi;
+        SYSTICK_DelayUs(20000u);
+    }
+    uart_printf("  4815 0x0C=0x%04X 0x44max=%u audio(0x49[14:7]) min %u avg %u max %u"
+                " | 4829 0x67=%u 0x47=0x%04X\n",
+                (unsigned)bk4815_read_reg(0x0Cu), rssi_hi, lo, sum / 50u, hi,
+                (unsigned)BK4819_GetRSSI(), (unsigned)BK4819_ReadRegister(BK4819_REG_47));
+}
+
 static void dual_rf_diag(void)
 {
     const rf_xcvr_t a = SETTINGS_GetVfoTransceiver(0u);
@@ -2297,6 +2321,26 @@ int main(void)
                 /* The receive-audio registers, as the spectrum prints them on
                  * a listen-on -- for comparing normal receive with it. */
                 SPECTRUM_DumpAudioRegs("\nnormal");
+                break;
+            case '(': {
+                /* Bench: cycle the BK4815's 0x0C power word through the idle
+                 * 0x0A03, the datasheet's RX 0x0603 and the stock's lane-0
+                 * 0x0203 (bk4815.h).  rf_dual_refresh() rewrites it on the next
+                 * VFO/frequency change or PTT. */
+                static const uint16_t words[] = { 0x0A03u, 0x0603u, 0x0203u };
+                static unsigned w;
+
+                w = (w + 1u) % (sizeof(words) / sizeof(words[0]));
+                bk4815_write_reg(0x0Cu, words[w]);
+                uart_printf("\nBK4815 0x0C <- 0x%04X\n", (unsigned)words[w]);
+                bk4815_audio_sample();
+                break;
+            }
+            case '[':
+                rx_set_4829_af_on_4815_lane(!rx_4829_af_on_4815_lane());
+                uart_printf("\nBK4829 AF on a BK4815 lane: %s\n",
+                            rx_4829_af_on_4815_lane() ? "follows the gate (open)" : "kept muted");
+                bk4815_audio_sample();
                 break;
             case '^':
                 /* Bench: flip the BK4815's 0x75 bit 10 (LO injection side). */
