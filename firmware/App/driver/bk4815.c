@@ -127,24 +127,44 @@ void bk4815_configure(void)
         bk4815_write_reg(bk4815_config[i].reg, bk4815_config[i].value);
 }
 
+/* 0x75 bit 10, the LO injection side (see bk4815_set_band()).  Set, as the
+ * stock leaves it; console '^' flips it for a bench comparison. */
+static bool s_bit10 = true;
+
+void bk4815_set_lo_bit10(bool set)
+{
+    s_bit10 = set;
+    bk4815_write_reg(0x75u, (uint16_t)((bk4815_read_reg(0x75u) & 0xfbffu) |
+                                       (set ? 0x0400u : 0u)));
+}
+
+bool bk4815_lo_bit10(void)
+{
+    return s_bit10;
+}
+
 void bk4815_set_band(uint16_t band)
 {
     /* The stock's FUN_08013790 is a read-modify-write: `0x75 = (read & 0xFFC0)
-     * | value`, which preserves the register's own state.  Two of those bits
-     * must *not* be preserved here, though:
+     * | value`, which preserves the register's own state -- bit 10 included,
+     * which stays at its reset value 1.  This writes bit 10 explicitly:
      *
-     *   - bit 10 is the datasheet's LO injection side.  The stock's synthesizer
-     *     programs the IF in registers 0x7E/0x7F (its per-band "calibration"
-     *     word, which is really the RX IF), while this port -- like the stock's
-     *     own word -- tunes `Ndiv * fwanted` with no IF offset.  With bit 10
-     *     set (the part's reset state, 0x0400) the 4815 sees a constant
-     *     LO-leakage level (0x44 = 28 at 145-146 MHz, 21 at 174 MHz, unmoved by
-     *     a -30 dBm carrier -- radio 2026-10-21), i.e. high-side injection with
-     *     no matching IF.  Force it low-side: bit 10 = 0.
+     *   - bit 10 is the LO injection side.  The per-band words in 0x7E/0x7F
+     *     (bk4815_set_frequency()) are all -137 kHz, the IF, in their band's
+     *     units, so the LO sits at f - 137 kHz and only low-side injection
+     *     (LO + IF) receives f.  Bit 10 = 1 is that side: radio 2026-10-30,
+     *     tinySA -68 dBm at 405 / 446.01875 / 515 MHz -- bit 10 = 1 peaks on
+     *     the channel (+67 over the floor; the f + 275 kHz image +28..32),
+     *     bit 10 = 0 receives f - 275 kHz = LO - IF and almost nothing on the
+     *     channel.  The 2026-10-21 "bit 10 = 0" reading (a constant 0x44 =
+     *     28 at VHF with bit 10 set) was taken with the broken VHF generator
+     *     coupling that docs/ra89r_bk4815.md withdraws; VHF itself is not yet
+     *     re-measured.
      *   - the low six bits are the band code.
      *
      * Bits 15:11 and 9:6 (RX-audio source, tone-to-audio) are preserved. */
-    bk4815_write_reg(0x75u, (uint16_t)((bk4815_read_reg(0x75u) & 0xfbc0u) | (band & 0x3fu)));
+    bk4815_write_reg(0x75u, (uint16_t)((bk4815_read_reg(0x75u) & 0xfbc0u) |
+                                       (s_bit10 ? 0x0400u : 0u) | (band & 0x3fu)));
 }
 
 /* --------------------------------------------------------- receive entry --- */

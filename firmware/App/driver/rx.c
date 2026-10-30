@@ -763,6 +763,7 @@ static uint32_t s_dual_sec_f = 0u;
 static uint8_t  s_dual_rx_vfo = 0xFFu;   /* the RX_VFO the state was applied for */
 static uint32_t s_4829_mirror_f;         /* unassigned BK4829: the BK4815 tune mirrored onto it */
 static uint16_t s_band_written;          /* the BK4815 0x75 value rf_dual_refresh last wrote */
+static bool     s_tr_idle_written;       /* rf_dual_refresh put the BK4815's 0x0C to idle */
 
 void rf_dual_reapply(void)
 {
@@ -775,6 +776,9 @@ void rf_dual_reapply(void)
      * the BK4829's frequency (a scan commit, a transmit), so the cached value
      * no longer says what the chip holds. */
     s_band_written = 0u;
+    /* ... and its T/R state: tx_start()/tx_stop() rewrite 0x0C from the
+     * BK4829's band. */
+    s_tr_idle_written = false;
 }
 
 void rf_dual_refresh(void)
@@ -879,6 +883,21 @@ void rf_dual_refresh(void)
                 s_band_written = band;
             }
         }
+
+        /* The BK4815's T/R state must be idle (0x0A03) for it to receive.
+         * rx_init() and tx_start()/tx_stop() set 0x0C from the *BK4829's*
+         * band -- parked (0xFFFB) at or below 134 MHz, the stock's rule for an
+         * unused BK4815 -- and nothing else ever wrote it, so a boot or a PTT
+         * with the BK4829 on VHF left a BK4815 VFO deaf until the next reboot.
+         * Radio 2026-10-30: VFO A 120.1 MHz on the BK4829, VFO B 446.01875 on
+         * the BK4815: 0x0C = 0xFFFF, 0x44 = 0 with a -30 dBm carrier; after
+         * 0x0C = 0x0A03 the same carrier read 56 over a floor of 4-7. */
+        if (!s_tr_idle_written) {
+            bk4815_write_reg(0x0C, 0x0A03u);
+            s_tr_idle_written = true;
+        }
+    } else {
+        s_tr_idle_written = false;
     }
 
     /* The 0x33 receive-path pin is the *lane's*, set by rx_set_audio_source()

@@ -142,6 +142,12 @@ void bk4815_set_tone(uint32_t tone_hz);
  * the VHF values, 0x0A/0x12 the UHF ones. */
 void bk4815_set_band(uint16_t band);
 
+/* 0x75 bit 10, the LO injection side, applied at once and kept by every
+ * later bk4815_set_band().  Default 1 (low-side, as the stock leaves it; see
+ * bk4815_set_band()); console '^' flips it for a bench comparison. */
+void bk4815_set_lo_bit10(bool set);
+bool bk4815_lo_bit10(void);
+
 /* The chip's RSSI indicator: register 0x44, bits 6:0. */
 uint16_t bk4815_read_rssi(void);
 

@@ -359,6 +359,7 @@ static void print_help(void)
     uart_puts("\nthe K1 GUI owns the panel; these are console diagnostics\n"
               "          h help   i diagnostics   d dump screen as ASCII\n"
               "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
+              "          ^ flip the BK4815's 0x75 bit 10 (LO injection side)\n"
               "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40)   y toggle PA1   z toggle 0x33 pin 2 (0x10)\n          H audio chain (regs 0x30/0x47/0x48/0x50, PC13, squelch, lane)\n          o cycle SetScn   7 cycle SQL   8 switch VFO A/B   9/I cycle TrVfoA/B\n          N arm a +/-500 kHz range   E start/stop the scan   U arm the airband (108-136.975, 8.33 kHz)\n"
               "          D step the RF bus delay (find what still gives audio)\n"
               "          P time the loop's hot paths on this radio\n"
@@ -2291,6 +2292,13 @@ int main(void)
                 uart_printf("\nTrVfoA = %s\n", x == RF_XCVR_BK4815 ? "4815" : "4829");
                 break;
             }
+            case '^':
+                /* Bench: flip the BK4815's 0x75 bit 10 (LO injection side). */
+                bk4815_set_lo_bit10(!bk4815_lo_bit10());
+                uart_printf("\nBK4815 0x75 bit 10 = %u (0x75 = 0x%04X)\n",
+                            (unsigned)bk4815_lo_bit10(),
+                            (unsigned)bk4815_read_reg(0x75u));
+                break;
             case 'I': {
                 const rf_xcvr_t x = (SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815)
                                         ? RF_XCVR_BK4829 : RF_XCVR_BK4815;
