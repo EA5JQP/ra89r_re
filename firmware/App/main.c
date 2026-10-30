@@ -380,6 +380,7 @@ static void print_help(void)
               "          J dual-RF live state: roles, audio source, BK4815 regs/meters\n"
               "          A force the BK4815 AF open (bypass squelch) to test audio\n"
               "          ( cycle the BK4815 0x0C power word   [ BK4829 AF on a BK4815 lane\n"
+              "          { dump every BK4829 register (0x00-0x7F, read-only)\n"
               "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
               "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
               "          BT: F then MENU opens the BT screen (switch, pairing, gains)\n"
@@ -2334,6 +2335,24 @@ int main(void)
                 bk4815_write_reg(0x0Cu, words[w]);
                 uart_printf("\nBK4815 0x0C <- 0x%04X\n", (unsigned)words[w]);
                 bk4815_audio_sample();
+                break;
+            }
+            case '{': {
+                /* Every BK4829 register 0x00-0x7F, 8 a line, read-only -- for
+                 * diffing two receive states.  0x5F (the FSK word FIFO) is
+                 * skipped: reading it pops the FIFO. */
+                uint8_t r;
+
+                uart_puts("\nBK4829 regs");
+                for (r = 0; r < 0x80u; r++) {
+                    if ((r & 7u) == 0u)
+                        uart_printf("\n  %02x:", (unsigned)r);
+                    if (r == 0x5Fu)
+                        uart_puts(" ----");
+                    else
+                        uart_printf(" %04x", (unsigned)BK4819_ReadRegister((BK4819_REGISTER_t)r));
+                }
+                uart_puts("\n");
                 break;
             }
             case '[':
