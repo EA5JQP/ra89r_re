@@ -56,6 +56,16 @@
 #define BK4815_AF_ON   0x1a02u   /* hard mute clear */
 #define BK4815_AF_OFF  0x9a02u   /* hard mute set */
 
+/* 0x0C, the per-block power-down word (datasheet Table 4, 1 = powered down).
+ * The boot/idle word 0x0A03 receives and demodulates -- 0x44 and the 0x49
+ * audio level both follow a carrier -- but keeps bit 11 (RX Audio) set, and
+ * the part's audio never reaches the speaker; the datasheet's RX word 0x0603
+ * (bit 10, TX Audio, set) is silent too.  Only the stock's lane-0 word 0x0203,
+ * both bits clear, is heard (radio 2026-10-30, tinySA FM tone on 446.01875:
+ * 0x0A03 noise, 0x0603 noise, 0x0203 tone, 0x0A03 noise again). */
+#define BK4815_PWR_RX_AUDIO 0x0203u
+#define BK4815_PWR_RX_QUIET 0x0a03u
+
 /* True when register 0 reads back the BK4815 id. */
 bool bk4815_detect(void);
 

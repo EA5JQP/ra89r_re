@@ -266,6 +266,21 @@ void rx_scan_commit(uint32_t freq_10hz)
     rx_apply_audio_gate();
 }
 
+/* Bench (console '['): whether a BK4815 lane also opens the BK4829's AF
+ * output, as the gate below did from 2026-10-27 until the 0x0C fix. */
+static bool s_4829_af_on_4815_lane = false;
+
+void rx_set_4829_af_on_4815_lane(bool on)
+{
+    s_4829_af_on_4815_lane = on;
+    rx_apply_audio_gate();
+}
+
+bool rx_4829_af_on_4815_lane(void)
+{
+    return s_4829_af_on_4815_lane;
+}
+
 void rx_force_bk4815_af(bool on)
 {
     s_force_4815_af = on;
@@ -290,10 +305,7 @@ static void rx_set_audio_source(bool use_4815)
 
     s_audio_4815  = use_4815;
     s_settle_polls = RX_SETTLE_POLLS;   /* a lane switch retunes the audio path */
-    /* Mute both and let the squelch open the selected one.  The BK4815's audio
-     * shares the BK4829's AF node (measured: it is only audible while the
-     * BK4829's AF is open, e.g. with the K1 squelch at 0), so the BK4815 source
-     * must open the BK4829's AF as well as its own 0x49. */
+    /* Mute both and let the squelch open the selected one. */
     BK4819_SetAF(BK4819_AF_MUTE);
     bk4815_set_af(false);
     s_squelch_open = false;
@@ -316,15 +328,17 @@ void rx_apply_audio_gate(void)
     if (s_audio_4815) {
         bk4815_set_af(s_squelch_open);
 
-        /* The BK4815's voice reaches the speaker only through the BK4829's
-         * open AF output (0x47 = 0x6142): radio 2026-10-27, lane 4815 squelch
-         * open, 0x47 = 0x6040 gave no audio at all, 0x6142 a clean voice.  So
-         * the gate follows the squelch here too, also while a scan runs: the
-         * old scan-time 0x6040 made every FAST lock on a BK4815 lane silent (a
-         * scan stays active while paused on a hit).  Nothing steps the BK4829
-         * under an open BK4815 gate: the precheck probes the VFO's own chip
-         * and a paused hit stops the sweep. */
-        BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
+        /* The BK4815 is heard through its own output once 0x0C powers it
+         * (0x0203, rf_dual_refresh()); the BK4829's AF stays muted.  On a
+         * BK4815 lane the BK4829 does not hear the carrier (0x67 53-62 with
+         * it on or off), so its open AF only adds noise: radio 2026-10-30,
+         * tinySA FM tone on 446.01875, 0x47 = 0x6142 tone, 0x6042 a much
+         * cleaner tone.  The old belief that the BK4815's audio rides the
+         * BK4829's output (2026-10-27: muting it silenced the receiver) was
+         * measured with the BK4815's output unpowered (0x0C = 0x0A03): what
+         * was heard then was the BK4829's own demodulator. */
+        BK4819_SetAF((s_squelch_open && s_4829_af_on_4815_lane) ? BK4819_AF_FM
+                                                                : BK4819_AF_MUTE);
     } else {
         bk4815_set_af(false);
         BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
@@ -763,7 +777,7 @@ static uint32_t s_dual_sec_f = 0u;
 static uint8_t  s_dual_rx_vfo = 0xFFu;   /* the RX_VFO the state was applied for */
 static uint32_t s_4829_mirror_f;         /* unassigned BK4829: the BK4815 tune mirrored onto it */
 static uint16_t s_band_written;          /* the BK4815 0x75 value rf_dual_refresh last wrote */
-static bool     s_tr_idle_written;       /* rf_dual_refresh put the BK4815's 0x0C to idle */
+static uint16_t s_tr_written;            /* the BK4815 0x0C word rf_dual_refresh last wrote */
 
 void rf_dual_reapply(void)
 {
@@ -778,7 +792,7 @@ void rf_dual_reapply(void)
     s_band_written = 0u;
     /* ... and its T/R state: tx_start()/tx_stop() rewrite 0x0C from the
      * BK4829's band. */
-    s_tr_idle_written = false;
+    s_tr_written = 0u;
 }
 
 void rf_dual_refresh(void)
@@ -813,17 +827,13 @@ void rf_dual_refresh(void)
         f4815 = gEeprom.VfoInfo[roles.bk4815_vfo].freq_config_RX.Frequency;
     s_4815_freq = f4815;
 
-    /* An unassigned BK4829 -- both VFOs on the BK4815, the usual setup here --
-     * is left receiving on whatever frequency it had last.  Its RX chain is
-     * the audio path the BK4815's audio rides (radio 2026-10-18: parking its
-     * demodulator silenced the receiver completely, and muting its AF output
-     * did the same), and while it sits on another frequency its demodulated
-     * noise sums into that path -- which is the "noise, squelch open" fault
-     * chased for so long.  The one state that works is the 4829 on the *same*
-     * channel as the BK4815 (the good capture had exactly that, RSSI 281).
-     * So mirror the BK4815's tune onto the unassigned 4829: its demod then
-     * sees the same carrier, its noise is the carrier's, and the shared audio
-     * path stays alive.  A VFO that names the chip tunes it itself. */
+    /* An unassigned BK4829 -- both VFOs on the BK4815 -- gets the BK4815's
+     * tune mirrored onto it.  This was the fix for "noise, squelch open" when
+     * the BK4829 was believed to carry the BK4815's audio; that noise was the
+     * BK4829's own open AF with the BK4815's output unpowered (0x0C, see
+     * rx_apply_audio_gate()), and the BK4829's AF now stays muted on a BK4815
+     * lane, so the mirror should no longer matter.  Kept until that is
+     * checked on the radio.  A VFO that names the chip tunes it itself. */
     if (roles.bk4829_vfo < 0) {
         if (f4815 != 0u && f4815 != s_4829_mirror_f) {
             BK4819_SetFrequency(f4815);
@@ -884,20 +894,27 @@ void rf_dual_refresh(void)
             }
         }
 
-        /* The BK4815's T/R state must be idle (0x0A03) for it to receive.
-         * rx_init() and tx_start()/tx_stop() set 0x0C from the *BK4829's*
-         * band -- parked (0xFFFB) at or below 134 MHz, the stock's rule for an
-         * unused BK4815 -- and nothing else ever wrote it, so a boot or a PTT
-         * with the BK4829 on VHF left a BK4815 VFO deaf until the next reboot.
-         * Radio 2026-10-30: VFO A 120.1 MHz on the BK4829, VFO B 446.01875 on
-         * the BK4815: 0x0C = 0xFFFF, 0x44 = 0 with a -30 dBm carrier; after
-         * 0x0C = 0x0A03 the same carrier read 56 over a floor of 4-7. */
-        if (!s_tr_idle_written) {
-            bk4815_write_reg(0x0C, 0x0A03u);
-            s_tr_idle_written = true;
+        /* The BK4815's power word 0x0C must be a receive word for it to
+         * hear anything.  rx_init() and tx_start()/tx_stop() set 0x0C from
+         * the *BK4829's* band -- parked (0xFFFB) at or below 134 MHz, the
+         * stock's rule for an unused BK4815 -- and nothing else ever wrote it,
+         * so a boot or a PTT with the BK4829 on VHF left a BK4815 VFO deaf
+         * until the next reboot (radio 2026-10-30: 0x0C = 0xFFFF, 0x44 = 0
+         * with a -30 dBm carrier).  And the receive word has to power the
+         * audio output while the BK4815 is the lane being heard: 0x0A03
+         * demodulates but is never heard, 0x0203 is (bk4815.h).  An assigned
+         * BK4815 that is not the lane keeps the quiet word. */
+        {
+            const uint16_t pwr = rx_vfo_is_4815() ? BK4815_PWR_RX_AUDIO
+                                                  : BK4815_PWR_RX_QUIET;
+
+            if (pwr != s_tr_written) {
+                bk4815_write_reg(0x0C, pwr);
+                s_tr_written = pwr;
+            }
         }
     } else {
-        s_tr_idle_written = false;
+        s_tr_written = 0u;
     }
 
     /* The 0x33 receive-path pin is the *lane's*, set by rx_set_audio_source()
