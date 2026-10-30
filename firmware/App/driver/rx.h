@@ -374,6 +374,11 @@ void rx_tail_set_close_delay(int delay);
 void rx_force_bk4815_af(bool on);
 bool rx_force_bk4815_af_on(void);
 
+/* Bench (console '['): open the BK4829's AF output together with a BK4815
+ * lane's gate, or keep it muted there (the default). */
+void rx_set_4829_af_on_4815_lane(bool on);
+bool rx_4829_af_on_4815_lane(void);
+
 /* The frequency the BK4829 was last tuned to, in 10 Hz units, for diagnostics. */
 uint32_t rx_rx_frequency(void);
 
