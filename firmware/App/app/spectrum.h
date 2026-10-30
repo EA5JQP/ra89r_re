@@ -188,6 +188,10 @@ typedef struct PeakInfo
 
 void APP_RunSpectrum(void);
 
+/* Port addition (bring-up): both chips' receive-audio registers on the
+ * console (spectrum.c). */
+void SPECTRUM_DumpAudioRegs(const char *tag);
+
 #endif /* ifndef SPECTRUM_H */
 
 // vim: ft=c

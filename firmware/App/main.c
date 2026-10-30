@@ -138,6 +138,7 @@ static int cat_console_getc(void)
 #include "driver/py25q16.h"
 #include "app/app.h"
 #include "app/chFrScanner.h"
+#include "app/spectrum.h"
 #include "app/common.h"
 #include "app/scanner.h"
 #include "helper/boot.h"
@@ -2292,6 +2293,11 @@ int main(void)
                 uart_printf("\nTrVfoA = %s\n", x == RF_XCVR_BK4815 ? "4815" : "4829");
                 break;
             }
+            case '&':
+                /* The receive-audio registers, as the spectrum prints them on
+                 * a listen-on -- for comparing normal receive with it. */
+                SPECTRUM_DumpAudioRegs("\nnormal");
+                break;
             case '^':
                 /* Bench: flip the BK4815's 0x75 bit 10 (LO injection side). */
                 bk4815_set_lo_bit10(!bk4815_lo_bit10());

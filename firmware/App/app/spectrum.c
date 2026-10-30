@@ -771,6 +771,30 @@ static void ToggleAudio(bool on)
     }
 }
 
+/* Port addition (bring-up): the receive-audio registers of both chips, one
+ * line each.  The spectrum prints it on every listen-on; the console's '&'
+ * prints the same set in normal receive, so the two can be compared. */
+void SPECTRUM_DumpAudioRegs(const char *tag)
+{
+#if SPECTRUM_TRACE
+    static const uint8_t r29[] = { 0x13, 0x2A, 0x30, 0x31, 0x33, 0x37, 0x3D,
+                                   0x42, 0x43, 0x47, 0x48, 0x50, 0x67, 0x73, 0x7E };
+    static const uint8_t r15[] = { 0x01, 0x0C, 0x16, 0x2B, 0x44, 0x49, 0x6D,
+                                   0x70, 0x73, 0x75 };
+    uint8_t i;
+
+    uart_printf("%s 4829", tag);
+    for (i = 0; i < sizeof r29; i++)
+        uart_printf(" %02x=%04x", (uint32_t)r29[i], (uint32_t)BK4819_ReadRegister(r29[i]));
+    uart_printf("\r\n%s 4815", tag);
+    for (i = 0; i < sizeof r15; i++)
+        uart_printf(" %02x=%04x", (uint32_t)r15[i], (uint32_t)bk4815_read_reg(r15[i]));
+    uart_printf("\r\n");
+#else
+    (void)tag;
+#endif
+}
+
 static void ToggleRX(bool on)
 {
     #ifdef ENABLE_FEAT_F4HWN_SPECTRUM
@@ -804,6 +828,7 @@ static void ToggleRX(bool on)
         if (activeChip != SPECTRUM_CHIP_4815)
             BK4819_WriteRegister(0x43, listenBWRegValues[settings.listenBw]);
         setTailFoundInterrupt();
+        SPECTRUM_DumpAudioRegs("spec: listen");
     #else
         listenT = 1000;
         if (activeChip != SPECTRUM_CHIP_4815)
