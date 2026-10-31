@@ -683,6 +683,47 @@ setting.  The K1 reads its per-band low/mid/high calibration from EEPROM
 **provisional** stand-in; the per-level duty for each band still needs a measured
 sweep, and the provisional table is where its results go.
 
+### TX between the bands: 300 MHz (radio 2026-10-31)
+
+The board has two TX filter paths, selected by the `0x33` band pins
+(`FUN_0801BDE8`, above): `0x40` for the stock's band 0 (108-174 MHz) and
+`0x20` for its bands 1/2 (the codeplug's disabled "250 MHz" entry and
+400-520 MHz).  The port picks the pin by `PA_BAND_SPLIT` (280 MHz), so a TX
+between 280 and 400 MHz goes out on the UHF path -- the stock's own choice for
+its in-between band.  The default band plan (`F_LOCK_DEF`) allows TX at
+174-350 MHz (350-400 with 350 EN); it is left that way on purpose, so this is
+what such a transmission does.
+
+Measured at 300.000 MHz, power 7 (PB14 compare 719 = the ARR/2 clamp, `0x36 =
+0xC8A2`, `0x33 = 0x8033`), remote PTT (console `+`), tinySA HIGH input in line
+behind the pads, 250-950 MHz, 2.4 MHz bins:
+
+| | 60 dB in line | 70 dB in line | at the radio (70 dB) |
+|---|---|---|---|
+| 300 MHz carrier | -24.9 dBm | -34.9 dBm | +35.1 dBm, **3.2 W** (a Surecom read 3.5 W) |
+| 600 MHz, 2nd | -38.4 dBm | -45.4 dBm | +24.6 dBm, ~0.3 W, **~-10 to -13 dBc** |
+| 900 MHz, 3rd | -52.9 dBm | -79.4 dBm | <= 0.1 mW, ~-44 dBc or better |
+| VHF pin `0x40` forced (live `}` write) | | -81 to -90 dBm | the VHF path passes none of it |
+
+The carrier fell by the added 10 dB, so the chain is linear for it.  The 2nd
+harmonic fell 7 dB (within the bin spread of 10): it is real, not made in
+the tinySA (which would fall ~20 dB).  The 3rd fell 26.5 dB, so the 60 dB
+reading was mostly the tinySA's own.  Reading: each path is a low-pass after
+the PA; the UHF one is built to pass up to ~520 MHz, so 300 MHz goes through
+at full power and its 2nd harmonic at 600 MHz is barely attenuated.  **A
+transmission between the bands is strong but spectrally dirty** -- a clean
+transmitter is ~-60 dBc.  At 145.5 MHz the same test shows only the VHF pin
+passing.
+
+Two measurement traps from the same session: a tinySA reading through
+leakage (not in line) read 124 dB below the Surecom's 8 W and varies with
+frequency, so it gave a false "300 MHz is blocked"; and a reading at -25 dBm
+on the tinySA's input carries its own harmonics -- add attenuation and check
+that each line drops by the pad's value.  The test keyed the radio over the
+console (`+`/`-` remote PTT, `~` for the PWM, `}` for `0x33`), so it can be
+repeated without touching PTT; the scratch script that ran it is not in
+`tools/` yet.
+
 ## Open
 
 1. **Which chip does what.**  Answered as far as static reading goes: the BK4829

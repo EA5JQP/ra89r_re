@@ -104,6 +104,30 @@ static void check_bt_gains(void)
     if (!ok) failures++;
 }
 
+/* The hidden menu's band plan (F Lock) and 350 EN survive a save + reload
+ * (settings blob v5); before, every boot was back to F_LOCK_DEF. */
+static void check_flock_persists(void)
+{
+    const uint8_t before_lock = gSetting_F_LOCK;
+    const bool    before_350  = gSetting_350EN;
+    bool ok;
+
+    gSetting_F_LOCK = F_LOCK_NONE;
+    gSetting_350EN  = true;
+    SETTINGS_SaveSettings();
+    gSetting_F_LOCK = F_LOCK_DEF;
+    gSetting_350EN  = false;
+    SETTINGS_InitEEPROM();
+    ok = gSetting_F_LOCK == F_LOCK_NONE && gSetting_350EN;
+    printf("[settings] %s F Lock + 350 EN survive save/reload (lock=%u 350en=%u)\n",
+           ok ? "ok  " : "FAIL", (unsigned)gSetting_F_LOCK, (unsigned)gSetting_350EN);
+    if (!ok) failures++;
+
+    gSetting_F_LOCK = before_lock;
+    gSetting_350EN  = before_350;
+    SETTINGS_SaveSettings();
+}
+
 static void check_bt_audio_path_policy(void)
 {
     bool ok;
@@ -204,6 +228,7 @@ int main(void)
     SETTINGS_InitEEPROM();
     check_bt_speaker_switch();
     check_bt_gains();
+    check_flock_persists();
     check_bt_audio_path_policy();
     SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
 

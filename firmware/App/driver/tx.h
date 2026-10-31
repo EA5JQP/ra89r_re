@@ -69,5 +69,18 @@ tx_source_t tx_source(void);
 /* Read PTT from the keypad and drive the measured transmit chain; called by the
  * app loop (the K1's CheckKeys() leaves PTT to this port). */
 void tx_poll_ptt(void);
+/* False until PTT has been seen released once since power-on: a PTT held
+ * through boot (the hidden-menu key) does not transmit.  The K1's own PTT
+ * handling (app/generic.c) honours it too. */
+bool tx_ptt_armed(void);
+
+/* Key / release the transmitter over the UART (console '+'/'-', CAT PTT).
+ * On: the radio's TX rules apply (RADIO_CheckTx() -- band plan, TX lock, the
+ * airband ban); returns 0 when keyed or already transmitting, otherwise the
+ * refusing VfoState_t (shown on the display too).  The PTT poller leaves a
+ * remote transmission alone and releases it after 30 s.  Off ends only a
+ * remote transmission. */
+uint8_t tx_remote_ptt(bool on);
+bool    tx_remote_active(void);
 
 #endif /* DRIVER_TX_H */

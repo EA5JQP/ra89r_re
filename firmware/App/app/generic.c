@@ -30,6 +30,7 @@
 #include "app/scanner.h"
 #include "audio.h"
 #include "driver/keyboard.h"
+#include "driver/tx.h"
 #include "dtmf.h"
 #include "external/printf/printf.h"
 #include "functions.h"
@@ -126,6 +127,10 @@ void GENERIC_Key_PTT(bool bKeyPressed)
      * BK4829 with no PA bias or band pin: a weak carrier that opened a nearby
      * receiver, with no audio (radio 2026-10-31). */
     if (bt_ptt_mode(gEeprom.BT_Switch, gEeprom.BT_PTTType) == 0u)
+        return;
+    /* ... nor while PTT has not been released since power-on (held through
+     * boot to open the hidden menu). */
+    if (!tx_ptt_armed())
         return;
 
     if (SCANNER_IsScanning()) { 

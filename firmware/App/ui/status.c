@@ -132,7 +132,13 @@ void UI_DisplayStatus()
             memcpy(line + x, gFontPowerSave, sizeof(gFontPowerSave));
         }
         else if (bt_enabled()) {
-            UI_PrintStringSmallBufferNormal("BT", line + x);
+            /* Port addition: bold while an earpiece is linked (the module's
+             * +IM_BT_EAR_CONN / SCO events, bt_connected()), normal while the
+             * module is merely on.  Both fonts are 6 px a glyph. */
+            if (bt_connected())
+                UI_PrintStringSmallBufferBold("BT", line + x);
+            else
+                UI_PrintStringSmallBufferNormal("BT", line + x);
             x += 6u;   /* "BT" spans x+1..x+14; the slot is 8 */
         }
 #else
@@ -141,7 +147,13 @@ void UI_DisplayStatus()
             memcpy(line + x, gFontPowerSave, sizeof(gFontPowerSave));
         }
         else if (bt_enabled()) {
-            UI_PrintStringSmallBufferNormal("BT", line + x);
+            /* Port addition: bold while an earpiece is linked (the module's
+             * +IM_BT_EAR_CONN / SCO events, bt_connected()), normal while the
+             * module is merely on.  Both fonts are 6 px a glyph. */
+            if (bt_connected())
+                UI_PrintStringSmallBufferBold("BT", line + x);
+            else
+                UI_PrintStringSmallBufferNormal("BT", line + x);
             x += 6u;   /* "BT" spans x+1..x+14; the slot is 8 */
         }
 #endif

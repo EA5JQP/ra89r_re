@@ -364,6 +364,12 @@ here are the port's todo list:
   `GPIO_IsPttPressed()`, which the port keeps false (its PTT runs through
   `driver/tx.c`), so the port reads PB9 via `keypad_ptt2_level()` instead; only
   the F-lock mode is ported (air-copy/rescue-ops/multiboot are not enabled).
+  (2026-10-31: the boot read is now PTT1 on the PA2 ladder, `helper/boot.c`.)
+  A PTT still held when the app starts does not transmit -- `tx_ptt_armed()`
+  stays false until PTT is seen released once, in `tx_poll_ptt()` and
+  `GENERIC_Key_PTT()`; it used to key straight into the hidden menu.  F Lock
+  and 350 EN are saved in the settings blob (v5) -- they were not saved at all,
+  so every boot was back to `F_LOCK_DEF`.
 
 * **Stage 3d -- the visible gaps (unvalidated on the radio).**  `ui/battery.c`
   and `ui/scanner.c` come in verbatim (the battery widget and the scanner screen

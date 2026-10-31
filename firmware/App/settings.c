@@ -13,6 +13,7 @@
  * frequencies, its menu settings -- lives in the blob at 0x1FF000, which the
  * 2 MB part leaves empty.
  */
+#include <stddef.h>
 #include <string.h>
 
 #include "app/dtmf.h"
@@ -124,8 +125,12 @@ void SETTINGS_FixupVfoPointers(void)
  *
  * Version 2 reused the old `reserved` bytes for the per-VFO RF transceiver
  * choice; version 3 appended the old scan-transceiver byte; version 4 reuses
- * that same byte for the scan mode (SetScn).  The older layouts are kept
- * explicit below so a blob written by an older build still loads. */
+ * that same byte for the scan mode (SetScn); version 5 appends the hidden
+ * menu's band plan (F Lock) and 350 EN, which the K1 keeps in its own EEPROM
+ * and this port did not save at all -- every boot was back to F_LOCK_DEF.
+ * The older layouts are kept explicit below so a blob written by an older
+ * build still loads (storage_get_extra() refuses a read longer than what was
+ * stored). */
 typedef struct {
     uint32_t magic;
     uint16_t version;
@@ -135,7 +140,14 @@ typedef struct {
     uint16_t fm_channels[FM_CHANNELS_MAX]; /* the K1's FM memories (app/fm.c) */
 #endif
     uint8_t  scan_mode;                   /* scan_mode_t (v4), scan_transceiver_mode_t (v3) */
+    uint8_t  f_lock;                      /* gSetting_F_LOCK, TxLockModes_t (v5) */
+    uint8_t  en350;                       /* gSetting_350EN (v5) */
 } settings_extra_t;
+
+/* The version-3/4 payload: the v5 prefix up to and including the scan byte. */
+#define EXTRA_V4_SIZE ((uint32_t)offsetof(settings_extra_t, f_lock))
+_Static_assert(sizeof(settings_extra_t) <= STORAGE_EXTRA_MAX,
+               "the settings extra must fit the blob's extra area");
 
 /* The version-2 payload, byte for byte: the same prefix without the appended
  * scan byte.  Kept so a blob from an older build can still be read. */
@@ -150,7 +162,8 @@ typedef struct {
 } settings_extra_v2_t;
 
 #define EXTRA_MAGIC      0x58545241u    /* "ARTX" */
-#define EXTRA_VERSION    4u
+#define EXTRA_VERSION    5u
+#define EXTRA_VERSION_V4 4u
 #define EXTRA_VERSION_V3 3u
 #define EXTRA_VERSION_V2 2u
 
@@ -331,18 +344,28 @@ void SETTINGS_InitEEPROM(void)
      * the user last set with this firmware. */
     if (storage_load_settings()) {
         settings_extra_t extra;
+        bool             have = false;
 
         memset(&extra, 0, sizeof extra);
         if (storage_get_extra(&extra, sizeof extra) &&
-            extra.magic == EXTRA_MAGIC &&
-            (extra.version == EXTRA_VERSION || extra.version == EXTRA_VERSION_V3)) {
+            extra.magic == EXTRA_MAGIC && extra.version == EXTRA_VERSION)
+            have = true;
+        else {
+            /* A v3/v4 blob is the same layout without the v5 tail. */
+            memset(&extra, 0, sizeof extra);
+            if (storage_get_extra(&extra, EXTRA_V4_SIZE) &&
+                extra.magic == EXTRA_MAGIC &&
+                (extra.version == EXTRA_VERSION_V4 || extra.version == EXTRA_VERSION_V3))
+                have = true;
+        }
+        if (have) {
             codeplug_freq_restore(extra.freq_channels, sizeof extra.freq_channels);
             memcpy(s_rf_xcvr, extra.rf_xcvr, sizeof s_rf_xcvr);
 #ifdef ENABLE_FMRADIO
             memcpy(gFM_Channels, extra.fm_channels, sizeof gFM_Channels);
 #endif
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
-            if (extra.version == EXTRA_VERSION) {
+            if (extra.version >= EXTRA_VERSION_V4) {
                 /* The removed FAST BOTH (2) / LISTEN (3), and anything invalid,
                  * load as FAST. */
                 gSetting_set_scn = (extra.scan_mode <= (uint8_t)SCAN_MODE_FAST)
@@ -353,6 +376,11 @@ void SETTINGS_InitEEPROM(void)
                 gSetting_set_scn = (uint8_t)SCAN_MODE_FAST;
             }
 #endif
+            if (extra.version >= EXTRA_VERSION) {
+                gSetting_F_LOCK = (extra.f_lock < (uint8_t)F_LOCK_LEN)
+                                      ? extra.f_lock : (uint8_t)F_LOCK_DEF;
+                gSetting_350EN  = extra.en350 != 0u;
+            }
         } else {
             /* A version-2 blob has no scan byte: keep its fields and default
              * the scan mode to FAST. */
@@ -586,6 +614,8 @@ static bool settings_save_all(void)
 #else
     extra.scan_mode = (uint8_t)SCAN_MODE_FAST;
 #endif
+    extra.f_lock = gSetting_F_LOCK;
+    extra.en350  = gSetting_350EN ? 1u : 0u;
 
     if (!storage_set_extra(&extra, sizeof extra))
         return false;

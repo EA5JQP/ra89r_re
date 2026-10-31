@@ -116,13 +116,14 @@ void cat_apply(const uint8_t frame[CAT_FRAME_LEN])
         break;
 
     case CAT_CMD_PTT_ON:
-        tx_start(gTxVfo->freq_config_TX.Frequency, gTxVfo->TXP_CalculatedSetting,
-                 TX_SOURCE_MIC);
+        /* The remote PTT: the radio's TX rules apply (band plan, TX lock,
+         * the airband ban), the PTT poller leaves it keyed, 30 s cap. */
+        (void)tx_remote_ptt(true);
         cat_ack();
         break;
 
     case CAT_CMD_PTT_OFF:
-        tx_stop();
+        (void)tx_remote_ptt(false);
         cat_ack();
         break;
 

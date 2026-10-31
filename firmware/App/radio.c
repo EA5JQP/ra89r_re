@@ -1193,6 +1193,53 @@ void RADIO_SetVfoState(VfoState_t State)
 }
 
 
+/* Port addition: RADIO_PrepareTX()'s refusal rules, without its side effects,
+ * so the port's own PTT paths -- tx_poll_ptt() (the radio key and the BT
+ * headset) and the CAT PTT -- can honour them.  They key the measured chain
+ * through tx_start() and used to transmit even where the K1 had shown "TX
+ * DISABLE" (radio 2026-10-31).  Plus one rule the K1 does not have: the
+ * airband (108-137 MHz) is never transmitted on, whatever the band-plan
+ * setting or the channel's TX lock says -- checked on the TX frequency, so an
+ * offset cannot land there either. */
+VfoState_t RADIO_CheckTx(const VFO_Info_t *vfo)
+{
+    if (FREQUENCY_IsAirband(vfo->pTX->Frequency))
+        return VFO_STATE_TX_DISABLE;
+
+    if(TX_freq_check(vfo->pTX->Frequency) != 0
+#ifdef ENABLE_FEAT_F4HWN
+        && vfo->TX_LOCK == true
+#endif
+    ){
+        // TX frequency not allowed
+        return VFO_STATE_TX_DISABLE;
+    } else if (SerialConfigInProgress()) {
+        // TX is disabled or config upload/download in progress
+        return VFO_STATE_TX_DISABLE;
+    } else if (vfo->BUSY_CHANNEL_LOCK && gCurrentFunction == FUNCTION_RECEIVE) {
+        // busy RX'ing a station
+        return VFO_STATE_BUSY;
+    } else if (gBatteryDisplayLevel == 0) {
+        // charge your battery !git co
+        return VFO_STATE_BAT_LOW;
+    } else if (gBatteryDisplayLevel > 6) {
+        // over voltage .. this is being a pain
+        return VFO_STATE_VOLTAGE_HIGH;
+    }
+#ifdef ENABLE_BYP_RAW_DEMODULATORS
+    else if (vfo->Modulation == MODULATION_BYP || vfo->Modulation == MODULATION_RAW) {
+        // BYP/RAW are receive-only modes.
+        return VFO_STATE_TX_DISABLE;
+    }
+#endif
+    else if (vfo->Modulation != MODULATION_FM) {
+        // AM and other non-FM modes are receive-only.
+        return VFO_STATE_TX_DISABLE;
+    }
+
+    return VFO_STATE_NORMAL;
+}
+
 void RADIO_PrepareTX(void)
 {
     VfoState_t State = VFO_STATE_NORMAL;  // default to OK to TX
@@ -1217,37 +1264,9 @@ void RADIO_PrepareTX(void)
 
     RADIO_SelectCurrentVfo();
 
-    if(TX_freq_check(gCurrentVfo->pTX->Frequency) != 0
-#ifdef ENABLE_FEAT_F4HWN
-        && gCurrentVfo->TX_LOCK == true
-#endif
-    ){
-        // TX frequency not allowed
-        State = VFO_STATE_TX_DISABLE;
-        gVfoConfigureMode = VFO_CONFIGURE;
-    } else if (SerialConfigInProgress()) {
-        // TX is disabled or config upload/download in progress
-        State = VFO_STATE_TX_DISABLE;
-    } else if (gCurrentVfo->BUSY_CHANNEL_LOCK && gCurrentFunction == FUNCTION_RECEIVE) {
-        // busy RX'ing a station
-        State = VFO_STATE_BUSY;
-    } else if (gBatteryDisplayLevel == 0) {
-        // charge your battery !git co
-        State = VFO_STATE_BAT_LOW;
-    } else if (gBatteryDisplayLevel > 6) {
-        // over voltage .. this is being a pain
-        State = VFO_STATE_VOLTAGE_HIGH;
-    }
-#ifdef ENABLE_BYP_RAW_DEMODULATORS
-    else if (gCurrentVfo->Modulation == MODULATION_BYP || gCurrentVfo->Modulation == MODULATION_RAW) {
-        // BYP/RAW are receive-only modes.
-        State = VFO_STATE_TX_DISABLE;
-    }
-#endif
-    else if (gCurrentVfo->Modulation != MODULATION_FM) {
-        // AM and other non-FM modes are receive-only.
-        State = VFO_STATE_TX_DISABLE;
-    }
+    State = RADIO_CheckTx(gCurrentVfo);
+    if (State == VFO_STATE_TX_DISABLE && TX_freq_check(gCurrentVfo->pTX->Frequency) != 0)
+        gVfoConfigureMode = VFO_CONFIGURE;      /* the K1's own follow-up */
 
     if (State != VFO_STATE_NORMAL) {
         // TX not allowed

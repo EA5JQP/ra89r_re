@@ -176,6 +176,10 @@ void     RADIO_SetModulation(ModulationMode_t modulation);
 void     RADIO_ApplyBandModulation(VFO_Info_t *vfo);
 void     RADIO_SetVfoState(VfoState_t State);
 void     RADIO_PrepareTX(void);
+/* RADIO_PrepareTX()'s verdict for `vfo` without its side effects, plus the
+ * port's unconditional airband (108-137 MHz) TX refusal; VFO_STATE_NORMAL =
+ * TX allowed.  The port's own PTT paths (driver/tx.c, cat_radio.c) use it. */
+VfoState_t RADIO_CheckTx(const VFO_Info_t *vfo);
 void     RADIO_SendCssTail(void);
 void     RADIO_PrepareCssTX(void);
 void     RADIO_SendEndOfTransmission(void);

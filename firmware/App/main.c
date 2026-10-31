@@ -381,6 +381,8 @@ static void print_help(void)
               "          A force the BK4815 AF open (bypass squelch) to test audio\n"
               "          ( cycle the BK4815 0x0C power word   [ BK4829 AF on a BK4815 lane\n"
               "          { dump every BK4829 register (0x00-0x7F, read-only)   } RR VVVV write one\n"
+              "          + remote PTT on (TX rules apply, 30 s cap)   - remote PTT off\n"
+              "          ~ NNN set the PA PWM (hex, live while transmitting)\n"
               "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
               "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
               "          BT: F then MENU opens the BT screen (switch, pairing, gains)\n"
@@ -2399,6 +2401,45 @@ int main(void)
                             (unsigned)BK4819_ReadRegister((BK4819_REGISTER_t)reg));
                 break;
             }
+            case '+': {
+                /* Remote PTT on (driver/tx.c, tx_remote_ptt()): the radio's TX
+                 * rules apply, released by '-' or after 30 s. */
+                const uint8_t st = tx_remote_ptt(true);
+
+                if (st != 0u)
+                    uart_printf("\nremote PTT: refused -- %s\n", VfoStateStr[st]);
+                else
+                    uart_printf("\nremote PTT: %s\n",
+                                tx_remote_active() ? "TX (30 s cap, '-' releases)"
+                                                   : "already transmitting (not remote)");
+                break;
+            }
+            case '~': {
+                /* Bench: set the PB14 PA-bias PWM compare live -- '~' then
+                 * three hex digits (typed with a pause after the '~'), clamped
+                 * to the stock's ARR/2.  Applies to the running transmission;
+                 * the next tx_start() recomputes it from the power setting. */
+                long v;
+
+                uart_puts("\nPA PWM: ");
+                v = console_read_hex(3u);
+                if (v < 0) {
+                    uart_puts(" -- aborted\n");
+                    break;
+                }
+                if (v > (long)PA_PWM_MAX_DUTY)
+                    v = (long)PA_PWM_MAX_DUTY;
+                pa_duty = (uint16_t)v;
+                if (tx_active())
+                    pa_power((uint16_t)v);
+                uart_printf(" -> %u of %u%s\n", (unsigned)v, (unsigned)PA_PWM_ARR,
+                            tx_active() ? "" : " (applies while transmitting)");
+                break;
+            }
+            case '-':
+                (void)tx_remote_ptt(false);
+                uart_puts("\nremote PTT: released\n");
+                break;
             case '[':
                 rx_set_4829_af_on_4815_lane(!rx_4829_af_on_4815_lane());
                 uart_printf("\nBK4829 AF on a BK4815 lane: %s\n",
