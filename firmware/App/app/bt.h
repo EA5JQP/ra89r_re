@@ -75,6 +75,10 @@ const char *bt_found_rssi(unsigned i);
 bool        bt_ptt_down(void);
 /* Select which PTT input is allowed to key TX: 0=BT, 1=radio, 2=both. */
 bool        bt_ptt_source_active(bool radio_ptt, bool headset_ptt, uint8_t mode);
+/* The PTT mode in force: the saved type while Bluetooth is on, and the radio's
+ * own PTT (1) while it is off -- with no module up there is no headset to key
+ * from, so a saved "BT" must not leave the radio unable to transmit. */
+uint8_t     bt_ptt_mode(bool bt_on, uint8_t type);
 
 /* The name of the device we connected, or "None".  `bt_set_linked_name()`
  * restores the persisted name at boot. */

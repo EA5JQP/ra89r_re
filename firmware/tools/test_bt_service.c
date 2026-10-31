@@ -98,6 +98,14 @@ static void test_bt_ptt_source_matrix(void)
           "invalid PTT mode fails closed to BT-only");
     check(bt_ptt_source_active(false, true, 3u) == true,
           "invalid PTT mode retains BT PTT only");
+
+    /* Bluetooth off: the radio's own PTT, whatever type is saved. */
+    check(bt_ptt_mode(false, 0u) == 1u, "BT off + saved BT type -> radio PTT");
+    check(bt_ptt_mode(false, 2u) == 1u, "BT off + saved Both -> radio PTT");
+    check(bt_ptt_mode(true, 0u) == 0u, "BT on keeps the saved BT type");
+    check(bt_ptt_mode(true, 2u) == 2u, "BT on keeps the saved Both type");
+    check(bt_ptt_source_active(true, false, bt_ptt_mode(false, 0u)),
+          "BT off: the radio PTT keys even with BT type saved");
 }
 
 /* Drive the stock config sequence to completion, asserting each step. */

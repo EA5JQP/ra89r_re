@@ -20,6 +20,13 @@ static bool s_main;
 /* Which transceiver is the audio lane (see pa_set_rx_lane()).  The stock's
  * receive-path pin (0x33 bit 4) follows it. */
 static bool s_rx_lane_4815;
+/* Between pa_tx_enable() and pa_rx_enable(): the transmit word owns 0x33's
+ * band/T-R pins, so the receive-path code below must not touch them.
+ * rx_service() keeps running during a transmission, and with pin 0 cleared on
+ * every pass it stripped the VHF TX band pin (0x40) a slice after PTT --
+ * radio 2026-10-31: 0x33 = 0x8003 while transmitting, nothing at the antenna
+ * connector. */
+static bool s_tx_on;
 
 /* The 'F' experiment: which chip-side receive path to apply.  AUTO is the
  * BK4829's own receive state (both LNA pins clear, the stock's BK4829 branch);
@@ -135,8 +142,9 @@ void pa_set_rx_lane(bool use_4815)
 {
     s_rx_lane_4815 = use_4815;
 
-    /* The 'F' experiment modes own the pins themselves; only AUTO re-applies. */
-    if (s_chip_path != PA_CHIP_PATH_AUTO)
+    /* The 'F' experiment modes own the pins themselves; only AUTO re-applies.
+     * A transmission owns them too. */
+    if (s_chip_path != PA_CHIP_PATH_AUTO || s_tx_on)
         return;
 
     /* Checked on every pass, because the app's radio setup and the scan probes
@@ -234,7 +242,8 @@ void pa_select_band(uint32_t freq_10hz)
      * for VHF, band 2 (0x0A) for UHF. */
     bk4815_set_band(s_uhf ? 0x0Au : 0x11u);
 
-    pa_apply_chip_path();
+    if (!s_tx_on)               /* a transmission owns 0x33 (s_tx_on) */
+        pa_apply_chip_path();
 }
 
 void pa_init(void)
@@ -284,6 +293,8 @@ void pa_power(uint16_t compare)
 
 void pa_tx_enable(uint8_t power)
 {
+    s_tx_on = true;
+
     /* The stock's transmit word: the band pin (`0x40` VHF / `0x20` UHF, set by
      * FUN_0801BDE8 from the TX band index) plus the T/R pin (`0x02`, set by
      * FUN_08013A70(2)) -- 0x42 / 0x22.  The band pin comes from the 'x'
@@ -319,6 +330,8 @@ void pa_tx_enable(uint8_t power)
 
 void pa_rx_enable(void)
 {
+    s_tx_on = false;
+
     /* The stock clears both TX band pins and T/R before restoring RX. */
     s_reg33 = BK4819_ToggleGpioOutStock(0x03u, 0u);
     s_reg33 = BK4819_ToggleGpioOutStock(0x20u, 0u);

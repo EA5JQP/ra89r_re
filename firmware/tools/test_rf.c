@@ -40,6 +40,7 @@ bool bt_ptt_source_active(bool radio_ptt, bool headset_ptt, uint8_t mode)
     (void)mode;
     return radio_ptt;
 }
+uint8_t bt_ptt_mode(bool bt_on, uint8_t type) { (void)bt_on; (void)type; return 1u; }
 
 /* The GPIO/timer scratch the host device-header double points at.  This test
  * does not link tools/host/host_hw.c, so it supplies its own.  `pa_init()` is
@@ -654,6 +655,17 @@ static void test_pa_bt_audio(void)
     log_reset();
     pa_tx_enable(0x40u);
     check_hex(pa_last_reg33(), 0x8052u, "VHF TX preserves BT output and stock paired-bit clear");
+
+    /* rx_service() keeps running while transmitting: the receive-path calls it
+     * makes every 10 ms must leave the TX band pin alone (radio 2026-10-31:
+     * pin 0 cleared a slice after PTT, 0x33 = 0x8003, nothing transmitted). */
+    log_reset();
+    pa_set_rx_lane(false);
+    pa_select_band(14550000u);
+    check(last_reg33() == 0xFFFFu || (last_reg33() & 0x0040u) != 0u,
+          "no receive-path 0x33 write drops the VHF TX band pin during TX");
+    check(BK4819_IsGpioOutSet(BK4819_GPIO0_PIN28_RX_ENABLE),
+          "the 0x33 shadow still holds the VHF TX band pin while transmitting");
 
     log_reset();
     pa_set_bt_audio(false);

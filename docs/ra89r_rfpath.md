@@ -352,8 +352,15 @@ the VHF *transmit* band path.  The 2026-10-21 reading below ("pin 0 is the
 BK4829's path") was taken with the broken generator coupling.
 `pa_set_rx_lane()`, `pa_apply_chip_path()`, `RADIO_SetupRegisters()` and
 `BK4819_Conditional_RX_TurnOn_and_GPIO6_Enable()` now clear it on receive;
-`pa_tx_enable()` still sets it for a VHF transmission.  The weak-signal UHF
-case is unmeasured (the tinySA's high output starts at -38 dBm).
+`pa_tx_enable()` still sets it for a VHF transmission, and the receive-path
+code leaves `0x33` alone between `pa_tx_enable()` and `pa_rx_enable()`:
+`rx_service()` keeps running during TX, and the first version of this change
+cleared the VHF TX band pin a slice after PTT (radio 2026-10-31: `0x33 =
+0x8003` while transmitting, nothing at the antenna).  The weak-signal UHF
+case is unmeasured (the tinySA's high output starts at -38 dBm).  Weak VHF
+carriers coming up from no signal first read the floor; that was the FM AFC
+word (`0x73`, `ra89r_bk4829.md`, 2026-10-31), and with it fixed 145.5 MHz
+reads 154 / 186 / 224 at -76 / -60 / -40 dBm.
 
 **Pin 0 (`0x40`) is the other half of the lane rule.**  The K1 calls it
 `GPIO0_PIN28_RX_ENABLE` and sets it on every receive setup, but the stock's
