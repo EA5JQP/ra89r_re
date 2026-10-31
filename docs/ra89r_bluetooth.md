@@ -1,5 +1,18 @@
 # RA89R Bluetooth
 
+> **2026-10-31: link tracking checked; the status bar shows it.**  "BT" in the
+> status bar is bold while `bt_connected()` (set by `+IM_BT_EAR_CONN` /
+> `+IM_SCO_CONN`, cleared by `+IM_BT_DISCN`), normal while the module is only
+> on.  A bold icon with the earpiece switched off was real: at start-up the
+> module runs `AT+BT_CONN_LAST` and re-linked **this PC** (the
+> `ra89r_bt_headset.py` earpiece, still paired); `bluetoothctl disconnect`
+> produced `+IM_BT_DISCN` at once and the icon/`link` cleared.
+> `+IM_CONN_STATE:` field 1 reads **1 with no link, 2 linked** (`1,0,0,1` /
+> `2,0,0,1`).  An auto-reconnect now also moves the state from "Ready" to
+> "Linked".  Not yet seen: what the module sends when a real earpiece drops
+> out of range (no `+IM_BT_DISCN` would leave the icon bold; polling
+> `AT+CONN_STATE?` would then be the fallback).
+
 **Status: mapped from the stock image; driver + host test complete; the missing
 enable line is found — the module is held in reset on `PD0` until the stock's
 "BT Switch" turns Bluetooth on (branch `driver/bluetooth`).**  The protocol work

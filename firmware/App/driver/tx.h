@@ -69,5 +69,9 @@ tx_source_t tx_source(void);
 /* Read PTT from the keypad and drive the measured transmit chain; called by the
  * app loop (the K1's CheckKeys() leaves PTT to this port). */
 void tx_poll_ptt(void);
+/* False until PTT has been seen released once since power-on: a PTT held
+ * through boot (the hidden-menu key) does not transmit.  The K1's own PTT
+ * handling (app/generic.c) honours it too. */
+bool tx_ptt_armed(void);
 
 #endif /* DRIVER_TX_H */

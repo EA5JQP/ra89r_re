@@ -170,6 +170,12 @@ tx_source_t tx_source(void) { return s_source; }
  * loop (the K1's CheckKeys() deliberately leaves PTT alone here). */
 /* PTT held after a refusal; cleared on release. */
 static bool s_refused;
+/* PTT has been seen released since power-on.  Holding PTT through boot opens
+ * the hidden menu (helper/boot.c); a PTT still held when the app starts must
+ * not transmit -- it used to key straight into the hidden menu. */
+static bool s_armed;
+
+bool tx_ptt_armed(void) { return s_armed; }
 
 void tx_poll_ptt(void)
 {
@@ -189,9 +195,11 @@ void tx_poll_ptt(void)
 
     /* A refused PTT is not retried every 10 ms while it is held: the refusal
      * is shown once and the next press tries again. */
-    if (!down)
+    if (!down) {
         s_refused = false;
-    if (down && s_refused)
+        s_armed   = true;
+    }
+    if (down && (s_refused || !s_armed))
         return;
 
     if (down == tx_active())

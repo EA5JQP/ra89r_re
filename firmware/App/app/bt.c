@@ -256,7 +256,11 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
         s_connected = true;
         s_bt_linked = true;
         s_call_resume_pending = false;
-        if (s_state == BT_STATE_SCAN || s_state == BT_STATE_CONNECT)
+        /* Also from IDLE: the module reconnects the last device on its own
+         * (AT+BT_CONN_LAST at start-up), and the state read "Ready" with the
+         * link up (radio 2026-10-31). */
+        if (s_state == BT_STATE_SCAN || s_state == BT_STATE_CONNECT ||
+            s_state == BT_STATE_IDLE)
             s_state = BT_STATE_CONNECTED;
         update_stock_audio_paths();
         gUpdateDisplay = true;
@@ -278,7 +282,11 @@ void bt_service_event(bt_event_t ev, const char *payload, unsigned len)
         s_connected = true;
         s_bt_linked = true;
         s_call_resume_pending = false;
-        if (s_state == BT_STATE_SCAN || s_state == BT_STATE_CONNECT)
+        /* Also from IDLE: the module reconnects the last device on its own
+         * (AT+BT_CONN_LAST at start-up), and the state read "Ready" with the
+         * link up (radio 2026-10-31). */
+        if (s_state == BT_STATE_SCAN || s_state == BT_STATE_CONNECT ||
+            s_state == BT_STATE_IDLE)
             s_state = BT_STATE_CONNECTED;
         update_stock_audio_paths();
         s_call_on = true;
