@@ -40,6 +40,7 @@ bool bt_ptt_source_active(bool radio_ptt, bool headset_ptt, uint8_t mode)
     (void)mode;
     return radio_ptt;
 }
+uint8_t bt_ptt_mode(bool bt_on, uint8_t type) { (void)bt_on; (void)type; return 1u; }
 
 /* The GPIO/timer scratch the host device-header double points at.  This test
  * does not link tools/host/host_hw.c, so it supplies its own.  `pa_init()` is
@@ -549,11 +550,11 @@ static void test_pa_rx_path(void)
 {
     printf("pa receive path (reg 0x33)\n");
 
-    /* The lane decides the receive path (stock: pin 4 for the BK4815 entry,
-     * pins 0/1 cleared for the BK4829's).  The K1's pin 0 ("RX_ENABLE") is kept
-     * for a BK4829 lane because that is the state the port receives with, and
-     * cleared for a BK4815 lane because the stock's receive entry clears it
-     * (FUN_080093EC -> FUN_080137D4(3, 0)).  The 0x9000 bits BK4819_Init() set
+    /* The lane decides the receive path (stock: pin 4 for the BK4815 entry).
+     * The K1's pin 0 ("RX_ENABLE") is cleared on either lane, as the stock's
+     * receive entry clears pins 0/1 (FUN_080093EC -> FUN_080137D4(3, 0)): it
+     * is the VHF transmit band path, and set on receive it cost the BK4829
+     * ~45-57 dB at VHF (radio 2026-10-30).  The 0x9000 bits BK4819_Init() set
      * must survive, except the BT pin's paired 0x1000, which the stock's
      * BT-pin-off update clears. */
     pa_set_rx_lane(false);
@@ -561,13 +562,13 @@ static void test_pa_rx_path(void)
     BK4819_Init();
     log_reset();
     pa_select_band(14550000u);
-    check_hex(last_reg33(), 0x8040, "BK4829 lane keeps pin 0, clears pin 4 and the BT pair bit");
+    check_hex(last_reg33(), 0x8000, "BK4829 lane clears pin 0, pin 4 and the BT pair bit");
 
     log_reset();
     BK4819_Init();
     log_reset();
     pa_select_band(44600625u);
-    check_hex(last_reg33(), 0x8040, "BK4829 lane at UHF is the same path state");
+    check_hex(last_reg33(), 0x8000, "BK4829 lane at UHF is the same path state");
 
     pa_set_rx_lane(true);
     log_reset();
@@ -581,7 +582,7 @@ static void test_pa_rx_path(void)
     BK4819_Init();
     log_reset();
     pa_select_band(11800000u);      /* 118.0 MHz */
-    check_hex(last_reg33(), 0x8040, "BK4829 lane at 118 MHz is the same path state");
+    check_hex(last_reg33(), 0x8000, "BK4829 lane at 118 MHz is the same path state");
 }
 
 /* The K1's power ladder reaches 0x36 (its SetupPowerAmplifier) and, with the
@@ -655,6 +656,17 @@ static void test_pa_bt_audio(void)
     pa_tx_enable(0x40u);
     check_hex(pa_last_reg33(), 0x8052u, "VHF TX preserves BT output and stock paired-bit clear");
 
+    /* rx_service() keeps running while transmitting: the receive-path calls it
+     * makes every 10 ms must leave the TX band pin alone (radio 2026-10-31:
+     * pin 0 cleared a slice after PTT, 0x33 = 0x8003, nothing transmitted). */
+    log_reset();
+    pa_set_rx_lane(false);
+    pa_select_band(14550000u);
+    check(last_reg33() == 0xFFFFu || (last_reg33() & 0x0040u) != 0u,
+          "no receive-path 0x33 write drops the VHF TX band pin during TX");
+    check(BK4819_IsGpioOutSet(BK4819_GPIO0_PIN28_RX_ENABLE),
+          "the 0x33 shadow still holds the VHF TX band pin while transmitting");
+
     log_reset();
     pa_set_bt_audio(false);
     check(!pa_bt_audio(), "BT disconnect state retained");
@@ -662,15 +674,15 @@ static void test_pa_bt_audio(void)
 
     pa_set_bt_audio(true);
     pa_rx_enable();
-    check_hex(pa_last_reg33(), 0x8050u, "VHF RX transition preserves BT output");
+    check_hex(pa_last_reg33(), 0x8010u, "VHF RX transition preserves BT output, clears pin 0");
     pa_select_band(44600625u);
-    check_hex(pa_last_reg33(), 0x8050u, "UHF RX band selection preserves BT output");
+    check_hex(pa_last_reg33(), 0x8010u, "UHF RX band selection preserves BT output");
     pa_tx_enable(0xFFu);
     check_hex(pa_last_reg33(), 0x8032u, "UHF TX preserves BT output and applies band/T-R pins");
     pa_rx_enable();
-    check_hex(pa_last_reg33(), 0x8050u, "UHF TX-to-RX preserves BT output");
+    check_hex(pa_last_reg33(), 0x8010u, "UHF TX-to-RX preserves BT output");
     pa_set_bt_audio(false);
-    check_hex(pa_last_reg33(), 0x8040u, "BT off after RX clears only the BT output");
+    check_hex(pa_last_reg33(), 0x8000u, "BT off after RX clears only the BT output");
 }
 
 /* The order inside `tx_start()`: the PA enable (`0x36`, PA-CTL + bias) must be

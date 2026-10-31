@@ -17,6 +17,7 @@
 #include <string.h>
 
 #include "app/app.h"
+#include "app/bt.h"
 #include "app/chFrScanner.h"
 #include "app/common.h"
 
@@ -119,6 +120,13 @@ void GENERIC_Key_PTT(bool bKeyPressed)
 
     // PTT pressed
 
+    /* Port adaptation: with the PTT type on "BT" (and the module on), the
+     * radio's own PTT does not transmit -- tx_poll_ptt() ignores it too.
+     * Without this the K1 still ran its own TX sequence here, which keyed the
+     * BK4829 with no PA bias or band pin: a weak carrier that opened a nearby
+     * receiver, with no audio (radio 2026-10-31). */
+    if (bt_ptt_mode(gEeprom.BT_Switch, gEeprom.BT_PTTType) == 0u)
+        return;
 
     if (SCANNER_IsScanning()) { 
         SCANNER_Stop(); // CTCSS/CDCSS scanning .. stop

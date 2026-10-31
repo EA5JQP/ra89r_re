@@ -496,6 +496,11 @@ bool bt_ptt_down(void)
     return s_ptt_down;
 }
 
+uint8_t bt_ptt_mode(bool bt_on, uint8_t type)
+{
+    return bt_on ? type : 1u;
+}
+
 bool bt_ptt_source_active(bool radio_ptt, bool headset_ptt, uint8_t mode)
 {
     switch (mode) {

@@ -167,7 +167,8 @@ void tx_poll_ptt(void)
     const KEY_Code_t key  = KEYBOARD_GetKey();
     const bool       radio_ptt = (key == KEY_PTT) || (key == KEY_PTT2);
     const bool       down = bt_ptt_source_active(radio_ptt, bt_ptt_down(),
-                                                 gEeprom.BT_PTTType);
+                                                 bt_ptt_mode(gEeprom.BT_Switch,
+                                                             gEeprom.BT_PTTType));
 
     /* A console-bench transmission ('T', the chip's own DTMF tone) is not PTT:
      * it must hold until the console stops it.  Otherwise this poller sees

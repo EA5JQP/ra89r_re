@@ -380,6 +380,7 @@ static void print_help(void)
               "          J dual-RF live state: roles, audio source, BK4815 regs/meters\n"
               "          A force the BK4815 AF open (bypass squelch) to test audio\n"
               "          ( cycle the BK4815 0x0C power word   [ BK4829 AF on a BK4815 lane\n"
+              "          { dump every BK4829 register (0x00-0x7F, read-only)   } RR VVVV write one\n"
               "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
               "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
               "          BT: F then MENU opens the BT screen (switch, pairing, gains)\n"
@@ -956,6 +957,31 @@ static void bk4815_audio_sample(void)
                 " | 4829 0x67=%u 0x47=0x%04X\n",
                 (unsigned)bk4815_read_reg(0x0Cu), rssi_hi, lo, sum / 50u, hi,
                 (unsigned)BK4819_GetRSSI(), (unsigned)BK4819_ReadRegister(BK4819_REG_47));
+}
+
+/* Console '}': read `n` hex digits straight off the UART (the console's own
+ * queue is bypassed while the command waits), echoing them; -1 on a timeout
+ * or a non-hex character. */
+static long console_read_hex(unsigned n)
+{
+    long v = 0;
+
+    while (n--) {
+        const int c = uart_getc_timeout(5000u);
+        int d;
+
+        if (c >= '0' && c <= '9')
+            d = c - '0';
+        else if (c >= 'a' && c <= 'f')
+            d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F')
+            d = c - 'A' + 10;
+        else
+            return -1;
+        uart_printf("%c", c);
+        v = (v << 4) | d;
+    }
+    return v;
 }
 
 static void dual_rf_diag(void)
@@ -2334,6 +2360,43 @@ int main(void)
                 bk4815_write_reg(0x0Cu, words[w]);
                 uart_printf("\nBK4815 0x0C <- 0x%04X\n", (unsigned)words[w]);
                 bk4815_audio_sample();
+                break;
+            }
+            case '{': {
+                /* Every BK4829 register 0x00-0x7F, 8 a line, read-only -- for
+                 * diffing two receive states.  0x5F (the FSK word FIFO) is
+                 * skipped: reading it pops the FIFO. */
+                uint8_t r;
+
+                uart_puts("\nBK4829 regs");
+                for (r = 0; r < 0x80u; r++) {
+                    if ((r & 7u) == 0u)
+                        uart_printf("\n  %02x:", (unsigned)r);
+                    if (r == 0x5Fu)
+                        uart_puts(" ----");
+                    else
+                        uart_printf(" %04x", (unsigned)BK4819_ReadRegister((BK4819_REGISTER_t)r));
+                }
+                uart_puts("\n");
+                break;
+            }
+            case '}': {
+                /* Bench: write one BK4829 register -- '}' then RR VVVV in hex,
+                 * typed with a pause after the '}' (the CAT burst filter holds
+                 * fast bytes).  Prints the read-back. */
+                long reg, val;
+
+                uart_puts("\nBK4829 write: ");
+                reg = console_read_hex(2u);
+                uart_puts(" ");
+                val = (reg >= 0) ? console_read_hex(4u) : -1;
+                if (reg < 0 || val < 0 || reg > 0x7F) {
+                    uart_puts(" -- aborted\n");
+                    break;
+                }
+                BK4819_WriteRegister((BK4819_REGISTER_t)reg, (uint16_t)val);
+                uart_printf(" -> reads 0x%04X\n",
+                            (unsigned)BK4819_ReadRegister((BK4819_REGISTER_t)reg));
                 break;
             }
             case '[':
