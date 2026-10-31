@@ -186,7 +186,15 @@ void BK4819_Init(void)
     BK4819_WriteRegister(BK4819_REG_1F, 0xC65A);
     BK4819_WriteRegister(BK4819_REG_3E, 0x94C6);
 
-    BK4819_WriteRegister(0x73, 0x4691);
+    /* Port adaptation: the stock's 0x73 bits 14:11 (its BK4829 table writes
+     * 0x6681; the K1 has 0x4691).  RADIO_SetModulation() only flips bit 4 (AFC
+     * disable) from here, so with the K1 word an FM receiver went deaf once a
+     * carrier had gone away: a -38 dBm carrier on 446.01875 read 0x67 = 60
+     * against the 152 of an AFC that had been re-captured, until a strong
+     * signal pulled it back.  Writing 0x4691 (AFC off) or 0x6681 (the stock)
+     * cured it at once, and with 0x6681 the carrier came back after 3 s and
+     * 10 s gaps at 152 (radio 2026-10-31, consoles '}' and '{'). */
+    BK4819_WriteRegister(0x73, 0x6691);
     BK4819_WriteRegister(0x77, 0x88EF);
     BK4819_WriteRegister(BK4819_REG_19, 0x1041);
     BK4819_WriteRegister(BK4819_REG_28, 0x0B40);
