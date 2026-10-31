@@ -8,6 +8,7 @@
 #include "driver/pa.h"
 #include "driver/rx.h"
 #include "driver/keyboard.h"
+#include "frequencies.h"
 #include "functions.h"
 #include "misc.h"
 #include "radio.h"
@@ -65,6 +66,11 @@ void tx_init(void)
 void tx_start(uint32_t freq_10hz, uint8_t power, tx_source_t source)
 {
     if (s_active && source == s_source)
+        return;
+
+    /* Never on the airband, whoever asks (the PTT poller and CAT check
+     * RADIO_CheckTx() first; this is the last line). */
+    if (FREQUENCY_IsAirband(freq_10hz))
         return;
 
     bt_set_radio_tx_active(true);
@@ -162,6 +168,9 @@ tx_source_t tx_source(void) { return s_source; }
  * (this file) instead -- see docs/ra89r_rfpath.md.  The K1 function state is set
  * too, so the screens show TX and the status line follows.  Called by the app
  * loop (the K1's CheckKeys() deliberately leaves PTT alone here). */
+/* PTT held after a refusal; cleared on release. */
+static bool s_refused;
+
 void tx_poll_ptt(void)
 {
     const KEY_Code_t key  = KEYBOARD_GetKey();
@@ -178,10 +187,29 @@ void tx_poll_ptt(void)
     if (!down && tx_active() && tx_source() == TX_SOURCE_TONE)
         return;
 
+    /* A refused PTT is not retried every 10 ms while it is held: the refusal
+     * is shown once and the next press tries again. */
+    if (!down)
+        s_refused = false;
+    if (down && s_refused)
+        return;
+
     if (down == tx_active())
         return;
 
     if (down) {
+        /* The K1's TX rules (band plan + TX lock, busy lock, battery, receive-
+         * only modulations) and the airband ban.  The K1's own PTT handling
+         * shows the same refusal for the radio key, but this poller can see
+         * the key first, and the headset PTT never goes through the K1 at all;
+         * without the check both keyed the PA where the K1 said "TX DISABLE". */
+        const VfoState_t state = RADIO_CheckTx(gTxVfo);
+
+        if (state != VFO_STATE_NORMAL) {
+            s_refused = true;
+            RADIO_SetVfoState(state);
+            return;
+        }
         FUNCTION_Select(FUNCTION_TRANSMIT);
         tx_start(gTxVfo->freq_config_TX.Frequency,
                  gTxVfo->TXP_CalculatedSetting, TX_SOURCE_MIC);

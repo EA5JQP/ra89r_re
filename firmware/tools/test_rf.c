@@ -69,6 +69,8 @@ EEPROM_Config_t gEeprom;    /* tx.c reads the BT PTT mode; the poller is not cal
 void  rf_dual_reapply(void) { }
 unsigned KEYBOARD_GetKey(void) { return 0u; }
 void  FUNCTION_Select(int function) { (void)function; }
+VfoState_t RADIO_CheckTx(const VFO_Info_t *vfo) { (void)vfo; return VFO_STATE_NORMAL; }
+void  RADIO_SetVfoState(VfoState_t state) { (void)state; }
 void  audio_path_drive(int on) { (void)on; }   /* the 'w' variant's PC13 step */
 
 /* ------------------------------------------------------------- bus stub --- */
@@ -710,6 +712,24 @@ static void test_tx_order(void)
               "BK4815 0x70 restored from TX E000 to RX A000 after tx_stop");
 }
 
+/* The airband is never transmitted on, whoever calls tx_start(). */
+static void test_tx_airband(void)
+{
+    static const uint32_t freqs[] = { 10800000u, 12010000u, 13699000u };
+    unsigned i;
+
+    printf("tx_start refuses the airband (108-137 MHz)\n");
+    for (i = 0; i < sizeof freqs / sizeof freqs[0]; i++) {
+        log_reset();
+        tx_start(freqs[i], 0x40u, TX_SOURCE_MIC);
+        check(!tx_active() && log_len == 0u, "no TX and no bus traffic on the airband");
+    }
+    log_reset();
+    tx_start(13700000u, 0x40u, TX_SOURCE_MIC);
+    check(tx_active(), "137.000 MHz (just above the airband) still keys");
+    tx_stop();
+}
+
 int main(void)
 {
     printf("rf register-layer test (stub bus, no radio)\n\n");
@@ -725,6 +745,7 @@ int main(void)
     test_pa_tx_path();
     test_pa_bt_audio();
     test_tx_order();
+    test_tx_airband();
 
     printf("\n%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
