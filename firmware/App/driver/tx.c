@@ -7,6 +7,7 @@
 #include "driver/led.h"
 #include "driver/pa.h"
 #include "driver/rx.h"
+#include "driver/systick.h"
 #include "driver/keyboard.h"
 #include "frequencies.h"
 #include "functions.h"
@@ -177,6 +178,48 @@ static bool s_armed;
 
 bool tx_ptt_armed(void) { return s_armed; }
 
+/* A transmission keyed over the UART (console '+', CAT PTT on).  The PTT
+ * poller below leaves it alone -- without this it saw "PTT not pressed" while
+ * tx_active() was true and stopped a CAT transmission on the next 10 ms pass --
+ * and releases it after TX_REMOTE_MAX_MS in case the host goes away. */
+#define TX_REMOTE_MAX_MS 30000u
+static bool     s_remote;
+static uint32_t s_remote_t0;
+
+uint8_t tx_remote_ptt(bool on)
+{
+    if (!on) {
+        if (s_remote) {
+            s_remote = false;
+            tx_stop();
+            FUNCTION_Select(FUNCTION_RECEIVE);
+            gUpdateDisplay = true;
+        }
+        return (uint8_t)VFO_STATE_NORMAL;
+    }
+
+    if (tx_active())                    /* already keyed, by PTT or remotely */
+        return (uint8_t)VFO_STATE_NORMAL;
+
+    {
+        const VfoState_t state = RADIO_CheckTx(gTxVfo);
+
+        if (state != VFO_STATE_NORMAL) {
+            RADIO_SetVfoState(state);
+            return (uint8_t)state;
+        }
+    }
+    FUNCTION_Select(FUNCTION_TRANSMIT);
+    tx_start(gTxVfo->freq_config_TX.Frequency,
+             gTxVfo->TXP_CalculatedSetting, TX_SOURCE_MIC);
+    s_remote    = tx_active();
+    s_remote_t0 = systick_millis();
+    gUpdateDisplay = true;
+    return (uint8_t)VFO_STATE_NORMAL;
+}
+
+bool tx_remote_active(void) { return s_remote; }
+
 void tx_poll_ptt(void)
 {
     const KEY_Code_t key  = KEYBOARD_GetKey();
@@ -184,6 +227,13 @@ void tx_poll_ptt(void)
     const bool       down = bt_ptt_source_active(radio_ptt, bt_ptt_down(),
                                                  bt_ptt_mode(gEeprom.BT_Switch,
                                                              gEeprom.BT_PTTType));
+
+    /* A remote transmission is the UART's to end -- or the safety timeout's. */
+    if (s_remote) {
+        if ((uint32_t)(systick_millis() - s_remote_t0) >= TX_REMOTE_MAX_MS)
+            (void)tx_remote_ptt(false);
+        return;
+    }
 
     /* A console-bench transmission ('T', the chip's own DTMF tone) is not PTT:
      * it must hold until the console stops it.  Otherwise this poller sees

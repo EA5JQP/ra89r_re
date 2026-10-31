@@ -74,4 +74,13 @@ void tx_poll_ptt(void);
  * handling (app/generic.c) honours it too. */
 bool tx_ptt_armed(void);
 
+/* Key / release the transmitter over the UART (console '+'/'-', CAT PTT).
+ * On: the radio's TX rules apply (RADIO_CheckTx() -- band plan, TX lock, the
+ * airband ban); returns 0 when keyed or already transmitting, otherwise the
+ * refusing VfoState_t (shown on the display too).  The PTT poller leaves a
+ * remote transmission alone and releases it after 30 s.  Off ends only a
+ * remote transmission. */
+uint8_t tx_remote_ptt(bool on);
+bool    tx_remote_active(void);
+
 #endif /* DRIVER_TX_H */
