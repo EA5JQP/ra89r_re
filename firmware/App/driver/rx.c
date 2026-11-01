@@ -339,12 +339,21 @@ void rx_apply_audio_gate(void)
          * was heard then was the BK4829's own demodulator. */
         BK4819_SetAF((s_squelch_open && s_4829_af_on_4815_lane) ? BK4819_AF_FM
                                                                 : BK4819_AF_MUTE);
+        audio_path_drive(s_squelch_open);
     } else {
-        bk4815_set_af(false);
-        BK4819_SetAF(s_squelch_open ? BK4819_AF_FM : BK4819_AF_MUTE);
-    }
+        /* The K1 decides the tone (rx_tone_gate_open(), rx.h); gCurrentCodeType
+         * is what HandleIncoming() checks, and FUNCTION_Init() already zeroes
+         * it for a non-FM channel. */
+        const bool open = rx_tone_gate_open(s_squelch_open,
+                                            gCurrentCodeType != CODE_TYPE_OFF,
+                                            gMonitor ||
+                                            gCurrentFunction == FUNCTION_RECEIVE ||
+                                            gCurrentFunction == FUNCTION_MONITOR);
 
-    audio_path_drive(s_squelch_open);
+        bk4815_set_af(false);
+        BK4819_SetAF(open ? BK4819_AF_FM : BK4819_AF_MUTE);
+        audio_path_drive(open);
+    }
 }
 
 void rx_poll(void)

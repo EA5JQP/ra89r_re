@@ -322,6 +322,23 @@ static inline uint16_t rx_floor_step(rx_floor_t *f, bool use_4815, uint16_t prio
     return f->floor;
 }
 
+/* Tone squelch (CTCSS/DCS) on top of the carrier gate.  The carrier squelch is
+ * the port's (`s_squelch_open`, polled from 0x67 / REG_0C<1>), but the tone
+ * decision is the K1's: the BK4829's CxCSS found/lost interrupts feed
+ * HandleIncoming(), which moves INCOMING -> RECEIVE only once the code matches.
+ * The audio gate used to open on the carrier alone, so a toned channel heard
+ * every carrier on the frequency.  Open only when the carrier is up and either
+ * no tone is set or the K1 has accepted the reception (RECEIVE, or MONITOR).
+ *
+ * Applied on the BK4829 lane only: on a BK4815 lane the BK4829 does not hear
+ * the carrier, so its decoder never reports the tone and the gate would never
+ * open.  The BK4815's own CTCSS decoder is not brought up yet. */
+static inline bool rx_tone_gate_open(bool carrier_open, bool tone_squelch,
+                                     bool k1_accepted)
+{
+    return carrier_open && (!tone_squelch || k1_accepted);
+}
+
 /* Bring the RF up and start receiving on `freq_10hz` (10 Hz units, the same
  * convention as the codeplug).  Idempotent enough to be called again to retune. */
 void rx_init(uint32_t freq_10hz);
