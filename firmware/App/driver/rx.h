@@ -339,6 +339,54 @@ static inline bool rx_tone_gate_open(bool carrier_open, bool tone_squelch,
     return carrier_open && (!tone_squelch || k1_accepted);
 }
 
+/* The BK4829's measured sub-audio tone, REG_68: bit 15 clear = a tone was
+ * measured, bits 12:0 its frequency (the K1's BK4819_GetCxCSSScanResult
+ * scale, x 0.4843 -> 0.1 Hz).  The chip's own tone match is wide: on the radio
+ * (2026-11-02) a 67.0 Hz transmission, measured 67.5 Hz here, opened a 69.3 Hz
+ * channel, and neither REG_52's thresholds nor REG_51 bit 8 narrowed it. */
+static inline bool rx_ctcss_reg68_tone(uint16_t reg68, uint16_t *tone_01hz)
+{
+    if (reg68 & 0x8000u)
+        return false;
+    *tone_01hz = (uint16_t)(((uint32_t)(reg68 & 0x1fffu) * 4843u) / 10000u);
+    return true;
+}
+
+/* True when `tone_01hz` is nearest to table[want] of all the table's tones
+ * (a tie goes to the lower index, as DCS_GetCtcssCode() decides it). */
+static inline bool rx_ctcss_nearest_is(uint16_t tone_01hz, const uint16_t *table,
+                                       unsigned n, unsigned want)
+{
+    unsigned i, best = 0u;
+    unsigned best_d = 0xffffu;
+
+    for (i = 0u; i < n; i++) {
+        const unsigned d = (tone_01hz > table[i]) ? (unsigned)(tone_01hz - table[i])
+                                                  : (unsigned)(table[i] - tone_01hz);
+        if (d < best_d) {
+            best_d = d;
+            best   = i;
+        }
+    }
+    return n != 0u && best == want;
+}
+
+/* The BK4815 lane's tone state, from its interrupt flags (0x74 bit 8 found,
+ * bit 7 lost) polled over SPI.  Both in one poll: the detector's own status
+ * (0x5C bit 13, "the found symbol is lost") settles which came last.  No flag:
+ * the state holds. */
+static inline bool rx_4815_tone_step(bool present, bool found, bool lost,
+                                     bool status_lost)
+{
+    if (found && lost)
+        return !status_lost;
+    if (found)
+        return true;
+    if (lost)
+        return false;
+    return present;
+}
+
 /* Bring the RF up and start receiving on `freq_10hz` (10 Hz units, the same
  * convention as the codeplug).  Idempotent enough to be called again to retune. */
 void rx_init(uint32_t freq_10hz);
@@ -376,6 +424,19 @@ uint16_t rx_squelch_floor(void);
 /* True when the receive audio is currently taken from the BK4815 (the selected
  * RX VFO's transceiver), for the console diagnostic. */
 bool rx_audio_is_4815(void);
+
+/* The BK4829 lane's CTCSS: the chip's found/lost interrupt (the K1's
+ * ctcssLost bit = found), and the value to publish as g_CTCSS_Lost -- the
+ * chip's report, confirmed by the measured tone (rx_ctcss_nearest_is()) when
+ * the RX code is a CTCSS tone. */
+void rx_4829_ctcss_event(bool found);
+bool rx_4829_ctcss_publish(void);
+/* For the console: the last measured tone (0.1 Hz) and the two inputs. */
+uint16_t rx_4829_ctcss_measured(bool *chip, bool *match);
+
+/* The BK4815 lane's CTCSS detector: the tone it is programmed for (0.1 Hz,
+ * 0 = none, 0xFFFF = not yet written) and, in *present, its last report. */
+uint16_t rx_4815_ctcss(bool *present);
 
 /* Console '@': bounded electrical tail trace for the BK4829 hybrid.  Blocking
  * for up to 30 s and owns the audio; prints RSSI fall/chip close/gate

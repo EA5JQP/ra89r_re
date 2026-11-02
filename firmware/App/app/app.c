@@ -1036,11 +1036,23 @@ static void CheckRadioInterrupts(void)
         if (interrupts.cdcssFound)
             g_CDCSS_Lost = false;
 
-        if (interrupts.ctcssLost)
-            g_CTCSS_Lost = true;
+        /* Port adaptation: on a BK4815 lane the tone comes from that chip's
+         * own detector (driver/rx.c, rx_4815_ctcss_service()); the BK4829
+         * does not hear the carrier there, so its CTCSS bits are noise. */
+        if (!rx_audio_is_4815()) {
+            /* ... and on the BK4829 the chip's report is confirmed by the
+             * measured tone before the K1 sees it (rx_4829_ctcss_publish()):
+             * its own match is wide enough to take 67.0 Hz on a 69.3 Hz
+             * channel. */
+            if (interrupts.ctcssLost)
+                rx_4829_ctcss_event(true);
 
-        if (interrupts.ctcssFound)
-            g_CTCSS_Lost = false;
+            if (interrupts.ctcssFound)
+                rx_4829_ctcss_event(false);
+
+            if (interrupts.ctcssLost || interrupts.ctcssFound)
+                g_CTCSS_Lost = rx_4829_ctcss_publish();
+        }
 
 #ifdef ENABLE_VOX
         if (interrupts.voxLost) {

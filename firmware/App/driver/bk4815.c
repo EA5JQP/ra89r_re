@@ -284,6 +284,40 @@ void bk4815_set_tone(uint32_t tone_hz)
     bk4815_write_reg(BK4815_REG_TONE, bk4815_tone_word(tone_hz));
 }
 
+uint16_t bk4815_ctcss_rx_word(uint16_t tone_01hz)
+{
+    const uint32_t x = ((uint32_t)tone_01hz << 19) / 18466u;
+    uint32_t       w = x / 10u;
+
+    if (x % 10u >= 5u)
+        w++;
+    return (uint16_t)(w & 0x1fffu);
+}
+
+void bk4815_set_rx_ctcss(uint16_t tone_01hz)
+{
+    /* FUN_08006D10's order: 0x5B (the symbol), 0x5C, 0x5D, then 0x42. */
+    if (tone_01hz != 0u) {
+        bk4815_write_reg(BK4815_REG_CTC_SYM, bk4815_ctcss_rx_word(tone_01hz));
+        bk4815_write_reg(BK4815_REG_CTC_CTRL, 0x4001u);
+    } else {
+        bk4815_write_reg(BK4815_REG_CTC_SYM, 0x061au);
+        bk4815_write_reg(BK4815_REG_CTC_CTRL, 0x4000u);
+    }
+    bk4815_write_reg(BK4815_REG_CTC_LOSS, 0x0060u);
+    bk4815_write_reg(BK4815_REG_DEMOD, 0xd103u);
+}
+
+uint16_t bk4815_read_irq_flags(void)
+{
+    return bk4815_read_reg(BK4815_REG_IRQ_FLAGS);
+}
+
+void bk4815_clear_irq_flags(uint16_t bits)
+{
+    bk4815_write_reg(BK4815_REG_IRQ_FLAGS, bits);
+}
+
 uint16_t bk4815_read_rssi(void)
 {
     /* Register 0x44: RSSI in bits 6:0 (bk4815.h's register table). */

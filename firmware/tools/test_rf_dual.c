@@ -235,6 +235,58 @@ int main(void)
     check(rx_tone_gate_open(true, true, true),
           "tone gate: tone set and accepted by the K1, opens");
 
+    /* The BK4815's receive CTCSS: the stock's word and write sequence. */
+    check(bk4815_ctcss_rx_word(885u) == 2513u,
+          "BK4815 CTCSS word: 88.5 Hz = 2513 (datasheet 2512.7, rounded)");
+    check(bk4815_ctcss_rx_word(2541u) == 7214u,
+          "BK4815 CTCSS word: 254.1 Hz = 7214 (fits 13 bits)");
+    check(bk4815_ctcss_rx_word(670u) == 1902u,
+          "BK4815 CTCSS word: 67.0 Hz = 1902");
+    rec_reset();
+    bk4815_set_rx_ctcss(885u);
+    check(rec_n == 4u &&
+          rec_reg[0] == 0x5b && rec_val[0] == 2513u &&
+          rec_reg[1] == 0x5c && rec_val[1] == 0x4001u &&
+          rec_reg[2] == 0x5d && rec_val[2] == 0x0060u &&
+          rec_reg[3] == 0x42 && rec_val[3] == 0xd103u,
+          "BK4815 tone set: FUN_08006D10's 0x5B, 0x5C=0x4001, 0x5D=0x60, 0x42=0xD103");
+    rec_reset();
+    bk4815_set_rx_ctcss(0u);
+    check(rec_n == 4u &&
+          rec_reg[0] == 0x5b && rec_val[0] == 0x061au &&
+          rec_reg[1] == 0x5c && rec_val[1] == 0x4000u,
+          "BK4815 no tone: the stock's 55 Hz symbol, 0x5C=0x4000");
+
+    /* The tone tracker over the polled flags. */
+    check(rx_4815_tone_step(false, true, false, false),
+          "BK4815 tone: found sets present");
+    check(!rx_4815_tone_step(true, false, true, true),
+          "BK4815 tone: lost clears present");
+    check(rx_4815_tone_step(true, false, false, true) &&
+          !rx_4815_tone_step(false, false, false, false),
+          "BK4815 tone: no flag holds the state");
+    check(rx_4815_tone_step(false, true, true, false) &&
+          !rx_4815_tone_step(true, true, true, true),
+          "BK4815 tone: both flags, 0x5C bit 13 decides");
+
+    /* The BK4829's measured-tone check (REG_68). */
+    {
+        static const uint16_t tones[] = { 670u, 693u, 719u, 744u, 2503u, 2541u };
+        uint16_t t = 0u;
+
+        check(!rx_ctcss_reg68_tone(0x8473u, &t), "REG_68 bit 15 set: no tone measured");
+        check(rx_ctcss_reg68_tone(0x0573u, &t) && t == 675u,
+              "REG_68 0x0573 = 67.5 Hz (the radio's reading of a 67.0 transmission)");
+        check(!rx_ctcss_nearest_is(675u, tones, 6u, 1u),
+              "67.5 Hz measured does not match a 69.3 Hz channel");
+        check(rx_ctcss_nearest_is(675u, tones, 6u, 0u),
+              "67.5 Hz measured matches a 67.0 Hz channel");
+        check(rx_ctcss_nearest_is(698u, tones, 6u, 1u) &&
+              rx_ctcss_nearest_is(2530u, tones, 6u, 5u),
+              "a measurement within half a gap matches its own tone");
+        check(!rx_ctcss_nearest_is(670u, tones, 0u, 0u), "empty table never matches");
+    }
+
     printf("\n%d failed\n", fails);
     return fails ? 1 : 0;
 }
