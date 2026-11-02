@@ -38,8 +38,7 @@ the K1 expects: it needs a carrier before it looks for a tone.
 
 ## Open
 
-- **BK4815 lane DCS: on branch `driver/dcs-4815`, not validated on the radio**
-  (see "DCS on the BK4815 lane" below). CTCSS on that lane is done and validated.
+- Both lanes now decode CTCSS and DCS (validated on the radio, 2026-11-02).
 - **TX tone: located, not verified.** PTT → `FUNCTION_Transmit()` →
   `RADIO_SetTxParameters()` writes `0x51`/`0x07`; `tx_start()` afterwards writes
   only `0x30`/`0x36`/`0x37`/`0x40`/`0x50`/`0x52`. The stock's TX tone level is
@@ -129,7 +128,7 @@ carrier closes and is skipped while the CTCSS scanner runs. Console `$` prints
 2. Repeat at the top of the table, e.g. RX 250.3 against 254.1.
 3. Confirm an exact-tone reception still opens as quickly as before.
 
-## DCS on the BK4815 lane (branch `driver/dcs-4815`, 2026-11-02)
+## DCS on the BK4815 lane (merged 2026-11-02, validated on the radio)
 
 **What the stock does (located).** The DCS branch of `FUN_08006D10`:
 1. `0x59 = 0xF7A1`.
@@ -149,7 +148,7 @@ the code's inverted word; transmit (`0x26`/`0x27`) uses the other polarity.
 `0x03` (slice on, 2 matches) in all three dumps. The port's boot table can't
 source it and writes 0.
 
-**What the port does (not verified):**
+**What the port does (validated on the radio 2026-11-02):**
 - `bk4815_set_rx_dcs()` writes the sequence above plus `0x62 = 0x0003`.
 - `rx_4815_subaudio_service()` programs the detector for the selected VFO's code
   (CTCSS, DCS or none, as one key). For DCS it also sets the CDCSS-found enable
@@ -161,16 +160,17 @@ source it and writes 0.
 - The BK4829's CDCSS bits are ignored on this lane (`app.c`).
 - A BK4815 receive entry rewrites `0x73`, so it invalidates the detector setting.
 
-**Open hardware questions:**
-1. Does `0x74` bit 5 latch with the mask bit set?
-2. Is `0x5E` bit 2 relative to the programmed (inverted) word as assumed?
-3. Does the chip match both polarities, as the datasheet implies ("exactly same
-   or inversed")?
+**Settled on the radio:** all of the following are confirmed by the bench gate
+below passing:
+- `0x74` bit 5 latches with the mask bit set.
+- `0x5E` bit 2 reads normal for a correct code against the inverted word the
+  stock programs.
+- The opposite polarity of the same code is rejected.
 
 Console `$` prints `0x5E`-`0x62`, the published `g_CDCSS_Lost` /
 `gCDCSSCodeType`, and samples `0x5E`/`0x74`.
 
-**Bench gate:** a BK4815 VFO (UHF) with RX DCS, e.g. 023N, and a second radio:
+**Bench gate (passed 2026-11-02):** a BK4815 VFO (UHF) with RX DCS, e.g. 023N, and a second radio:
 1. No code → muted.
 2. 023N → opens.
 3. A different code → muted.
