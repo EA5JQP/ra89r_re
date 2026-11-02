@@ -224,6 +224,17 @@ int main(void)
           rx_squelch_open_mark(true, false, 1u) < rx_squelch_open_mark(true, false, 8u),
           "BK4815 VHF level 1 opens earlier than level 8");
 
+    /* Tone squelch: a toned channel opens only once the K1 accepted the code. */
+    check(!rx_tone_gate_open(false, false, true) &&
+          !rx_tone_gate_open(false, true, true),
+          "tone gate: no carrier, no audio");
+    check(rx_tone_gate_open(true, false, false),
+          "tone gate: no tone set, the carrier alone opens");
+    check(!rx_tone_gate_open(true, true, false),
+          "tone gate: tone set, carrier without the code stays muted");
+    check(rx_tone_gate_open(true, true, true),
+          "tone gate: tone set and accepted by the K1, opens");
+
     printf("\n%d failed\n", fails);
     return fails ? 1 : 0;
 }
