@@ -38,8 +38,8 @@ the K1 expects: it needs a carrier before it looks for a tone.
 
 ## Open
 
-- **BK4815 lane: DCS is still carrier-only.** CTCSS on that lane is done and
-  validated (see "The BK4815 lane" below).
+- **BK4815 lane DCS: on branch `driver/dcs-4815`, not validated on the radio**
+  (see "DCS on the BK4815 lane" below). CTCSS on that lane is done and validated.
 - **TX tone: located, not verified.** PTT → `FUNCTION_Transmit()` →
   `RADIO_SetTxParameters()` writes `0x51`/`0x07`; `tx_start()` afterwards writes
   only `0x30`/`0x36`/`0x37`/`0x40`/`0x50`/`0x52`. The stock's TX tone level is
@@ -128,3 +128,54 @@ carrier closes and is skipped while the CTCSS scanner runs. Console `$` prints
 1. 67.0 stays muted; 69.3 opens; 71.9 stays muted.
 2. Repeat at the top of the table, e.g. RX 250.3 against 254.1.
 3. Confirm an exact-tone reception still opens as quickly as before.
+
+## DCS on the BK4815 lane (branch `driver/dcs-4815`, 2026-11-02)
+
+**What the stock does (located).** The DCS branch of `FUN_08006D10`:
+1. `0x59 = 0xF7A1`.
+2. `FUN_08016FE6`: `0x61` [97] = `0x0100` (one code, address 0), then
+   `FUN_0801C576(code, 0, 0)`, which burst-writes `0x5F`/`0x60` [95/96] =
+   `0xF000 | w[22:12]`, `0xF000 | w[11:0]`.
+3. `0x5C = 0x4000`, `0x5D = 0x0060`, `0x42 = 0xD083` (bit 7 CDCSS receive,
+   bit 8 CTCSS off).
+
+`w` comes from `FUN_080085B0(code, polarity)`. Emulated against the K1's
+`DCS_GetGolayCodeWord()` for all 104 codes: polarity 1 gives the K1's word,
+polarity 0 its complement (`^ 0x7FFFFF`). **Receive programs polarity 0**, i.e.
+the code's inverted word; transmit (`0x26`/`0x27`) uses the other polarity.
+
+`0x62` [98] (match count 3:1, slice enable 0) is a boot value in the stock,
+`0x2000449E`, which `FUN_0800DCAC` fills from factory byte `0x3880 + 0x0C` =
+`0x03` (slice on, 2 matches) in all three dumps. The port's boot table can't
+source it and writes 0.
+
+**What the port does (not verified):**
+- `bk4815_set_rx_dcs()` writes the sequence above plus `0x62 = 0x0003`.
+- `rx_4815_subaudio_service()` programs the detector for the selected VFO's code
+  (CTCSS, DCS or none, as one key). For DCS it also sets the CDCSS-found enable
+  in `0x73` (`0x81F0`; the stock's `0x81D0` has only CDCSS-lost) and polls
+  `0x74` bits 5/4.
+- The result goes to the K1 the way `CheckRadioInterrupts()` reports the
+  BK4829: `g_CDCSS_Lost` (= code present) and `gCDCSSCodeType` from `0x5E` bit 2
+  (0 → POSITIVE, 1 → NEGATIVE). `HandleIncoming()` opens on a POSITIVE match only.
+- The BK4829's CDCSS bits are ignored on this lane (`app.c`).
+- A BK4815 receive entry rewrites `0x73`, so it invalidates the detector setting.
+
+**Open hardware questions:**
+1. Does `0x74` bit 5 latch with the mask bit set?
+2. Is `0x5E` bit 2 relative to the programmed (inverted) word as assumed?
+3. Does the chip match both polarities, as the datasheet implies ("exactly same
+   or inversed")?
+
+Console `$` prints `0x5E`-`0x62`, the published `g_CDCSS_Lost` /
+`gCDCSSCodeType`, and samples `0x5E`/`0x74`.
+
+**Bench gate:** a BK4815 VFO (UHF) with RX DCS, e.g. 023N, and a second radio:
+1. No code → muted.
+2. 023N → opens.
+3. A different code → muted.
+4. **023I → muted** (the polarity check).
+5. Dropping the code → closes within about 1 s.
+6. Monitor → opens.
+7. Repeat with an inverted channel code (023I against 023I / 023N).
+8. Confirm BK4815 CTCSS and the BK4829 lane are unchanged.

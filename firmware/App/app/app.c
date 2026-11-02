@@ -1028,13 +1028,17 @@ static void CheckRadioInterrupts(void)
         if (interrupts.cssTailFound)
             g_CxCSS_TAIL_Found = true;
 
-        if (interrupts.cdcssLost) {
-            g_CDCSS_Lost = true;
-            gCDCSSCodeType = BK4819_GetCDCSSCodeType();
-        }
+        /* Port adaptation: on a BK4815 lane the DCS code comes from that
+         * chip's own detector (driver/rx.c, rx_4815_subaudio_service()). */
+        if (!rx_audio_is_4815()) {
+            if (interrupts.cdcssLost) {
+                g_CDCSS_Lost = true;
+                gCDCSSCodeType = BK4819_GetCDCSSCodeType();
+            }
 
-        if (interrupts.cdcssFound)
-            g_CDCSS_Lost = false;
+            if (interrupts.cdcssFound)
+                g_CDCSS_Lost = false;
+        }
 
         /* Port adaptation: on a BK4815 lane the tone comes from that chip's
          * own detector (driver/rx.c, rx_4815_ctcss_service()); the BK4829

@@ -191,7 +191,7 @@ void bk4815_receive_entry(bool wide)
     bk4815_write_reg(0x16u, 0xb200u);
     bk4815_write_reg(0x2bu, 0x403fu);
     bk4815_write_reg(0x6du, 0x6618u);
-    bk4815_write_reg(0x73u, 0x81d0u);
+    bk4815_write_reg(BK4815_REG_IRQ_MASK, BK4815_IRQ_MASK_RX);
     bk4815_write_reg(0x01u, wide ? 0x8044u : 0x0044u);
     bk4815_write_reg(BK4815_REG_OPCTRL, 0x0000u);
     bk4815_write_reg(BK4815_REG_OPCTRL, 0xa000u);
@@ -306,6 +306,39 @@ void bk4815_set_rx_ctcss(uint16_t tone_01hz)
     }
     bk4815_write_reg(BK4815_REG_CTC_LOSS, 0x0060u);
     bk4815_write_reg(BK4815_REG_DEMOD, 0xd103u);
+}
+
+uint32_t bk4815_dcs_rx_word(uint32_t k1_word)
+{
+    return (k1_word ^ 0x7fffffu) & 0x7fffffu;
+}
+
+void bk4815_dcs_code_regs(uint32_t word, uint16_t *hi, uint16_t *lo)
+{
+    *hi = (uint16_t)(0xf000u | ((word >> 12) & 0x07ffu));
+    *lo = (uint16_t)(0xf000u | (word & 0x0fffu));
+}
+
+void bk4815_set_rx_dcs(uint32_t word)
+{
+    uint16_t hi, lo;
+    uint8_t  buf[4];
+
+    bk4815_dcs_code_regs(word, &hi, &lo);
+    buf[0] = (uint8_t)(hi >> 8);
+    buf[1] = (uint8_t)hi;
+    buf[2] = (uint8_t)(lo >> 8);
+    buf[3] = (uint8_t)lo;
+
+    /* FUN_08006D10's DCS order: 0x59, then FUN_08016FE6 (0x61, the 0x5F/0x60
+     * burst), then 0x5C, 0x5D and 0x42. */
+    bk4815_write_reg(BK4815_REG_CTC_SPEED, 0xf7a1u);
+    bk4815_write_reg(BK4815_REG_CDC_MATCH, 0x0003u);
+    bk4815_write_reg(BK4815_REG_CDC_SEARCH, 0x0100u);
+    bk4815_write_block(BK4815_REG_CDC_CODE, buf, (unsigned)sizeof buf);
+    bk4815_write_reg(BK4815_REG_CTC_CTRL, 0x4000u);
+    bk4815_write_reg(BK4815_REG_CTC_LOSS, 0x0060u);
+    bk4815_write_reg(BK4815_REG_DEMOD, 0xd083u);
 }
 
 uint16_t bk4815_read_irq_flags(void)

@@ -371,6 +371,21 @@ static inline bool rx_ctcss_nearest_is(uint16_t tone_01hz, const uint16_t *table
     return n != 0u && best == want;
 }
 
+/* The BK4815 detector's setting as one key: 0 = none, a CTCSS tone in 0.1 Hz
+ * (below 0x10000), or RX_4815_SUB_DCS | the 23-bit DCS word it is programmed
+ * with.  RX_4815_SUB_UNKNOWN forces the next pass to program it. */
+#define RX_4815_SUB_NONE    0u
+#define RX_4815_SUB_DCS     0x80000000u
+#define RX_4815_SUB_UNKNOWN 0xffffffffu
+
+static inline uint32_t rx_4815_sub_ctcss(uint16_t tone_01hz) { return tone_01hz; }
+static inline uint32_t rx_4815_sub_dcs(uint32_t word) { return RX_4815_SUB_DCS | (word & 0x7fffffu); }
+static inline bool rx_4815_sub_is_dcs(uint32_t key)
+{
+    return key != RX_4815_SUB_UNKNOWN && (key & RX_4815_SUB_DCS) != 0u;
+}
+static inline uint32_t rx_4815_sub_dcs_word(uint32_t key) { return key & 0x7fffffu; }
+
 /* The BK4815 lane's tone state, from its interrupt flags (0x74 bit 8 found,
  * bit 7 lost) polled over SPI.  Both in one poll: the detector's own status
  * (0x5C bit 13, "the found symbol is lost") settles which came last.  No flag:
@@ -434,9 +449,9 @@ bool rx_4829_ctcss_publish(void);
 /* For the console: the last measured tone (0.1 Hz) and the two inputs. */
 uint16_t rx_4829_ctcss_measured(bool *chip, bool *match);
 
-/* The BK4815 lane's CTCSS detector: the tone it is programmed for (0.1 Hz,
- * 0 = none, 0xFFFF = not yet written) and, in *present, its last report. */
-uint16_t rx_4815_ctcss(bool *present);
+/* The BK4815 lane's detector: what it is programmed for (an RX_4815_SUB_*
+ * key), its last report and, for DCS, whether the found code was inverted. */
+uint32_t rx_4815_subaudio(bool *present, bool *inverse);
 
 /* Console '@': bounded electrical tail trace for the BK4829 hybrid.  Blocking
  * for up to 30 s and owns the audio; prints RSSI fall/chip close/gate
