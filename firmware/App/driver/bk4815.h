@@ -63,6 +63,22 @@
 #define BK4815_IRQ_CTCSS_LOST  (1u << 7)
 #define BK4815_CTC_CTRL_LOST   (1u << 13)   /* 0x5C: the found symbol is lost */
 
+#define BK4815_REG_CDC_STATUS 0x5eu  /* [94] found address, sync threshold, phase, lost */
+#define BK4815_REG_CDC_CODE   0x5fu  /* [95] high 11 bits; [96] = 0x60 the low 12 */
+#define BK4815_REG_CDC_SEARCH 0x61u  /* [97] codes to search 15:8, RX code address 6:0 */
+#define BK4815_REG_CDC_MATCH  0x62u  /* [98] match count 3:1, slice enable 0 */
+
+#define BK4815_IRQ_CDCSS_FOUND (1u << 5)
+#define BK4815_IRQ_CDCSS_LOST  (1u << 4)
+#define BK4815_CDC_STATUS_INVERSE (1u << 2)  /* 0x5E: found code inverted */
+#define BK4815_CDC_STATUS_LOST    (1u << 1)  /* 0x5E: CDCSS loss */
+
+/* 0x73 on receive: the stock's 0x81D0 (link loss, CTCSS found/lost, CDCSS
+ * lost); a DCS channel also needs the CDCSS-found enable (bit 5), which the
+ * stock -- reading INTN rather than the flags -- does not set. */
+#define BK4815_IRQ_MASK_RX     0x81d0u
+#define BK4815_IRQ_MASK_RX_DCS (BK4815_IRQ_MASK_RX | BK4815_IRQ_CDCSS_FOUND)
+
 /* Register 0x49 (REG73 in the datasheet): bit 15 is "hard mute" (1 = muted).
  * The stock's AF switch writes 0x9A02 to mute (`FUN_08015F48`) and 0x1A02 to
  * unmute (`FUN_0801CCE8`), and its boot config leaves 0x1A02 (unmuted). */
@@ -186,6 +202,25 @@ uint16_t bk4815_ctcss_rx_word(uint16_t tone_01hz);
  * 55 Hz; 0x5C = 0x4000).  0x5D = 0x0060 and 0x42 = 0xD103 (CTCSS receive on)
  * in both.  DCS receive (the stock's 0x42 = 0xD083 branch) is not done here. */
 void bk4815_set_rx_ctcss(uint16_t tone_01hz);
+
+/* The receive DCS word for a channel, from the K1's 23-bit Golay word
+ * (DCS_GetGolayCodeWord()): the stock programs the receive detector with the
+ * code's *inverted* word (FUN_08016FE6 -> FUN_0801C576(code, 0, 0) ->
+ * FUN_080085B0(code, 0); polarity 1 is the K1's word, polarity 0 its
+ * complement -- checked for all 104 codes, 2026-11-02). */
+uint32_t bk4815_dcs_rx_word(uint32_t k1_word);
+
+/* 0x5F / 0x60 for a 23-bit word, FUN_0801C576's layout: 0xF000 | the high 11
+ * bits, 0xF000 | the low 12 bits. */
+void bk4815_dcs_code_regs(uint32_t word, uint16_t *hi, uint16_t *lo);
+
+/* Program the receive DCS detector the way the stock's FUN_08006D10 DCS branch
+ * does (0x59 = 0xF7A1, 0x61 = 0x0100, the code, 0x5C = 0x4000, 0x5D = 0x0060,
+ * 0x42 = 0xD083), plus 0x62 = 0x0003: the stock's boot value from the factory
+ * block (byte 0x3880 + 0x0C = 0x03 -- slice on, 2 matches), which the port's
+ * boot table cannot source and writes as 0.  `word` is the word to program,
+ * i.e. bk4815_dcs_rx_word()'s result. */
+void bk4815_set_rx_dcs(uint32_t word);
 
 /* The interrupt flags (0x74) and their write-1-to-clear. */
 uint16_t bk4815_read_irq_flags(void);

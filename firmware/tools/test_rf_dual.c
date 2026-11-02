@@ -269,6 +269,33 @@ int main(void)
           !rx_4815_tone_step(true, true, true, true),
           "BK4815 tone: both flags, 0x5C bit 13 decides");
 
+    /* The BK4815's receive DCS: the stock's inverted word, layout and order. */
+    {
+        uint16_t hi = 0u, lo = 0u;
+
+        check(bk4815_dcs_rx_word(0x763813u) == 0x09c7ecu,
+              "BK4815 DCS 023: the receive word is the K1 word inverted (0x09C7EC)");
+        bk4815_dcs_code_regs(0x09c7ecu, &hi, &lo);
+        check(hi == 0xf09cu && lo == 0xf7ecu,
+              "BK4815 DCS 023: 0x5F/0x60 = 0xF09C/0xF7EC (FUN_0801C576's layout)");
+        rec_reset();
+        bk4815_set_rx_dcs(0x09c7ecu);
+        check(rec_n == 6u &&
+              rec_reg[0] == 0x59 && rec_val[0] == 0xf7a1u &&
+              rec_reg[1] == 0x62 && rec_val[1] == 0x0003u &&
+              rec_reg[2] == 0x61 && rec_val[2] == 0x0100u &&
+              rec_reg[3] == 0x5c && rec_val[3] == 0x4000u &&
+              rec_reg[4] == 0x5d && rec_val[4] == 0x0060u &&
+              rec_reg[5] == 0x42 && rec_val[5] == 0xd083u,
+              "BK4815 DCS set: 0x59, 0x62=3, 0x61=0x100, [code burst], 0x5C, 0x5D, 0x42=0xD083");
+        check(rx_4815_sub_is_dcs(rx_4815_sub_dcs(0x09c7ecu)) &&
+              rx_4815_sub_dcs_word(rx_4815_sub_dcs(0x09c7ecu)) == 0x09c7ecu &&
+              !rx_4815_sub_is_dcs(rx_4815_sub_ctcss(2541u)) &&
+              !rx_4815_sub_is_dcs(RX_4815_SUB_UNKNOWN) &&
+              !rx_4815_sub_is_dcs(RX_4815_SUB_NONE),
+              "BK4815 detector key: DCS / CTCSS / none / unknown stay apart");
+    }
+
     /* The BK4829's measured-tone check (REG_68). */
     {
         static const uint16_t tones[] = { 670u, 693u, 719u, 744u, 2503u, 2541u };

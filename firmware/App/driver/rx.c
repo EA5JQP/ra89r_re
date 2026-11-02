@@ -24,11 +24,11 @@ static int8_t s_tail_close_delay = -1;  /* console 'O': 0..3, -1 = the app's 3 *
 static rx_squelch_t s_sq;       /* the stock's 0..10 counter; see rx.h */
 static bool s_fm_active;        /* the FM feature owns the audio; see rx_set_fm_active() */
 
-/* The BK4815 lane's CTCSS: the tone its detector is programmed for (0.1 Hz,
- * 0 = none, 0xFFFF = not written since boot) and what it last reported. */
-#define RX_4815_CTCSS_UNKNOWN 0xffffu
-static uint16_t s_4815_ctcss = RX_4815_CTCSS_UNKNOWN;
+/* The BK4815 lane's sub-audio detector: what it is programmed for (a key,
+ * rx.h's RX_4815_SUB_*) and what it last reported. */
+static uint32_t s_4815_sub = RX_4815_SUB_UNKNOWN;
 static bool     s_4815_tone_present;
+static bool     s_4815_dcs_inverse;    /* 0x5E bit 2 at the last DCS report */
 
 /* The BK4829 lane's CTCSS: the chip's own report and the measured-tone check. */
 static bool     s_4829_chip_tone;
@@ -71,7 +71,7 @@ void rx_init(uint32_t freq_10hz)
      * including the band register 0x75, so the per-band value pa_select_band()
      * sets must land after it. */
     bk4815_configure();
-    s_4815_ctcss = RX_4815_CTCSS_UNKNOWN;
+    s_4815_sub = RX_4815_SUB_UNKNOWN;
     pa_select_band(freq_10hz);
     /* The BK4815's T/R state: the stock parks it (0xFFFB) at or below 134 MHz and
      * leaves it idle (0x0A03) above it (FUN_08016EE0 / FUN_08009CC4). */
@@ -259,6 +259,7 @@ void rx_scan_commit(uint32_t freq_10hz)
         bk4815_set_frequency(freq_10hz, false);
         bk4815_set_band((freq_10hz >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
         bk4815_receive_entry(gRxVfo->CHANNEL_BANDWIDTH == BANDWIDTH_WIDE);
+        s_4815_sub = RX_4815_SUB_UNKNOWN;   /* 0x73 rewritten: program again */
         s_4815_freq = freq_10hz;
     } else {
         /* RADIO_SetupRegisters() has tuned it already; this records the
@@ -340,12 +341,11 @@ void rx_apply_audio_gate(void)
         return;
 
     if (s_audio_4815) {
-        /* CTCSS on this lane comes from the BK4815's own detector, published
-         * as g_CTCSS_Lost (rx_4815_ctcss_service()), so the K1 decides it the
-         * same way as on the BK4829.  DCS is not decoded here yet: a DCS
-         * channel still opens on the carrier alone. */
+        /* CTCSS and DCS on this lane come from the BK4815's own detector,
+         * published to the K1 by rx_4815_subaudio_service(), so the K1 decides
+         * them the same way as on the BK4829. */
         const bool open = rx_tone_gate_open(s_squelch_open,
-                                            gCurrentCodeType == CODE_TYPE_CONTINUOUS_TONE,
+                                            gCurrentCodeType != CODE_TYPE_OFF,
                                             gMonitor ||
                                             gCurrentFunction == FUNCTION_RECEIVE ||
                                             gCurrentFunction == FUNCTION_MONITOR);
@@ -745,50 +745,84 @@ uint32_t rx_rx_frequency(void)
  * squelch interrupt is never armed here, so the polled result is what keeps the
  * screen, status line and green LED in step. */
 /* The selected VFO's RX tone when it is on the BK4815 and in FM, else 0. */
-static uint16_t rx_4815_wanted_ctcss(void)
+/* What the BK4815's detector should be set for: the selected VFO's RX code
+ * when it is on the BK4815 and in FM, else none. */
+static uint32_t rx_4815_wanted_sub(void)
 {
+    const uint8_t type = (gRxVfo != NULL) ? gRxVfo->pRX->CodeType : CODE_TYPE_OFF;
+    const uint8_t code = (gRxVfo != NULL) ? gRxVfo->pRX->Code : 0u;
+
     if (!s_audio_4815 || gRxVfo == NULL || gRxVfo->Modulation != MODULATION_FM)
-        return 0u;
-    if (gRxVfo->pRX->CodeType != CODE_TYPE_CONTINUOUS_TONE ||
-        gRxVfo->pRX->Code >= ARRAY_SIZE(CTCSS_Options))
-        return 0u;
-    return CTCSS_Options[gRxVfo->pRX->Code];
+        return RX_4815_SUB_NONE;
+    if (type == CODE_TYPE_CONTINUOUS_TONE && code < ARRAY_SIZE(CTCSS_Options))
+        return rx_4815_sub_ctcss(CTCSS_Options[code]);
+    if ((type == CODE_TYPE_DIGITAL || type == CODE_TYPE_REVERSE_DIGITAL) &&
+        code < ARRAY_SIZE(DCS_Options))
+        return rx_4815_sub_dcs(bk4815_dcs_rx_word(DCS_GetGolayCodeWord(type, code)));
+    return RX_4815_SUB_NONE;
 }
 
-/* Keep the BK4815's detector on the selected VFO's tone, poll its flags and
- * hand the result to the K1 as g_CTCSS_Lost -- the K1's name for "tone
- * present" (CheckRadioInterrupts() sets it on the BK4829's tone-found bit, and
- * HandleIncoming() opens on it).  The BK4829's own CTCSS bits are ignored on
- * this lane (app.c): it does not hear the carrier there. */
-static void rx_4815_ctcss_service(void)
+/* Keep the BK4815's detector on the selected VFO's code, poll its flags and
+ * hand the result to the K1 the way CheckRadioInterrupts() does for the
+ * BK4829: CTCSS as g_CTCSS_Lost (the K1's name for "tone present"), DCS as
+ * g_CDCSS_Lost ("code present") plus gCDCSSCodeType from the found code's
+ * phase -- HandleIncoming() opens on a POSITIVE match only.  The BK4829's own
+ * CTCSS/CDCSS bits are ignored on this lane (app.c): it does not hear the
+ * carrier there. */
+static void rx_4815_subaudio_service(void)
 {
-    const uint16_t want = rx_4815_wanted_ctcss();
-    const uint16_t bits = BK4815_IRQ_CTCSS_FOUND | BK4815_IRQ_CTCSS_LOST;
+    const uint32_t want = rx_4815_wanted_sub();
+    const bool     dcs  = rx_4815_sub_is_dcs(want);
+    const uint16_t bits = dcs ? (BK4815_IRQ_CDCSS_FOUND | BK4815_IRQ_CDCSS_LOST)
+                              : (BK4815_IRQ_CTCSS_FOUND | BK4815_IRQ_CTCSS_LOST);
 
-    if (want != s_4815_ctcss) {
-        bk4815_set_rx_ctcss(want);
-        bk4815_clear_irq_flags(bits);
-        s_4815_ctcss        = want;
+    if (want != s_4815_sub) {
+        if (dcs)
+            bk4815_set_rx_dcs(rx_4815_sub_dcs_word(want));
+        else
+            bk4815_set_rx_ctcss((uint16_t)want);
+        bk4815_write_reg(BK4815_REG_IRQ_MASK, dcs ? BK4815_IRQ_MASK_RX_DCS
+                                                  : BK4815_IRQ_MASK_RX);
+        bk4815_clear_irq_flags(BK4815_IRQ_CTCSS_FOUND | BK4815_IRQ_CTCSS_LOST |
+                               BK4815_IRQ_CDCSS_FOUND | BK4815_IRQ_CDCSS_LOST);
+        s_4815_sub          = want;
         s_4815_tone_present = false;
+        s_4815_dcs_inverse  = false;
     }
-    if (want == 0u)
+    if (want == RX_4815_SUB_NONE)
         return;
 
     {
         const uint16_t flags = bk4815_read_irq_flags() & bits;
 
         if (flags != 0u) {
-            const bool status_lost =
-                (bk4815_read_reg(BK4815_REG_CTC_CTRL) & BK4815_CTC_CTRL_LOST) != 0u;
+            bool status_lost;
 
+            if (dcs) {
+                const uint16_t st = bk4815_read_reg(BK4815_REG_CDC_STATUS);
+
+                status_lost        = (st & BK4815_CDC_STATUS_LOST) != 0u;
+                s_4815_dcs_inverse = (st & BK4815_CDC_STATUS_INVERSE) != 0u;
+            } else {
+                status_lost = (bk4815_read_reg(BK4815_REG_CTC_CTRL) &
+                               BK4815_CTC_CTRL_LOST) != 0u;
+            }
             s_4815_tone_present = rx_4815_tone_step(s_4815_tone_present,
-                                                    (flags & BK4815_IRQ_CTCSS_FOUND) != 0u,
-                                                    (flags & BK4815_IRQ_CTCSS_LOST) != 0u,
+                                                    (flags & bits & (BK4815_IRQ_CTCSS_FOUND |
+                                                                     BK4815_IRQ_CDCSS_FOUND)) != 0u,
+                                                    (flags & bits & (BK4815_IRQ_CTCSS_LOST |
+                                                                     BK4815_IRQ_CDCSS_LOST)) != 0u,
                                                     status_lost);
             bk4815_clear_irq_flags(flags);
         }
     }
-    g_CTCSS_Lost = s_4815_tone_present;
+
+    if (dcs) {
+        g_CDCSS_Lost   = s_4815_tone_present;
+        gCDCSSCodeType = s_4815_dcs_inverse ? CDCSS_NEGATIVE_CODE : CDCSS_POSITIVE_CODE;
+    } else {
+        g_CTCSS_Lost = s_4815_tone_present;
+    }
 }
 
 void rx_4829_ctcss_event(bool found)
@@ -822,11 +856,13 @@ uint16_t rx_4829_ctcss_measured(bool *chip, bool *match)
     return s_4829_measured;
 }
 
-uint16_t rx_4815_ctcss(bool *present)
+uint32_t rx_4815_subaudio(bool *present, bool *inverse)
 {
     if (present)
         *present = s_4815_tone_present;
-    return s_4815_ctcss;
+    if (inverse)
+        *inverse = s_4815_dcs_inverse;
+    return s_4815_sub;
 }
 
 void rx_service(void)
@@ -861,7 +897,7 @@ void rx_service(void)
     }
 
     if (rx_ready()) {
-        rx_4815_ctcss_service();
+        rx_4815_subaudio_service();
         rx_poll();
 
         /* The BK4829 lane's tone: a new reception needs a new chip report and
@@ -1011,8 +1047,11 @@ void rf_dual_refresh(void)
          * from this VFO's own bandwidth.  It runs on the (re)configuration, not
          * on every pass, and never from the scanner's probes. */
         if (roles.bk4815_vfo >= 0)
+        {
             bk4815_receive_entry(gEeprom.VfoInfo[roles.bk4815_vfo].CHANNEL_BANDWIDTH
                                  == BANDWIDTH_WIDE);
+            s_4815_sub = RX_4815_SUB_UNKNOWN;   /* 0x73 rewritten: program again */
+        }
         s_dual_sec   = roles.bk4815_vfo;
         s_dual_sec_f = f4815;
     }
