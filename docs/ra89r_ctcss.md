@@ -94,3 +94,38 @@ state and 5 s of raw `0x5C`/`0x74`/RSSI samples.
 carrier from a second radio. Run the same five checks as the BK4829 lane, plus a
 tone change in the menu while on the channel. Then confirm the BK4829 lane is
 unchanged.
+
+## Adjacent tones on the BK4829 (2026-11-02)
+
+**Radio finding:** with RX 69.3 Hz on a BK4829 VFO, a second radio sending
+67.0 Hz opened the squelch. 71.9 Hz stayed muted. None of these narrowed it
+(console `}` writes, radio checks):
+
+| write | 67.0 into a 69.3 channel |
+|---|---|
+| `REG_52 = 0x0148` (found/lost thresholds 5/8 instead of 10/15) | opens |
+| `REG_52 = 0x128F` (bit 12, the ~0.1 % unit) | opens |
+| `REG_51 = 0x9140` (bit 8, automatic CTCSS bandwidth off) | opens |
+
+None of this was a porting error. The stock programs the same tone word
+(`FUN_08016F7C`: `round(tone_0.1Hz x 20.64888 / 10)`, the K1's
+`(tone x 206488 + 50000) / 100000`). It also programs the same thresholds:
+`FUN_08006DE4` writes `REG_52` from the factory block at external flash
+`0x3880` (`(b[0x0A] << 6) | b[0x0B]` = `0x028F` on this radio, in all three dumps).
+The only difference is `REG_51`'s TX tone level, `0x9032` vs `0x9040`.
+
+**The chip's measurement is accurate.** `REG_68` read `0x0573` = 67.5 Hz
+during the 67.0 transmission, and bit 15 was set (no tone) with no signal.
+
+**The fix (branch `driver/ctcss-4815`, not validated):** the chip's tone report is
+kept as a raw input (`rx_4829_ctcss_event()`). The K1 sees `g_CTCSS_Lost`
+only when that report holds **and** the tone measured in `REG_68` is nearest to
+the channel's tone in `CTCSS_Options` (`rx_ctcss_nearest_is()`). This runs both
+in `CheckRadioInterrupts()` and on every receive poll; it resets when the
+carrier closes and is skipped while the CTCSS scanner runs. Console `$` prints
+`REG_68`, the last measured tone and both inputs.
+
+**Bench gate:** RX 69.3 on a BK4829 VFO:
+1. 67.0 stays muted; 69.3 opens; 71.9 stays muted.
+2. Repeat at the top of the table, e.g. RX 250.3 against 254.1.
+3. Confirm an exact-tone reception still opens as quickly as before.

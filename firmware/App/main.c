@@ -954,6 +954,15 @@ static void ctcss_4815_probe(void)
                 (unsigned)bk4815_read_reg(0x5bu), (unsigned)bk4815_read_reg(0x5cu),
                 (unsigned)bk4815_read_reg(0x5du), (unsigned)bk4815_read_reg(0x73u),
                 (unsigned)bk4815_read_reg(0x74u));
+    {
+        bool           chip = false, match = false;
+        const uint16_t m = rx_4829_ctcss_measured(&chip, &match);
+
+        uart_printf("  BK4829: REG_68=0x%04X, last measured %u.%u Hz, chip found %u, nearest-tone match %u\n",
+                    (unsigned)BK4819_ReadRegister(BK4819_REG_68),
+                    (unsigned)(m / 10u), (unsigned)(m % 10u),
+                    (unsigned)chip, (unsigned)match);
+    }
     uart_puts("  sampling 0x5C / 0x74 / 0x44 for ~5 s (flags are not cleared here):\n");
     for (k = 0; k < 20u; k++) {
         uart_printf("    0x5C=0x%04X 0x74=0x%04X rssi %u\n",

@@ -269,6 +269,24 @@ int main(void)
           !rx_4815_tone_step(true, true, true, true),
           "BK4815 tone: both flags, 0x5C bit 13 decides");
 
+    /* The BK4829's measured-tone check (REG_68). */
+    {
+        static const uint16_t tones[] = { 670u, 693u, 719u, 744u, 2503u, 2541u };
+        uint16_t t = 0u;
+
+        check(!rx_ctcss_reg68_tone(0x8473u, &t), "REG_68 bit 15 set: no tone measured");
+        check(rx_ctcss_reg68_tone(0x0573u, &t) && t == 675u,
+              "REG_68 0x0573 = 67.5 Hz (the radio's reading of a 67.0 transmission)");
+        check(!rx_ctcss_nearest_is(675u, tones, 6u, 1u),
+              "67.5 Hz measured does not match a 69.3 Hz channel");
+        check(rx_ctcss_nearest_is(675u, tones, 6u, 0u),
+              "67.5 Hz measured matches a 67.0 Hz channel");
+        check(rx_ctcss_nearest_is(698u, tones, 6u, 1u) &&
+              rx_ctcss_nearest_is(2530u, tones, 6u, 5u),
+              "a measurement within half a gap matches its own tone");
+        check(!rx_ctcss_nearest_is(670u, tones, 0u, 0u), "empty table never matches");
+    }
+
     printf("\n%d failed\n", fails);
     return fails ? 1 : 0;
 }

@@ -1,6 +1,7 @@
 #include "driver/rx.h"
 
 #include "app/chFrScanner.h"
+#include "app/scanner.h"
 #include "driver/audio_path.h"
 #include "driver/bk4815.h"
 #include "driver/bk4819.h"
@@ -28,6 +29,11 @@ static bool s_fm_active;        /* the FM feature owns the audio; see rx_set_fm_
 #define RX_4815_CTCSS_UNKNOWN 0xffffu
 static uint16_t s_4815_ctcss = RX_4815_CTCSS_UNKNOWN;
 static bool     s_4815_tone_present;
+
+/* The BK4829 lane's CTCSS: the chip's own report and the measured-tone check. */
+static bool     s_4829_chip_tone;
+static bool     s_4829_tone_match;
+static uint16_t s_4829_measured;   /* last REG_68 tone, 0.1 Hz (0 = none yet) */
 static uint16_t s_rssi;
 static uint32_t s_freq_10hz;    /* what the BK4829 was last tuned to */
 
@@ -785,6 +791,37 @@ static void rx_4815_ctcss_service(void)
     g_CTCSS_Lost = s_4815_tone_present;
 }
 
+void rx_4829_ctcss_event(bool found)
+{
+    s_4829_chip_tone = found;
+}
+
+bool rx_4829_ctcss_publish(void)
+{
+    uint16_t tone;
+
+    if (gCurrentCodeType != CODE_TYPE_CONTINUOUS_TONE ||
+        gRxVfo == NULL || gRxVfo->pRX->Code >= ARRAY_SIZE(CTCSS_Options))
+        return s_4829_chip_tone;
+
+    if (rx_ctcss_reg68_tone(BK4819_ReadRegister(BK4819_REG_68), &tone)) {
+        s_4829_measured   = tone;
+        s_4829_tone_match = rx_ctcss_nearest_is(tone, CTCSS_Options,
+                                                ARRAY_SIZE(CTCSS_Options),
+                                                gRxVfo->pRX->Code);
+    }
+    return s_4829_chip_tone && s_4829_tone_match;
+}
+
+uint16_t rx_4829_ctcss_measured(bool *chip, bool *match)
+{
+    if (chip)
+        *chip = s_4829_chip_tone;
+    if (match)
+        *match = s_4829_tone_match;
+    return s_4829_measured;
+}
+
 uint16_t rx_4815_ctcss(bool *present)
 {
     if (present)
@@ -826,6 +863,19 @@ void rx_service(void)
     if (rx_ready()) {
         rx_4815_ctcss_service();
         rx_poll();
+
+        /* The BK4829 lane's tone: a new reception needs a new chip report and
+         * a new measurement; while one runs, keep the K1's flag on the
+         * confirmed value.  Not during the CTCSS/DCS scanner, which reads
+         * REG_68 itself. */
+        if (!s_audio_4815 && !SCANNER_IsScanning()) {
+            if (!s_squelch_open) {
+                s_4829_chip_tone  = false;
+                s_4829_tone_match = false;
+            } else if (gCurrentCodeType == CODE_TYPE_CONTINUOUS_TONE) {
+                g_CTCSS_Lost = rx_4829_ctcss_publish();
+            }
+        }
     }
 
     if (rx_ready() && rx_squelch_open() != squelch_open) {

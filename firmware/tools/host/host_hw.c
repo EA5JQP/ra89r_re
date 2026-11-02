@@ -109,6 +109,8 @@ void     rf_dual_reapply(void) { }
 /* The scan trace (console '%') reads these; the preview never enables it. */
 uint16_t rx_rssi(void) { return 0u; }
 bool     rx_audio_is_4815(void) { return false; }
+void     rx_4829_ctcss_event(bool found) { (void)found; }
+bool     rx_4829_ctcss_publish(void) { return false; }
 void     bk4815_set_band(uint16_t band) { (void)band; }
 
 /* driver/rx.c's gate driver: the preview stubs the receiver, so this is inert. */
