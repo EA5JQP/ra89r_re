@@ -196,11 +196,30 @@ measured with ffmpeg over 300-3400 Hz:
 - **SQL 1 opens on band noise with no signal:** the generator-off row is loud
   hiss, at -11.5 dBFS.
 
+## Front-end settings at 118 MHz (2026-11-02)
+
+**Setup:** BK4829 (VFO A) on 118.000 MHz; tinySA CW at -96 dBm at the radio
+(30 dB pad); 0x67 median of 20 samples (`S`) with the carrier off and on. Every
+switch the console exposes was tried, and each was restored afterwards:
+
+| setting | 0x33 | off / on | effect |
+|---|---|---|---|
+| default (`F` mode 4 = K1 rule, `B` mode 0 = PA0 low, PA1 high) | `0x8000` | 91 / 157 | reference |
+| `F` 0 (as initialised), `F` 3 (both cleared) | `0x8000` | 91 / 157 | none |
+| `F` 1, VHF bit `0x04` set | `0x8004` | 69 / 131 | **-13 dB** (`0x04` is the BK4815's receive-path pin) |
+| `F` 2, UHF bit `0x08` set | `0x8008` | 92 / 157 | none |
+| `B` 1 / 2, PA0 high | — | 91 / 157 | none |
+| `y`, PA1 low (the stock's receive-entry value) | — | 91 / 157 | none |
+| `z`, 0x33 pin `0x10` set | `0x8010` | 91 / 157 | none |
+
+**Conclusion (verified):** none of these settings recovers the 10.5 dB loss at
+118 MHz. The default is already the best, so the roll-off below 130 MHz is fixed
+in the RF hardware (the VHF front end's filtering) and can't be changed from
+firmware. Airband sensitivity stays where the sweeps above put it.
+
 ## Open
 
-* The RSSI curve is measured now ("Reception quality sweep" above). Still open:
-  AM audio SNR by ear or instrument; whether another front-end setting (console
-  `F` / `B`) has less loss below 130 MHz; the source of the raised floor at
+* The RSSI curve is measured now ("Reception quality sweep" above). Still open: the source of the raised floor at
   118-127 MHz; and an AM squelch that doesn't learn a steady carrier into the
   floor.  Earlier rough notes: at -10 dBm the carrier reads 0x67 = 234 at 120.000 and ~120 at
   118.000 (the AM AGC profile), and SQL 4's 30-count margin rejects a -30 dBm
