@@ -206,6 +206,7 @@ State (each has its own doc — read it before touching the feature):
 | eeprom (`py25q16.c`, `spi_flash.c`) | read + full dump validated; the write-validation test has not run (`docs/ra89r_eeprom.md`) |
 | port | merged; the K1 GUI boots on the radio (`docs/ra89r_port.md`) |
 | spectrum (`app/spectrum.c`) | merged 2026-10-30: the K1/F4HWN spectrum screen (F+5) on the BK4829 *or* the BK4815 (long-press 6 toggles, kept across a power cycle), routed through `pa_set_rx_lane()`/`pa_select_band()` like the receiver; no "both" mode, for the shared-pins reason `FAST BOTH` was removed.  Validated with a tinySA on 446.01875: peak and listen audio on either chip, 6 changes the listen bandwidth on both.  Open: **VHF unmeasured** on either chip, one unexplained BK4815 open (`docs/ra89r_spectrum.md`) |
+| ctcss / dcs (`driver/rx.c`, `rx.h`) | merged 2026-11-02: the audio gate used to open on the carrier squelch alone, so a toned channel heard every carrier; on the BK4829 lane it now also needs the K1's tone decision (`rx_tone_gate_open()`: no tone set, or `RECEIVE`/`MONITOR`).  Validated on the radio: a matching tone opens, no or wrong tone stays muted, a dropped tone closes in ~1 s, monitor opens, DCS the same.  Open: **the BK4815 lane has no tone squelch** (the BK4829 cannot decode there; the BK4815's own decoder is unused); TX tone level vs the stock unmeasured (`docs/ra89r_ctcss.md`) |
 
 ## RF architecture (read before touching the RF code)
 

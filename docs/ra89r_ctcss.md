@@ -1,6 +1,9 @@
 # CTCSS / DCS (tone squelch)
 
-State: branch `driver/ctcss`, **not validated on the radio**.
+State: merged 2026-11-02, **validated on the radio** (BK4829 lane): a matching
+CTCSS tone from a second radio opens the audio; no tone or a wrong tone stays
+muted; dropping the tone closes the audio within about 1 s; monitor opens
+regardless of the tone; the same checks pass with a DCS code.
 
 ## The fault (2026-11-01)
 
@@ -45,8 +48,8 @@ the K1 expects: it needs a carrier before it looks for a tone.
   `RADIO_SetTxParameters()` writes `0x51`/`0x07`; `tx_start()` afterwards writes
   only `0x30`/`0x36`/`0x37`/`0x40`/`0x50`/`0x52`. The stock's TX tone level is
   lower (`0x51` = `0x9032` vs the K1's `0x9040`, `ra89r_rffeatures.md`).
-- **Bench gate** (needed before merging): a tinySA FM carrier on a BK4829 channel
-  with RX CTCSS set:
+- **Bench gate** (passed 2026-11-02; repeat after touching the gate): a carrier
+  on a BK4829 channel with RX CTCSS set:
   1. no tone → muted (the screen may show the signal);
   2. the matching tone → audio;
   3. a wrong tone → muted;
