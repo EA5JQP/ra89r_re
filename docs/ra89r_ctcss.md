@@ -39,10 +39,9 @@ the K1 expects: it needs a carrier before it looks for a tone.
 ## Open
 
 - Both lanes now decode CTCSS and DCS (validated on the radio, 2026-11-02).
-- **TX tone: located, not verified.** PTT → `FUNCTION_Transmit()` →
-  `RADIO_SetTxParameters()` writes `0x51`/`0x07`; `tx_start()` afterwards writes
-  only `0x30`/`0x36`/`0x37`/`0x40`/`0x50`/`0x52`. The stock's TX tone level is
-  lower (`0x51` = `0x9032` vs the K1's `0x9040`, `ra89r_rffeatures.md`).
+- **TX tone level: compared with the stock (located, 2026-11-02).** The port is
+  within 1 dB; see "TX tone level against the stock" below. DCS transmit polarity
+  is verified on the radio.
 - **Bench gate** (passed 2026-11-02; repeat after touching the gate): a carrier
   on a BK4829 channel with RX CTCSS set:
   1. no tone → muted (the screen may show the signal);
@@ -179,3 +178,41 @@ Console `$` prints `0x5E`-`0x62`, the published `g_CDCSS_Lost` /
 6. Monitor → opens.
 7. Repeat with an inverted channel code (023I against 023I / 023N).
 8. Confirm BK4815 CTCSS and the BK4829 lane are unchanged.
+
+## TX tone level against the stock (2026-11-02)
+
+**What the stock does (located).** `FUN_0801C61C` sets the TX sub-audio:
+
+`0x51 = (read(0x51) & 0xFF80) | 0x8000 | (0x1000 for CTCSS) | level >> 1`
+
+(`FUN_0800C104` is the end-of-TX tail, at `0x9040`.) The level is factory
+calibration:
+- **CTCSS:** `FUN_08020054` reads items `0x3C`–`0x40`, five points at the tones in
+  `0x080248B2` (62.5 / 91.5 / 151.4 / 192.8 / 254.1 Hz), and interpolates for the
+  channel's tone (`FUN_0800E334`, `FUN_0800E374`).
+- **DCS:** `FUN_0802015C` reads item `0x41`.
+- **Where the items live:** `FUN_0800E3F6`/`FUN_0800E5A8` map item `n` to page
+  `n / 10`, slot `n % 10`. Page 6 is at external flash **`0x3520`**, six bytes per
+  RF point (53 points from 100 MHz, 10 MHz apart, interpolated by RF frequency).
+  The value is each pair's first byte (`FUN_0800E83E`).
+- **Override:** in the factory alignment mode (`0x20009FA4`), a live value at
+  `0x2000A424 + 6` replaces both.
+
+This radio's page 6 (the same in `stock_eeprom.bin` and `after.bin`):
+
+| | calibration | /2 = 0x51 bits 6:0 | port (K1) | port vs stock |
+|---|---|---|---|---|
+| CTCSS ≤ 91.5 Hz | 129–134 | 64–67 | 64 (`0x9040`) | 0–0.4 dB lower |
+| CTCSS ≥ 151.4 Hz | 117–121 | 58–60 | 64 | 0.6–0.8 dB higher |
+| DCS | 99–104 | 49–52 | 51 (`0xA033`) | ~0 dB |
+
+The dB figures assume bits 6:0 scale the deviation linearly. No deviation was
+measured on air. A change isn't warranted; an exact match would mean reading
+page 6 and interpolating as the stock does.
+
+**DCS TX polarity (verified on the radio).** The K1 writes `0xA033`, which sets
+bit 13 — "transmit negative" in its own comments and constants. The stock clears
+bit 13 and passes the codeplug's TX N/I byte into the Golay word instead
+(`FUN_08017016` → `FUN_0801C5E2`). Despite the K1's naming, an RA89R transmitting
+023N is decoded as 023N (not 023I) by a second radio, so the port's polarity is
+right on this BK4829.
