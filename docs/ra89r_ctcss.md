@@ -38,8 +38,8 @@ the K1 expects: it needs a carrier before it looks for a tone.
 
 ## Open
 
-- **BK4815 lane: CTCSS on branch `driver/ctcss-4815`, not validated on the radio**
-  (see "The BK4815 lane" below). DCS on that lane is still carrier-only.
+- **BK4815 lane: DCS is still carrier-only.** CTCSS on that lane is done and
+  validated (see "The BK4815 lane" below).
 - **TX tone: located, not verified.** PTT → `FUNCTION_Transmit()` →
   `RADIO_SetTxParameters()` writes `0x51`/`0x07`; `tx_start()` afterwards writes
   only `0x30`/`0x36`/`0x37`/`0x40`/`0x50`/`0x52`. The stock's TX tone level is
@@ -53,7 +53,7 @@ the K1 expects: it needs a carrier before it looks for a tone.
   5. monitor opens regardless of the tone.
   Repeat with a DCS code.
 
-## The BK4815 lane (branch `driver/ctcss-4815`, 2026-11-02)
+## The BK4815 lane (merged 2026-11-02, validated on the radio)
 
 The BK4829 can't decode a tone on a BK4815 lane, because it doesn't hear the carrier
 there. So the BK4815's own detector is used, and its result is handed to the K1
@@ -74,7 +74,7 @@ reads the result over SPI.** Its only BK4815 reads are `0x00`, `0x0B`, `0x28`,
 `0x43`, `0x44`, `0x73` and `0x75`. So it most likely takes the chip's INTN pin on
 a GPIO (not located).
 
-**What the port does (not verified).**
+**What the port does (validated on the radio 2026-11-02).**
 - `bk4815_set_rx_ctcss()` replays the CTCSS/none rows above.
 - `rx_4815_ctcss_service()` (`driver/rx.c`, every 10 ms service pass):
   1. Programs the detector whenever the selected VFO's RX tone changes.
@@ -86,11 +86,10 @@ a GPIO (not located).
 - `CheckRadioInterrupts()` ignores the BK4829's CTCSS bits on this lane.
 - The audio gate on the BK4815 lane uses `rx_tone_gate_open()` for CTCSS only.
 
-**The open hardware question:** whether `0x74` latches over SPI without INTN
-being serviced. Console `$` prints the detector registers, the published
+**Settled on the radio:** `0x74` latches over SPI without INTN being serviced. Console `$` prints the detector registers, the published
 state and 5 s of raw `0x5C`/`0x74`/RSSI samples.
 
-**Bench gate:** VFO on the BK4815 (UHF, e.g. 446.00625), RX CTCSS set, toned
+**Bench gate (passed 2026-11-02):** VFO on the BK4815 (UHF, e.g. 446.00625), RX CTCSS set, toned
 carrier from a second radio. Run the same five checks as the BK4829 lane, plus a
 tone change in the menu while on the channel. Then confirm the BK4829 lane is
 unchanged.
@@ -117,7 +116,7 @@ The only difference is `REG_51`'s TX tone level, `0x9032` vs `0x9040`.
 **The chip's measurement is accurate.** `REG_68` read `0x0573` = 67.5 Hz
 during the 67.0 transmission, and bit 15 was set (no tone) with no signal.
 
-**The fix (branch `driver/ctcss-4815`, not validated):** the chip's tone report is
+**The fix (merged 2026-11-02, validated on the radio):** the chip's tone report is
 kept as a raw input (`rx_4829_ctcss_event()`). The K1 sees `g_CTCSS_Lost`
 only when that report holds **and** the tone measured in `REG_68` is nearest to
 the channel's tone in `CTCSS_Options` (`rx_ctcss_nearest_is()`). This runs both
@@ -125,7 +124,7 @@ in `CheckRadioInterrupts()` and on every receive poll; it resets when the
 carrier closes and is skipped while the CTCSS scanner runs. Console `$` prints
 `REG_68`, the last measured tone and both inputs.
 
-**Bench gate:** RX 69.3 on a BK4829 VFO:
+**Bench gate (passed 2026-11-02):** RX 69.3 on a BK4829 VFO:
 1. 67.0 stays muted; 69.3 opens; 71.9 stays muted.
 2. Repeat at the top of the table, e.g. RX 250.3 against 254.1.
 3. Confirm an exact-tone reception still opens as quickly as before.
