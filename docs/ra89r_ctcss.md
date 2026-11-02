@@ -38,12 +38,8 @@ the K1 expects: it needs a carrier before it looks for a tone.
 
 ## Open
 
-- **BK4815 lane: no tone squelch.** The BK4829 doesn't hear the carrier when the
-  VFO is on the BK4815 (`0x67` 53-62 with a carrier on or off), so its decoder
-  never reports a tone. Gating there would make every toned BK4815 channel silent,
-  so that lane still opens on the carrier alone. The BK4815 has its own CTCSS
-  decoder (`0x59`, `0x5B`-`0x5D`, interrupt mask `0x73`; `ra89r_bk4815.md`) that
-  is not used yet.
+- **BK4815 lane: CTCSS on branch `driver/ctcss-4815`, not validated on the radio**
+  (see "The BK4815 lane" below). DCS on that lane is still carrier-only.
 - **TX tone: located, not verified.** PTT → `FUNCTION_Transmit()` →
   `RADIO_SetTxParameters()` writes `0x51`/`0x07`; `tx_start()` afterwards writes
   only `0x30`/`0x36`/`0x37`/`0x40`/`0x50`/`0x52`. The stock's TX tone level is
@@ -56,3 +52,45 @@ the K1 expects: it needs a carrier before it looks for a tone.
   4. the tone removed mid-reception → audio closes within about 1 s;
   5. monitor opens regardless of the tone.
   Repeat with a DCS code.
+
+## The BK4815 lane (branch `driver/ctcss-4815`, 2026-11-02)
+
+The BK4829 can't decode a tone on a BK4815 lane, because it doesn't hear the carrier
+there. So the BK4815's own detector is used, and its result is handed to the K1
+through the same flag, so `HandleIncoming()`/`HandleReceive()` run unchanged.
+
+**What the stock does (located).** `FUN_08006D10` sets up the BK4815's
+receive sub-audio for a channel (datasheet register numbers are decimal):
+
+| case | `0x5B` [91] symbol | `0x5C` [92] | `0x42` [66] | other |
+|---|---|---|---|---|
+| RX CTCSS | `FUN_08016F28(tone, 0)`: `round((tone_0.1Hz << 19) / 18466 / 10)`, address 0 | `0x4001` (HPF bypass, 1 symbol) | `0xD103` (bit 8 CTCSS rx) | |
+| RX DCS | – | `0x4000` | `0xD083` (bit 7 CDCSS rx) | `0x59 = 0xF7A1`, `0x61 = 0x0100`, the code |
+| none | `0x061A` (55 Hz) | `0x4000` | `0xD103` | |
+
+`0x5D` [93] = `0x0060` in every case, and the receive entry's `0x73` = `0x81D0`
+enables the CTCSS found (bit 8) / lost (bit 7) interrupts. **The stock never
+reads the result over SPI.** Its only BK4815 reads are `0x00`, `0x0B`, `0x28`,
+`0x43`, `0x44`, `0x73` and `0x75`. So it most likely takes the chip's INTN pin on
+a GPIO (not located).
+
+**What the port does (not verified).**
+- `bk4815_set_rx_ctcss()` replays the CTCSS/none rows above.
+- `rx_4815_ctcss_service()` (`driver/rx.c`, every 10 ms service pass):
+  1. Programs the detector whenever the selected VFO's RX tone changes.
+  2. Polls the datasheet's interrupt flags `0x74` [116] over SPI (bit 8 found,
+     bit 7 lost) and clears them by writing 1. If both are set, `0x5C` bit 13
+     decides (`rx_4815_tone_step()`).
+  3. Publishes the result as `g_CTCSS_Lost`, which is the K1's name for "tone
+     present".
+- `CheckRadioInterrupts()` ignores the BK4829's CTCSS bits on this lane.
+- The audio gate on the BK4815 lane uses `rx_tone_gate_open()` for CTCSS only.
+
+**The open hardware question:** whether `0x74` latches over SPI without INTN
+being serviced. Console `$` prints the detector registers, the published
+state and 5 s of raw `0x5C`/`0x74`/RSSI samples.
+
+**Bench gate:** VFO on the BK4815 (UHF, e.g. 446.00625), RX CTCSS set, toned
+carrier from a second radio. Run the same five checks as the BK4829 lane, plus a
+tone change in the menu while on the channel. Then confirm the BK4829 lane is
+unchanged.

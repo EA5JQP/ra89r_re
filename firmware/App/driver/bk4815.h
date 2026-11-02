@@ -50,6 +50,19 @@
 #define BK4815_REG_FREQ_LO   0x72u
 #define BK4815_REG_CAL       0x7eu
 
+/* Receive sub-audio (datasheet registers, decimal in brackets): */
+#define BK4815_REG_DEMOD     0x42u   /* [66] bit 8 CTCSS rx, bit 7 CDCSS rx */
+#define BK4815_REG_CTC_SPEED 0x59u   /* [89] detection speed */
+#define BK4815_REG_CTC_SYM   0x5bu   /* [91] symbol address 15:13 + frequency 12:0 */
+#define BK4815_REG_CTC_CTRL  0x5cu   /* [92] HPF bypass, lost, found address, count */
+#define BK4815_REG_CTC_LOSS  0x5du   /* [93] loss threshold, phase */
+#define BK4815_REG_IRQ_MASK  0x73u   /* [115] */
+#define BK4815_REG_IRQ_FLAGS 0x74u   /* [116] write 1 to clear */
+
+#define BK4815_IRQ_CTCSS_FOUND (1u << 8)
+#define BK4815_IRQ_CTCSS_LOST  (1u << 7)
+#define BK4815_CTC_CTRL_LOST   (1u << 13)   /* 0x5C: the found symbol is lost */
+
 /* Register 0x49 (REG73 in the datasheet): bit 15 is "hard mute" (1 = muted).
  * The stock's AF switch writes 0x9A02 to mute (`FUN_08015F48`) and 0x1A02 to
  * unmute (`FUN_0801CCE8`), and its boot config leaves 0x1A02 (unmuted). */
@@ -160,6 +173,23 @@ bool bk4815_lo_bit10(void);
 
 /* The chip's RSSI indicator: register 0x44, bits 6:0. */
 uint16_t bk4815_read_rssi(void);
+
+/* The CTCSS detector symbol word for 0x5B (bits 12:0), from a tone in 0.1 Hz
+ * (the K1's CTCSS_Options unit).  The stock's FUN_08016F28 mode 0:
+ * (tone << 19) / 18466, then divided by 10 with round-half-up -- the
+ * datasheet's (freq/18466)*65536*8. */
+uint16_t bk4815_ctcss_rx_word(uint16_t tone_01hz);
+
+/* Program the receive sub-audio detector the way the stock's FUN_08006D10 does
+ * for a channel: with a tone (0.1 Hz units), symbol 0 = the tone, 0x5C = 0x4001
+ * (HPF bypass, one symbol); with 0, the stock's no-tone setup (0x5B = 0x061A,
+ * 55 Hz; 0x5C = 0x4000).  0x5D = 0x0060 and 0x42 = 0xD103 (CTCSS receive on)
+ * in both.  DCS receive (the stock's 0x42 = 0xD083 branch) is not done here. */
+void bk4815_set_rx_ctcss(uint16_t tone_01hz);
+
+/* The interrupt flags (0x74) and their write-1-to-clear. */
+uint16_t bk4815_read_irq_flags(void);
+void bk4815_clear_irq_flags(uint16_t bits);
 
 /* Enable or mute the chip's AF output (register 0x49).  The stock switches this
  * as the receive audio source when the BK4815 is the selected transceiver. */

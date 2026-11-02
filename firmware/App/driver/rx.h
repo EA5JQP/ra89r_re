@@ -339,6 +339,22 @@ static inline bool rx_tone_gate_open(bool carrier_open, bool tone_squelch,
     return carrier_open && (!tone_squelch || k1_accepted);
 }
 
+/* The BK4815 lane's tone state, from its interrupt flags (0x74 bit 8 found,
+ * bit 7 lost) polled over SPI.  Both in one poll: the detector's own status
+ * (0x5C bit 13, "the found symbol is lost") settles which came last.  No flag:
+ * the state holds. */
+static inline bool rx_4815_tone_step(bool present, bool found, bool lost,
+                                     bool status_lost)
+{
+    if (found && lost)
+        return !status_lost;
+    if (found)
+        return true;
+    if (lost)
+        return false;
+    return present;
+}
+
 /* Bring the RF up and start receiving on `freq_10hz` (10 Hz units, the same
  * convention as the codeplug).  Idempotent enough to be called again to retune. */
 void rx_init(uint32_t freq_10hz);
@@ -376,6 +392,10 @@ uint16_t rx_squelch_floor(void);
 /* True when the receive audio is currently taken from the BK4815 (the selected
  * RX VFO's transceiver), for the console diagnostic. */
 bool rx_audio_is_4815(void);
+
+/* The BK4815 lane's CTCSS detector: the tone it is programmed for (0.1 Hz,
+ * 0 = none, 0xFFFF = not yet written) and, in *present, its last report. */
+uint16_t rx_4815_ctcss(bool *present);
 
 /* Console '@': bounded electrical tail trace for the BK4829 hybrid.  Blocking
  * for up to 30 s and owns the audio; prints RSSI fall/chip close/gate

@@ -361,7 +361,7 @@ static void print_help(void)
               "          h help   i diagnostics   d dump screen as ASCII\n"
               "          m show the VFO/channel mode and switch it (K1: F then 3)\n"
               "          ^ flip the BK4815's 0x75 bit 10 (LO injection side)\n"
-              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40)   y toggle PA1   z toggle 0x33 pin 2 (0x10)\n          H audio chain (regs 0x30/0x47/0x48/0x50, PC13, squelch, lane)\n          o cycle SetScn   7 cycle SQL   8 switch VFO A/B   9/I cycle TrVfoA/B\n          N arm a +/-500 kHz range   E start/stop the scan   U arm the airband (108-136.975, 8.33 kHz)\n"
+              "          F cycle the chip-side VHF/UHF front end   B cycle the MCU PA0 level\n          g toggle 0x33 bit 0 (0x40)   y toggle PA1   z toggle 0x33 pin 2 (0x10)\n          H audio chain (regs 0x30/0x47/0x48/0x50, PC13, squelch, lane)   $ BK4815 CTCSS detector\n          o cycle SetScn   7 cycle SQL   8 switch VFO A/B   9/I cycle TrVfoA/B\n          N arm a +/-500 kHz range   E start/stop the scan   U arm the airband (108-136.975, 8.33 kHz)\n"
               "          D step the RF bus delay (find what still gives audio)\n"
               "          P time the loop's hot paths on this radio\n"
               "          q heartbeat   k keypad monitor   l backlight\n"
@@ -931,6 +931,36 @@ static void scan_rate_benchmark(void)
                 (unsigned)res.probes_per_second);
     if (res.probes_per_second == 0u)
         uart_puts("  FAST measured 0 probes/s: check squelch and the range\n");
+}
+
+/* The console's '$': the BK4815 lane's CTCSS detector (driver/rx.c,
+ * rx_4815_ctcss_service()).  Read-only; samples the raw status for ~5 s so a
+ * toned carrier can be keyed and unkeyed while it runs. */
+static void ctcss_4815_probe(void)
+{
+    bool           present = false;
+    const uint16_t tone    = rx_4815_ctcss(&present);
+    unsigned       k;
+
+    uart_printf("\nBK4815 CTCSS: lane %s, detector tone %u.%u Hz%s, present %u\n",
+                rx_audio_is_4815() ? "BK4815" : "BK4829 (detector idle)",
+                (unsigned)(tone / 10u), (unsigned)(tone % 10u),
+                tone == 0xffffu ? " (not written)" : "", (unsigned)present);
+    uart_printf("  K1: g_CTCSS_Lost(=tone present) %u  fn %u  code type %u  squelch %s\n",
+                (unsigned)g_CTCSS_Lost, (unsigned)gCurrentFunction,
+                (unsigned)gCurrentCodeType, rx_squelch_open() ? "open" : "closed");
+    uart_printf("  0x42=0x%04X 0x59=0x%04X 0x5B=0x%04X 0x5C=0x%04X 0x5D=0x%04X 0x73=0x%04X 0x74=0x%04X\n",
+                (unsigned)bk4815_read_reg(0x42u), (unsigned)bk4815_read_reg(0x59u),
+                (unsigned)bk4815_read_reg(0x5bu), (unsigned)bk4815_read_reg(0x5cu),
+                (unsigned)bk4815_read_reg(0x5du), (unsigned)bk4815_read_reg(0x73u),
+                (unsigned)bk4815_read_reg(0x74u));
+    uart_puts("  sampling 0x5C / 0x74 / 0x44 for ~5 s (flags are not cleared here):\n");
+    for (k = 0; k < 20u; k++) {
+        uart_printf("    0x5C=0x%04X 0x74=0x%04X rssi %u\n",
+                    (unsigned)bk4815_read_reg(0x5cu), (unsigned)bk4815_read_reg(0x74u),
+                    (unsigned)bk4815_read_rssi());
+        systick_delay_ms(250u);
+    }
 }
 
 /* The console's 'J': the live dual-RF state, without re-tuning anything.  Shows
@@ -2290,6 +2320,9 @@ int main(void)
             }
             case 'J':
                 dual_rf_diag();
+                break;
+            case '$':
+                ctcss_4815_probe();
                 break;
             case '%':
                 uart_printf("\nscan trace %s\n", CHFRSCANNER_ToggleTrace() ? "ON" : "off");
