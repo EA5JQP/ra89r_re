@@ -157,6 +157,45 @@ count), so the meter is linear over -136..-66 dBm.
 
 AM audio quality was not assessed: nothing here measures demodulated SNR.
 
+## AM audio, recorded off the speaker (2026-11-02)
+
+**Setup:** BK4829 (VFO A) on 120.100 MHz, SQL 1. tinySA low output with
+`modulation am` / `modulation freq 1000` (its AM depth is not known) through a
+30 dB pad. The radio's speaker was recorded by the laptop's internal microphone
+(16 kHz mono, 3 s per step, mic input 50 %, peaks below -4 dBFS). Levels are
+measured with ffmpeg over 300-3400 Hz:
+- **tone:** a 60 Hz band-pass at 1 kHz;
+- **rest:** a 120 Hz band-reject at 1 kHz, i.e. noise plus distortion;
+- **SINAD:** tone minus rest.
+
+| at the radio | tone dBFS | SINAD | 2nd | 3rd harmonic |
+|---|---|---|---|---|
+| generator off | (hiss -11.5) | — | | |
+| carrier, no modulation, -66 dBm | (rest -29.4) | — | | |
+| -106 dBm | -14.0 | 3.5 dB | -20 dBc | -21 dBc |
+| -101 dBm | -11.8 | 8.9 dB | -27 | -25 |
+| -96 dBm | -11.4 | 14.4 dB | -31 | -26 |
+| -91 dBm | -11.6 | 16.9 dB | -31 | -26 |
+| -86 dBm | -11.1 | 19.0 dB | -32 | -26 |
+| -76 dBm | -10.9 | 22.0 dB | -33 | -26 |
+| -66 dBm | -11.5 | 18.8 dB | -33 | -26 |
+| -56 dBm | -11.9 | 19.7 dB | -33 | -26 |
+| -46 dBm | -14.3 | 12.7 dB | -18 | -25 |
+| -36 dBm | -12.2 | 21.0 dB | -33 | -26 |
+
+**Findings:**
+- **10 dB SINAD at about -100 dBm** on 120.1 MHz. This is consistent with the
+  ~10 dB front-end loss measured at 118-121.5 MHz in the RSSI sweep.
+- **The AM AGC holds the audio level flat** (within 1 dB) from -101 to -36 dBm.
+- **SINAD plateaus at 19-22 dB from -86 dBm up**, capped by a constant 3rd
+  harmonic at -26 dBc (about 5 %). It doesn't change with RF level. Its source is
+  not separated: the tinySA's AM modulator, the BK4829 AM demodulator, the
+  speaker and the room are all in the chain.
+- The -46 dBm row is a single outlier (2nd harmonic -18 dBc); probably a
+  transient during the recording.
+- **SQL 1 opens on band noise with no signal:** the generator-off row is loud
+  hiss, at -11.5 dBFS.
+
 ## Open
 
 * The RSSI curve is measured now ("Reception quality sweep" above). Still open:
