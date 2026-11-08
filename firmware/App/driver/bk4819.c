@@ -736,6 +736,34 @@ void BK4819_SetFrequency(uint32_t Frequency)
     BK4819_WriteRegister(BK4819_REG_39, (Frequency >> 16) & 0xFFFF);
 }
 
+/* Port addition: the stock's VCO calibration after a retune.  Its BK4829
+ * receive entry (FUN_08016EC8 -> FUN_08016DE8 -> FUN_08018A3C ->
+ * FUN_08018A46(0)) ends every channel change with
+ *
+ *     0x37 = 0x9D1F, 0x30 = 0x0200, 0x30 = 0xBDF1
+ *
+ * i.e. a fresh rising edge of 0x30 bit 15 (VCO calibration) with the receive
+ * chain enabled.  The K1's retune only writes 0x38/0x39, so the VCO kept the
+ * calibration of the last RX_TurnOn() (boot, a squelch-open edge, a power-save
+ * wake) -- the port's own spectrum code already toggles 0x30 after a retune
+ * for the same reason.  The stock leaves 0xBDF1 (AF DAC, bit 9, off) and opens
+ * the audio later; here the word the receiver was running with is put back
+ * so the port's audio gating is unchanged.  0x37 is left as the K1 set it.
+ *
+ * Not during TX (the caller's job) and not on a sleeping chip (0x30 = 0): its
+ * wake, BK4819_RX_TurnOn(), calibrates anyway. */
+void BK4819_CalibrateVco(void)
+{
+    const uint16_t run = BK4819_ReadRegister(BK4819_REG_30);
+
+    if (run == 0u)
+        return;
+    BK4819_WriteRegister(BK4819_REG_30, 0x0200);
+    BK4819_WriteRegister(BK4819_REG_30, 0xBDF1);
+    if (run != 0xBDF1u)
+        BK4819_WriteRegister(BK4819_REG_30, run);
+}
+
 void BK4819_SetupSquelch(
         uint8_t SquelchOpenRSSIThresh,
         uint8_t SquelchCloseRSSIThresh,

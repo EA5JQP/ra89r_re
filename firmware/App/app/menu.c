@@ -605,14 +605,12 @@ void MENU_AcceptSetting(void)
         case MENU_RF_A:
             /* Each item names its VFO explicitly, independent of which VFO is
              * selected on the main screen. */
-            SETTINGS_SetVfoTransceiver(0u, gSubMenuSelection == 0u
-                                             ? RF_XCVR_BK4829 : RF_XCVR_BK4815);
+            SETTINGS_SetVfoTransceiver(0u, (rf_xcvr_t)gSubMenuSelection);
             gRequestSaveSettings = true;
             return;
 
         case MENU_RF_B:
-            SETTINGS_SetVfoTransceiver(1u, gSubMenuSelection == 0u
-                                             ? RF_XCVR_BK4829 : RF_XCVR_BK4815);
+            SETTINGS_SetVfoTransceiver(1u, (rf_xcvr_t)gSubMenuSelection);
             gRequestSaveSettings = true;
             return;
 
@@ -1166,11 +1164,11 @@ void MENU_ShowCurrentSetting(void)
             break;
 
         case MENU_RF_A:
-            gSubMenuSelection = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4815 ? 1u : 0u;
+            gSubMenuSelection = (uint8_t)SETTINGS_GetVfoTransceiverSetting(0u);
             break;
 
         case MENU_RF_B:
-            gSubMenuSelection = SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815 ? 1u : 0u;
+            gSubMenuSelection = (uint8_t)SETTINGS_GetVfoTransceiverSetting(1u);
             break;
 
 #ifndef ENABLE_FEAT_F4HWN

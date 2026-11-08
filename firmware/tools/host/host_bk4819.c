@@ -44,6 +44,7 @@ BK4819_CssScanResult_t BK4819_GetCxCSSScanResult(uint32_t *pCdcssFreq, uint16_t 
     return BK4819_CSS_RESULT_NOT_FOUND;
 }
 void BK4819_SetFrequencyScan(bool enable) { (void)enable; }
+void BK4819_CalibrateVco(void) { }
 void BK4819_SetScanFrequency(uint32_t Frequency) { (void)Frequency; }
 void BK4819_Disable(void) { }
 void BK4819_StopScan(void) { }

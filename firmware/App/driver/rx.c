@@ -93,6 +93,10 @@ void rx_set_frequency(uint32_t freq_10hz)
         rx_gate_hold_closed();
 
     BK4819_SetFrequency(freq_10hz);
+    /* The stock recalibrates the VCO on every receive entry (FUN_08018A46);
+     * a retune without it keeps the old band's calibration. */
+    if (freq_10hz != s_freq_10hz && !tx_active())
+        BK4819_CalibrateVco();
     s_freq_10hz = freq_10hz;
     pa_select_band(freq_10hz);
 }
@@ -1080,7 +1084,10 @@ void rf_dual_refresh(void)
             const uint16_t pwr = rx_vfo_is_4815() ? BK4815_PWR_RX_AUDIO
                                                   : BK4815_PWR_RX_QUIET;
 
-            if (pwr != s_tr_written) {
+            /* Against the driver's shadow, not a private cache: the PLL
+             * calibration, tx_start()/tx_stop() and the console benches write
+             * 0x0C too, and a stale cache left the quiet word in place. */
+            if (pwr != bk4815_power_word()) {
                 bk4815_write_reg(0x0C, pwr);
                 s_tr_written = pwr;
             }

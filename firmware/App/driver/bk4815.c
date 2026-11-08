@@ -99,9 +99,21 @@ uint16_t bk4815_read_reg(uint8_t reg)
     return rf_bus_read(CS, (uint8_t)(((reg & 0x7fu) << 1) | 1u));
 }
 
+/* The last word written to 0x0C (the power/mode word).  A read is no use for
+ * it: the part changes bits on its own (0x0A03 was seen reading 0x0603). */
+static uint16_t s_pwr_word = 0x0a03u;
+
+uint16_t bk4815_power_word(void)
+{
+    return s_pwr_word;
+}
+
 void bk4815_write_reg(uint8_t reg, uint16_t value)
 {
     uint8_t b[2];
+
+    if (reg == 0x0Cu)
+        s_pwr_word = value;
 
     b[0] = (uint8_t)(value >> 8);
     b[1] = (uint8_t)value;
@@ -186,8 +198,33 @@ void bk4815_set_band(uint16_t band)
  * It runs on a lane (re)configuration -- a VFO switch or a frequency change --
  * and never from the scanner's probe loop, where seven extra writes per
  * candidate would cost scan throughput. */
+/* The stock's PLL calibration after a tune.  Its per-VFO receive entry
+ * (FUN_08016CEC) runs, straight after the tune (FUN_0801703C):
+ *
+ *     FUN_0801BF76:  0x0C = 0x0A03, then FUN_0801BF54:
+ *                    0x0B = 0x0800, 0x0B = 0x8800, 0x0B = 0x9800
+ *
+ * Register 11 (0x0B) is the datasheet's "PLL calibration 1->0->1" (bit 12;
+ * its default 0x8800 is the boot block's value, which is why the boot alone
+ * never re-calibrates).  Without it the synthesizer keeps the calibration of
+ * the frequency it had at boot.  The stock decides the final 0x0C word later
+ * (FUN_0801E1B0: 0x0203 or 0x0A03); here the word in force before is put back,
+ * so the callers' own 0x0C choice (rx.c: audio lane or quiet) is unchanged. */
+void bk4815_pll_calibrate(void)
+{
+    const uint16_t pwr = s_pwr_word;
+
+    bk4815_write_reg(0x0Cu, 0x0a03u);
+    bk4815_write_reg(0x0Bu, 0x0800u);
+    bk4815_write_reg(0x0Bu, 0x8800u);
+    bk4815_write_reg(0x0Bu, 0x9800u);
+    if (pwr != 0x0a03u)
+        bk4815_write_reg(0x0Cu, pwr);
+}
+
 void bk4815_receive_entry(bool wide)
 {
+    bk4815_pll_calibrate();
     bk4815_write_reg(0x16u, 0xb200u);
     bk4815_write_reg(0x2bu, 0x403fu);
     bk4815_write_reg(0x6du, 0x6618u);

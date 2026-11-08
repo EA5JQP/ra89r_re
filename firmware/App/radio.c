@@ -813,6 +813,9 @@ void RADIO_SetupRegisters(bool switchToForeground)
     if (SETTINGS_GetVfoTransceiver(gEeprom.RX_VFO) != RF_XCVR_BK4815)
     {
         BK4819_SetFrequency(Frequency);
+        /* Port adaptation: the stock's receive entry recalibrates the VCO
+         * after the tune (FUN_08018A46); the K1 only writes 0x38/0x39. */
+        BK4819_CalibrateVco();
 
         BK4819_PickRXFilterPathBasedOnFrequency(Frequency);
     }
