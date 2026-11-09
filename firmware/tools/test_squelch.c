@@ -148,6 +148,34 @@ static void test_scan_mark_scale(void)
     check(b15 > RX_FLOOR_PRIOR_4815 && b15 < 47u,         "BK4815 mark between floor and carrier");
 }
 
+/* The stock's BK4815 verdict, FUN_08005218: every branch of its tree. */
+static void test_4815_verdict(void)
+{
+    /* level 1: ex-noise max (28 - 2) * 32 = 832; hold window < 982 and < 630 */
+    check(rx_4815_exnoise_max(1u) == 832u && rx_4815_exnoise_max(9u) == 320u &&
+          rx_4815_exnoise_max(0u) == 896u, "ex-noise max (28 - 2*level) * 32");
+    check(rx_4815_verdict(1u, 30u, 40u, 12u, 100u) == RX_4815_SIGNAL,
+          "SNR >= 8, RSSI over the mark, low ex-noise -> signal");
+    check(rx_4815_verdict(1u, 30u, 40u, 12u, 900u) == RX_4815_HOLD,
+          "SNR and RSSI fine but ex-noise over the max -> hold");
+    check(rx_4815_verdict(1u, 30u, 40u, 7u, 100u) == RX_4815_HOLD,
+          "RSSI over the mark but SNR 7 -> not signal (hold: SNR > 2, low noise)");
+    check(rx_4815_verdict(1u, 30u, 40u, 2u, 100u) == RX_4815_NONE,
+          "RSSI over the mark but SNR 2 -> none: RSSI alone does not open");
+    check(rx_4815_verdict(1u, 30u, 28u, 5u, 100u) == RX_4815_HOLD,
+          "just under the mark (> mark - 3), SNR 5, quiet -> hold");
+    check(rx_4815_verdict(1u, 30u, 27u, 5u, 100u) == RX_4815_NONE,
+          "mark - 3 -> none");
+    check(rx_4815_verdict(1u, 30u, 29u, 5u, 630u) == RX_4815_NONE,
+          "hold needs ex-noise < 630");
+    check(rx_4815_verdict(7u, 30u, 35u, 12u, 100u) == RX_4815_HOLD &&
+          rx_4815_verdict(7u, 30u, 36u, 12u, 100u) == RX_4815_SIGNAL,
+          "level 7..9 raises the mark by 6");
+    check(rx_4815_verdict(9u, 30u, 40u, 12u, 321u) == RX_4815_HOLD &&
+          rx_4815_verdict(9u, 30u, 40u, 12u, 320u) == RX_4815_SIGNAL,
+          "level 9: ex-noise max 320");
+}
+
 int main(void)
 {
     printf("squelch counter test (the stock's 0..10 shape)\n\n");
@@ -158,6 +186,7 @@ int main(void)
     test_close_from_full();
     test_force_open();
     test_scan_mark_scale();
+    test_4815_verdict();
 
     printf("\n%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

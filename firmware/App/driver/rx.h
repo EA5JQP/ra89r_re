@@ -168,6 +168,54 @@ static inline void rx_squelch_step(rx_squelch_t *s, bool present, bool absent,
         s->open = false;
 }
 
+/* The stock's BK4815 squelch verdict, FUN_08005218 (decoded 2026-11-08):
+ *
+ *   mark      the RSSI mark (0x44<6:0> scale); +6 at squelch level 7..9
+ *   snr       0x44<13:8>, the datasheet's SNR indicator, 1 dB/step
+ *   exnoise   0x43<11:0>, the datasheet's ex-band noise
+ *
+ *   signal (1)  snr >= 8 and rssi >= mark and exnoise <= (28 - 2*level) * 32
+ *   hold   (2)  snr >= 8 and rssi >= mark but exnoise above that, or
+ *               rssi > mark - 3 and exnoise below that + 150 and below 630
+ *               and snr > 2
+ *   none   (0)  otherwise
+ *
+ * The stock opens on the 0..10 counter (rx_squelch_step: signal counts up,
+ * none counts down, hold holds).  RSSI alone opened on noise that the SNR and
+ * ex-band noise meters see as noise; this is what keeps the stock silent
+ * below ~-118 dBm at 145.5 MHz (docs/ra89r_rx_sensitivity.md).  The stock's
+ * other hold offset (mark - 5, a global flag) is not used here. */
+#define RX_4815_NONE   0u
+#define RX_4815_SIGNAL 1u
+#define RX_4815_HOLD   2u
+#define RX_4815_SNR_MIN       8u
+#define RX_4815_SNR_HOLD_MIN  2u
+#define RX_4815_EXNOISE_HOLD_ADD  150u
+#define RX_4815_EXNOISE_HOLD_MAX  630u
+
+static inline uint16_t rx_4815_exnoise_max(uint8_t level)
+{
+    if (level > 9u)
+        level = 9u;
+    return (uint16_t)((28u - 2u * level) * 32u);
+}
+
+static inline uint8_t rx_4815_verdict(uint8_t level, uint16_t mark, uint16_t rssi,
+                                      uint8_t snr, uint16_t exnoise)
+{
+    const uint16_t m         = (uint16_t)(mark + ((level >= 7u) ? 6u : 0u));
+    const uint16_t noise_max = rx_4815_exnoise_max(level);
+
+    if (snr >= RX_4815_SNR_MIN && rssi >= m)
+        return (exnoise <= noise_max) ? RX_4815_SIGNAL : RX_4815_HOLD;
+    if (rssi + 3u > m &&
+        exnoise < (uint16_t)(noise_max + RX_4815_EXNOISE_HOLD_ADD) &&
+        exnoise < RX_4815_EXNOISE_HOLD_MAX &&
+        snr > RX_4815_SNR_HOLD_MIN)
+        return RX_4815_HOLD;
+    return RX_4815_NONE;
+}
+
 /* Backwards-compatible wrappers for callers that only know the level (the
  * scanner's 4815 lane, tests): the fixed level-8 anchor plus the level steps.
  */
@@ -466,6 +514,11 @@ void rx_tail_set_close_delay(int delay);
  * so the audio path can be judged separately from the squelch. */
 void rx_force_bk4815_af(bool on);
 bool rx_force_bk4815_af_on(void);
+/* The BK4815 lane's noise gate (the stock's SNR + ex-band noise verdict on top
+ * of the RSSI mark; default on) and its last poll's meters, for the console. */
+void rx_4815_noise_gate_set(bool on);
+bool rx_4815_noise_gate_on(void);
+void rx_4815_meters(uint16_t *rssi, uint8_t *snr, uint16_t *exnoise, uint8_t *verdict);
 
 /* Bench (console '['): open the BK4829's AF output together with a BK4815
  * lane's gate, or keep it muted there (the default). */

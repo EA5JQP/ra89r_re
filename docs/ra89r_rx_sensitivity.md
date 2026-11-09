@@ -119,10 +119,11 @@ new build.
 
 ## Open
 
-1. The stock's noise muting: a squelch on the noise/glitch meters (`0x63`,
-   `0x65` on the BK4829, `FUN_080052B8`; `0x43` SNR on the BK4815,
-   `FUN_08005218`) rather than RSSI alone -- the port's next step
-   (`ra89r_squelch.md`).
+1. The stock's noise muting.  The BK4829 lane already gates on the chip's
+   noise/glitch comparator; the BK4815 lane now has the stock's SNR +
+   ex-band-noise verdict (`FUN_08005218`), validated at SQL 1 on the radio
+   (branch `driver/rx-noise-squelch`, `ra89r_squelch.md`).  SQL 0 still plays
+   the noise.
 2. UHF, the airband and 250-300 MHz sensitivity, and the old build as a
    baseline for the calibration change.
 3. The 144.0 MHz noise hump.

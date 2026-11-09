@@ -380,6 +380,7 @@ static void print_help(void)
               "          J dual-RF live state: roles, audio source, BK4815 regs/meters\n"
               "          A force the BK4815 AF open (bypass squelch) to test audio\n"
               "          ( cycle the BK4815 0x0C power word   [ BK4829 AF on a BK4815 lane\n"
+              "          ) BK4815 squelch meters (rssi/snr/ex-noise)   < toggle the BK4815 noise gate\n"
               "          { dump every BK4829 register (0x00-0x7F, read-only)   } RR VVVV write one\n"
               "          + remote PTT on (TX rules apply, 30 s cap)   - remote PTT off\n"
               "          ~ NNN set the PA PWM (hex, live while transmitting)\n"
@@ -2354,6 +2355,38 @@ int main(void)
                             CHFRSCANNER_TogglePlainTune()
                                 ? "plain 0x38/0x39 write"
                                 : "REG_30 restart (K1)");
+                break;
+            case ')': {
+                /* Bench, read-only: the BK4815's three squelch meters and the
+                 * stock's verdict on them (rx_4815_verdict()), 20 x 200 ms. */
+                const uint8_t  lvl  = gEeprom.SQUELCH_LEVEL;
+                const uint16_t mark = rx_squelch_open_mark_now();
+                unsigned k;
+
+                uart_printf("\nBK4815 meters: SQL %u, RSSI mark %u, ex-noise max %u, "
+                            "noise gate %s, gate %s\n", (unsigned)lvl, (unsigned)mark,
+                            (unsigned)rx_4815_exnoise_max(lvl),
+                            rx_4815_noise_gate_on() ? "on" : "off",
+                            rx_squelch_open() ? "open" : "closed");
+                for (k = 0; k < 20u; k++) {
+                    const uint16_t r44 = bk4815_read_reg(0x44u);
+                    const uint16_t exn = (uint16_t)(bk4815_read_reg(0x43u) & 0x0fffu);
+                    const uint16_t rs  = (uint16_t)(r44 & 0x7fu);
+                    const uint8_t  snr = (uint8_t)((r44 >> 8) & 0x3fu);
+                    const uint8_t  v   = rx_4815_verdict(lvl, mark, rs, snr, exn);
+
+                    uart_printf("  rssi %3u  snr %2u  exnoise %4u  -> %s\n",
+                                (unsigned)rs, (unsigned)snr, (unsigned)exn,
+                                v == RX_4815_SIGNAL ? "signal"
+                                                    : (v == RX_4815_HOLD ? "hold" : "none"));
+                    systick_delay_ms(200u);
+                }
+                break;
+            }
+            case '<':
+                rx_4815_noise_gate_set(!rx_4815_noise_gate_on());
+                uart_printf("\nBK4815 noise gate (SNR + ex-noise, the stock's) %s\n",
+                            rx_4815_noise_gate_on() ? "ON" : "off (RSSI only)");
                 break;
             case 'A':
                 rx_force_bk4815_af(!rx_force_bk4815_af_on());

@@ -125,6 +125,30 @@ void rx_set_fm_active(bool active)
 static bool s_audio_4815;
 static uint32_t s_4815_freq;    /* the tune last applied to the BK4815 (for its squelch marks) */
 static bool s_force_4815_af;    /* console 'A' diagnostic */
+static bool     s_4815_noise_gate = true;   /* console '<': the stock's SNR/ex-noise verdict */
+static uint8_t  s_4815_snr;                 /* 0x44<13:8>, last poll */
+static uint16_t s_4815_exnoise;             /* 0x43<11:0>, last poll */
+static uint8_t  s_4815_verdict;             /* rx_4815_verdict(), last poll */
+static uint8_t  s_4815_exnoise_age;         /* polls until 0x43 is read again */
+#define RX_4815_EXNOISE_EVERY 8u            /* 80 ms at the 10 ms poll */
+
+void rx_4815_noise_gate_set(bool on)
+{
+    s_4815_noise_gate = on;
+}
+
+bool rx_4815_noise_gate_on(void)
+{
+    return s_4815_noise_gate;
+}
+
+void rx_4815_meters(uint16_t *rssi, uint8_t *snr, uint16_t *exnoise, uint8_t *verdict)
+{
+    if (rssi)    *rssi    = s_rssi;
+    if (snr)     *snr     = s_4815_snr;
+    if (exnoise) *exnoise = s_4815_exnoise;
+    if (verdict) *verdict = s_4815_verdict;
+}
 
 /* Noise-floor tracker per (lane, band, modulation): the BK4829's floor is
  * 49-57 at UHF, 96-103 at VHF in FM and 63 at VHF in AM (the AM AGC profile
@@ -407,7 +431,13 @@ void rx_poll(void)
         const bool     squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
         const bool     was_open    = s_squelch_open;
 
-        s_rssi = bk4815_read_rssi();
+        {
+            /* One 0x44 read gives both the RSSI (6:0) and the SNR (13:8). */
+            const uint16_t r44 = bk4815_read_reg(0x44u);
+
+            s_rssi     = (uint16_t)(r44 & 0x7fu);
+            s_4815_snr = (uint8_t)((r44 >> 8) & 0x3fu);
+        }
 
         /* Learn the lane's floor and take the marks from it: a fixed mark cannot
          * work on this board (see rx.h).  Not while a scan runs: it retunes
@@ -424,16 +454,61 @@ void rx_poll(void)
             const bool     weak_open = s_squelch_open &&
                 s_rssi < (uint16_t)(open_now + rx_squelch_margin(true, gEeprom.SQUELCH_LEVEL));
 
-            if (gScanStateDir == SCAN_OFF && (!s_squelch_open || weak_open))
+            /* And never from a sample the BK4815's own SNR meter calls a
+             * signal: a weak steady carrier below the mark was learned into
+             * the floor, the mark climbed over it and the carrier never opened
+             * the gate (radio 2026-11-08: -106 dBm at 145.5 MHz, SNR 13-15 dB,
+             * RSSI 52 against a learned mark of 58).  No carrier reads SNR
+             * 4-4.5 here, -126 dBm 4.5-6, -121 dBm 8.5-10. */
+            const bool snr_signal = s_4815_noise_gate && s_4815_snr >= RX_4815_SNR_MIN;
+            /* With the noise gate on, noise cannot open the gate (that needs
+             * SNR >= 8), so the "weak open" escape is not needed -- and it was
+             * a leak: a -121 dBm carrier's SNR wanders 8..13 around its median
+             * of 11, the samples under 8 were learned while open, and the mark
+             * crept from 34 to 39 over the RSSI of 36 and closed the gate after
+             * a minute (radio 2026-11-09).  Learn only while closed. */
+            const bool learn = s_4815_noise_gate ? (!s_squelch_open && !snr_signal)
+                                                 : (!s_squelch_open || weak_open);
+
+            if (gScanStateDir == SCAN_OFF && learn)
                 (void)rx_floor_update(1u, rx_lane_uhf(), s_rssi, true);
         }
 
         {
             const uint16_t open_mark  = rx_squelch_open_mark_now();
             const uint16_t close_mark = rx_squelch_close_mark_now();
-            const bool     present    = (s_rssi >= open_mark);
-            const bool     absent     = (s_rssi < close_mark);
+            bool           present    = (s_rssi >= open_mark);
+            bool           absent     = (s_rssi < close_mark);
             const bool     force      = s_force_4815_af || squelch_off;
+
+            /* The stock's noise gate: RSSI above the mark is not enough, the
+             * SNR and the ex-band noise must say "signal" too.  RSSI alone
+             * opened on noise the stock keeps muted (radio 2026-11-08). */
+            if (s_4815_noise_gate) {
+                /* 0x43, the ex-band noise, only matters once the RSSI is within
+                 * 3 of the mark and the SNR above 2 (rx_4815_verdict()); below
+                 * that the verdict is "none" whatever it says.  It is read only
+                 * then, and at most every RX_4815_EXNOISE_EVERY polls, to keep
+                 * the shared bit-banged bus quiet.  (A first bench run seemed
+                 * to hear this read in the audio; repeated A/B showed that was
+                 * room noise, radio 2026-11-08.) */
+                if ((uint16_t)(s_rssi + 3u) > open_mark && s_4815_snr > RX_4815_SNR_HOLD_MIN) {
+                    if (s_4815_exnoise_age == 0u) {
+                        s_4815_exnoise     = (uint16_t)(bk4815_read_reg(0x43u) & 0x0fffu);
+                        s_4815_exnoise_age = RX_4815_EXNOISE_EVERY;
+                    }
+                    s_4815_exnoise_age--;
+                } else {
+                    s_4815_exnoise_age = 0u;    /* read fresh on the next candidate */
+                }
+
+                const uint8_t v = rx_4815_verdict(gEeprom.SQUELCH_LEVEL, open_mark,
+                                                  s_rssi, s_4815_snr, s_4815_exnoise);
+
+                s_4815_verdict = v;
+                present = (v == RX_4815_SIGNAL);
+                absent  = (v == RX_4815_NONE);
+            }
 
             rx_squelch_step(&s_sq, present, absent, force);
             s_squelch_open = s_sq.open;

@@ -194,3 +194,65 @@ stock's threshold and the AGC decay are not separable without it.
 
 The `!` bench probe and its fourth phase are development tooling; the shipped
 path is the hybrid above.
+
+## The BK4815 lane gets the stock's noise gate (2026-11-09, branch `driver/rx-noise-squelch`)
+
+The sensitivity comparison (`ra89r_rx_sensitivity.md`) found the port as
+sensitive as the stock at 2 m; what differed was that the stock keeps noise
+muted.  The BK4829 lane already gates on the chip's own noise/glitch
+comparator (above); the BK4815 lane gated on RSSI alone.
+
+**The stock's BK4815 verdict, `FUN_08005218`** (disassembled 2026-11-08) reads
+three meters -- `0x44<6:0>` RSSI, `0x44<13:8>` **SNR** (datasheet: 1 dB/step)
+and `0x43<11:0>` **ex-band noise** -- and returns:
+
+| verdict | condition |
+|---|---|
+| signal | SNR >= 8 and RSSI >= mark and ex-noise <= (28 - 2*level) * 32 |
+| hold | SNR >= 8 and RSSI >= mark but ex-noise above that, **or** RSSI > mark - 3 and ex-noise < max + 150 and < 630 and SNR > 2 |
+| none | otherwise |
+
+with the mark raised by 6 at level 7..9.  It feeds the 0..10 counter (signal
+up, none down, hold holds).  The port's version is `rx_4815_verdict()` in
+`rx.h` (host-tested in `test_squelch.c`, every branch), used by `rx_poll()` at
+SQL 1..9; SQL 0 stays fully open.  The RSSI mark is the port's own
+floor + margin.  `0x43` is read only when the verdict can depend on it (RSSI
+within 3 of the mark, SNR > 2) and at most every 80 ms.
+
+**The meters on this radio** (145.500 MHz, tinySA NFM tone, medians of 20):
+
+| at the radio | none | -131 | -126 | -121 | -118 | -116 | -111 | -106 | -96 dBm |
+|---|---|---|---|---|---|---|---|---|---|
+| RSSI | 29-30 | 31-32 | 33-34 | 37 | 40 | 42 | 47-48 | 52 | 61 |
+| SNR (dB) | 4-4.5 | 4-4.5 | 4.5-6 | 8.5-10 | 11-13.5 | 14-15 | 19-20 | 21-22 | 24 |
+| ex-noise | 990-1060 | 900-944 | 666-759 | 394-478 | 262-322 | 221-260 | 136-154 | 104-109 | 85 |
+
+**The floor tracker had to change with it.**  With RSSI alone, the tracker
+learned a weak steady carrier into the floor while the gate was closed (or,
+through the "weak open" escape, while it was open), and the mark climbed over
+the carrier: -106 dBm read RSSI 52 against a learned mark of 58, and a
+-121 dBm carrier that had opened was shut a minute later with the mark crept
+from 34 to 39 (its SNR wanders 8..13; the samples under 8 were learned).  With
+the noise gate on, the BK4815 floor now learns **only while the gate is
+closed and the SNR is below 8**: noise cannot open the gate any more, so the
+escape is not needed.  With the gate off (console `<`) the old rule applies.
+
+**Validated on the radio (2026-11-09, BK4815, 145.500 MHz, SQL 1, read from
+the radio's own state with console `)` and `H`):** no carrier: closed, mark
+33-34, every verdict "none"; -126 dBm (SNR 6-7): closed; **-121 dBm: open for
+2 minutes with the mark flat at 33**; -116 dBm: open; carrier removed: closes
+at once and the mark returns to 33-34.  The RSSI-only gate had needed
+-116 dBm, and the stock is muted below about -118 dBm.
+
+A first A/B recorded 6-7 dB worse SINAD with the gate on and extra sound with
+it closed; it was attributed to the `0x43` read, but an alternating A/B with
+identical timing showed the loud recordings landing on either setting -- room
+noise, mostly in the first recording after a tinySA change.  Audio quality
+with the gate on is therefore not separately measured; the gate only decides
+open/closed.
+
+Console: `)` prints the three meters and the verdict 20 x 200 ms (read-only),
+`<` toggles the noise gate.  Still open: SQL 2..9 on the radio, the other
+bands (the stock's thresholds are band-independent), and whether SQL 0 should
+also use the verdict, as the stock's monitor seems to (it was silent with no
+carrier).
