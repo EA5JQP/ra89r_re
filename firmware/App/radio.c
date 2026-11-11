@@ -836,6 +836,12 @@ void RADIO_SetupRegisters(bool switchToForeground)
 
     // AF RX Gain and DAC
     //BK4819_WriteRegister(BK4819_REG_48, 0xB3A8);  // 1011 00 111010 1000
+    /* Port adaptation: bk4819.c keeps its own copy of the two gains
+     * (BK4819_SetRxAudioGains()), and nothing handed it gEeprom's, so 0x48
+     * kept the driver's fresh-settings Gain-2 of 11 (-20.5 dB) against the
+     * codeplug's 58 (+3 dB): the BK4829 lane was ~20-30 dB quieter than the
+     * BK4815's (radio 2026-11-11, docs/ra89r_rx_sensitivity.md). */
+    BK4819_SetRxAudioGains(gEeprom.VOLUME_GAIN, gEeprom.DAC_GAIN);
     BK4819_SetRxAudioGain();
 
     /* The squelch result is polled from REG_0C<1> (driver/rx.c); its interrupt

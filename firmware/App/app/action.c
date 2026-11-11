@@ -791,6 +791,7 @@ void ACTION_Mute(void)
         BK1080_WriteRegister(BK1080_REG_05_SYSTEM_CONFIGURATION2, gMute ? 0x0A10 : 0x0A1F);
     #endif
     gEeprom.VOLUME_GAIN = gMute ? 0 : gEeprom.VOLUME_GAIN_BACKUP;
+    BK4819_SetRxAudioGains(gEeprom.VOLUME_GAIN, gEeprom.DAC_GAIN);   /* port: the driver keeps its own copy */
     BK4819_SetRxAudioGain();
 
     gUpdateStatus = true;

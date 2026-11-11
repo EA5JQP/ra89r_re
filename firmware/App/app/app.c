@@ -853,6 +853,7 @@ void APP_StartListening(FUNCTION_Type_t function)
         gUpdateStatus    = true;
     }
 
+    BK4819_SetRxAudioGains(gEeprom.VOLUME_GAIN, gEeprom.DAC_GAIN);   /* port: the driver keeps its own copy */
     BK4819_SetRxAudioGain();
 
 #ifdef ENABLE_VOICE

@@ -1723,6 +1723,7 @@ void UI_DisplayMenu(void)
                     //#endif
                 }
                 // gEeprom.VOLUME_GAIN = gSubMenuSelection;
+                BK4819_SetRxAudioGains(gSubMenuSelection, gEeprom.DAC_GAIN);   /* port: preview the value */
                 BK4819_SetRxAudioGain();
                 break;
         #endif

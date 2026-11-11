@@ -166,3 +166,25 @@ the other -- Auto's normal case) was hit.
 BK4815 lane's at the same volume (tone -44.6 vs -14.8 dBFS on the card; ~19 dB
 at 2 m through the mic), which also caps its measured SINAD at the card's
 noise floor; and the UHF 12 dB SINAD points (needs ~20 dB more attenuation).
+
+## The BK4829 lane's low audio: the AF gain never reached the driver (2026-11-11)
+
+`bk4819.c` keeps its own copy of the two RX audio gains (`BK4819_SetRxAudioGains()`,
+so the driver does not depend on the settings module), but nothing ever called
+it: `0x48` was built from the driver's fresh-settings defaults, **Gain-2 = 11
+(-20.5 dB)**, not the codeplug's `VOLUME_GAIN` of 58 (+3 dB; the stock's own
+word is `0xB3B5`, Gain-2 59).  The four K1 call sites of
+`BK4819_SetRxAudioGain()` (`radio.c`, `app/app.c`, `app/action.c`'s mute,
+`ui/menu.c`'s live preview) now hand it the current values first.  Radio:
+`0x48 = 0xB3AF`; at 145.500 MHz, -86 dBm, the BK4829 lane plays at -13.4 dBFS
+and the BK4815 lane at -17.1 dBFS on the card (SINAD 22.7 / 26.1 dB, 2nd/3rd
+harmonics -30/-41 and -29/-39 dBc) -- before, the BK4829 lane was ~30 dB
+quieter.
+
+**USB card set-up, learned the hard way:** the C-Media card's hardware **Auto
+Gain Control** must be off (`amixer -c 1 sset 'Auto Gain Control' off`): on, it
+rescaled a weak or absent input by tens of dB, so a half-seated Kenwood plug
+still "recorded" and levels jumped between -9 and -62 dBFS.  With AGC off and
+the PipeWire source at 70% (+13.4 dB hardware) a firmly seated plug gives the
+numbers above.  The radio's speaker is disconnected while the Kenwood plug is
+in.
