@@ -187,6 +187,7 @@ const t_menu_item MenuList[] =
     {"Tx 500",      MENU_500TX         }, // was "500TX"
 #endif
     {"350 En",      MENU_350EN         }, // was "350EN"
+    {"RxSplt",      MENU_RX_SPLIT      }, // receive front-end VHF/UHF split, 180..280 MHz
 #ifndef ENABLE_FEAT_F4HWN
     {"ScraEn",      MENU_SCREN         }, // was "SCREN"
 #endif
@@ -617,7 +618,7 @@ static const uint8_t CatAudio[]   = {
 };
 static const uint8_t CatRadio[]   = { MENU_SQL, MENU_STE, MENU_RP_STE, MENU_ROGER, MENU_VOX, MENU_TDR };
 static const uint8_t CatDtmf[]    = { MENU_UPCODE, MENU_DWCODE, MENU_D_ST, MENU_D_PRE, MENU_D_LIVE_DEC };
-static const uint8_t CatService[] = { MENU_F_LOCK, MENU_350EN, MENU_BATCAL, MENU_BATTYP, MENU_SET_NAV, MENU_RESET };
+static const uint8_t CatService[] = { MENU_F_LOCK, MENU_350EN, MENU_RX_SPLIT, MENU_BATCAL, MENU_BATTYP, MENU_SET_NAV, MENU_RESET };
 
 typedef struct { const uint8_t *ids; uint8_t len; } cat_list_t;
 
@@ -1057,6 +1058,11 @@ void UI_DisplayMenu(void)
 
         case MENU_W_N:
             strcpy(String, gSubMenu_W_N[gSubMenuSelection]);
+            break;
+
+        case MENU_RX_SPLIT:
+            /* Port addition: the receive front-end split (bk4815.c). */
+            sprintf(String, "%uMHz", 180u + 10u * (unsigned)gSubMenuSelection);
             break;
 
         case MENU_RF_A:

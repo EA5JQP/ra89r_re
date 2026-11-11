@@ -163,6 +163,7 @@ enum
     MENU_BATTYP,
     MENU_RF_A,
     MENU_RF_B,
+    MENU_RX_SPLIT,      /* hidden: the receive band-code split (bk4815.c) */
 #if defined(ENABLE_FEAT_F4HWN) && defined(ENABLE_FEAT_F4HWN_LOGO_SAV)
     MENU_SET_SAV
 #endif

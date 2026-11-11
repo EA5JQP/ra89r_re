@@ -77,7 +77,12 @@ void host_bk4819_audio_path(int on)
 
 /* The BK4815 receive band-code rule (driver/bk4815.c); the host builds stub
  * the BK4815 driver, so the same rule is repeated here. */
+static uint32_t host_band_code_split = 23000000u;
+
 uint16_t bk4815_band_code_for(uint32_t freq_10hz)
 {
-    return (freq_10hz >= 23000000u) ? 0x0Au : 0x11u;
+    return (freq_10hz >= host_band_code_split) ? 0x0Au : 0x11u;
 }
+
+void bk4815_set_band_code_split(uint32_t freq_10hz) { host_band_code_split = freq_10hz; }
+uint32_t bk4815_band_code_split(void) { return host_band_code_split; }
