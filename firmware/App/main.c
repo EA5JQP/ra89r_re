@@ -2383,6 +2383,22 @@ int main(void)
                 }
                 break;
             }
+            case '>': {
+                /* Bench: step the receive band-code split (bk4815.c). */
+                static const uint32_t splits[] = { 18000000u, 20000000u, 22000000u, 23000000u,
+                                                   24000000u, 26000000u, 28000000u };
+                const uint32_t now = bk4815_band_code_split();
+                unsigned k;
+
+                for (k = 0; k < sizeof splits / sizeof splits[0]; k++)
+                    if (splits[k] == now)
+                        break;
+                k = (k + 1u) % (unsigned)(sizeof splits / sizeof splits[0]);
+                bk4815_set_band_code_split(splits[k]);
+                uart_printf("\nRX band-code split %u MHz (UHF code 0x0A at or above)\n",
+                            (unsigned)(splits[k] / 100000u));
+                break;
+            }
             case '<':
                 rx_4815_noise_gate_set(!rx_4815_noise_gate_on());
                 uart_printf("\nBK4815 noise gate (SNR + ex-noise, the stock's) %s\n",

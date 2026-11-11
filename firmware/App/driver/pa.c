@@ -240,7 +240,7 @@ void pa_select_band(uint32_t freq_10hz)
 
     /* The BK4815's band register 0x75, the stock's FUN_08013790: band 1 (0x11)
      * for VHF, band 2 (0x0A) for UHF. */
-    bk4815_set_band(s_uhf ? 0x0Au : 0x11u);
+    bk4815_set_band(bk4815_band_code_for(freq_10hz));
 
     if (!s_tx_on)               /* a transmission owns 0x33 (s_tx_on) */
         pa_apply_chip_path();

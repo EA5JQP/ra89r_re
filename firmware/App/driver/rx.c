@@ -285,7 +285,7 @@ void rx_scan_commit(uint32_t freq_10hz)
         /* The BK4815's full receive entry, as rf_dual_refresh() applies it for
          * a VFO: tune, band register, demod block + channel spacing. */
         bk4815_set_frequency(freq_10hz, false);
-        bk4815_set_band((freq_10hz >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+        bk4815_set_band(bk4815_band_code_for(freq_10hz));
         bk4815_receive_entry(gRxVfo->CHANNEL_BANDWIDTH == BANDWIDTH_WIDE);
         s_4815_sub = RX_4815_SUB_UNKNOWN;   /* 0x73 rewritten: program again */
         s_4815_freq = freq_10hz;
@@ -1146,7 +1146,7 @@ void rf_dual_refresh(void)
                                     .freq_config_RX.Frequency;
 
         if (lane_f != 0u) {
-            const uint16_t band = (lane_f >= PA_BAND_SPLIT) ? 0x0Au : 0x11u;
+            const uint16_t band = bk4815_band_code_for(lane_f);
 
             if (band != bk4815_band_code())
                 bk4815_set_band(band);

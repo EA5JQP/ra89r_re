@@ -188,3 +188,39 @@ still "recorded" and levels jumped between -9 and -62 dBFS.  With AGC off and
 the PipeWire source at 70% (+13.4 dB hardware) a firmly seated plug gives the
 numbers above.  The radio's speaker is disconnected while the Kenwood plug is
 in.
+
+## 250-350 MHz, and the band-code split moved from 280 to 230 MHz (2026-11-11)
+
+**Setup:** tinySA LOW output (to 350 MHz) through 60 dB, so -136..-66 dBm at
+the radio; USB sound card (AGC off, 70%); NFM 1 kHz; SQL 0.
+
+**260.000 MHz is a birdie, not a dead band:** `0x67` reads 141 there with no
+carrier (69-72 at +/-50 kHz, 98 at +10 kHz) -- 10 x 26 MHz, the transceivers'
+reference -- and an unmodulated carrier quiets the FM receiver, so the channel
+is silent even at SQL 0.  Weaker ones at 312.000 (x12, 96) and 338.000 (x13,
+85).
+
+**The band code was wrong from ~230 to 280 MHz.**  The port switched the
+front end to the UHF code (`0x0A`) only from 280 MHz; the stock uses it for its
+250 MHz band too.  BK4829 RSSI rise at -76 dBm with each code:
+
+| MHz | 180 | 190 | 200 | 210 | 220 | 230 | 240 | 250 | 265 | 279 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| VHF code (`0x11`) | 78 | 84 | 73 | 63 | 58 | 38 | 20 | 0 | 21 | 10 |
+| UHF code (`0x0A`) | 5 | -1 | 1 | 12 | 16 | 37 | 67 | 77 | 79 | 70 |
+
+The codes cross at 230 MHz, which is now the split
+(`BK4815_BAND_CODE_SPLIT_DEFAULT`, one helper `bk4815_band_code_for()` used by
+every writer; console `>` steps it for the bench).  TX keeps its own 280 MHz
+split (`PA_BAND_SPLIT`, the transmit band pins).  230 MHz itself is ~20 dB
+down on either code -- the edge of both front-end paths.
+
+**12 dB SINAD points** (interpolated):
+
+| MHz | BK4815 | BK4829 | note |
+|---|---|---|---|
+| 250 | -109 | -109.5 | was deaf (VHF code) |
+| 265 | -111 | -111.5 | was -71 / -79 (VHF code) |
+| 300 | -111 | -104 | |
+| 340 | -115 | -101 | |
+| 145.5, for reference | -117 | -116 | |

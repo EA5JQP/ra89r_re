@@ -74,3 +74,10 @@ void host_bk4819_audio_path(int on)
     if (s_audio_path_cb)
         s_audio_path_cb(on);
 }
+
+/* The BK4815 receive band-code rule (driver/bk4815.c); the host builds stub
+ * the BK4815 driver, so the same rule is repeated here. */
+uint16_t bk4815_band_code_for(uint32_t freq_10hz)
+{
+    return (freq_10hz >= 23000000u) ? 0x0Au : 0x11u;
+}

@@ -189,6 +189,12 @@ void bk4815_set_tone(uint32_t tone_hz);
 void bk4815_set_band(uint16_t band);
 /* The last band code bk4815_set_band() wrote (0x75<5:0>), 0xFFFF before any. */
 uint16_t bk4815_band_code(void);
+/* The receive band code (0x0A UHF / 0x11 VHF) for a frequency, and the split
+ * it uses (10 Hz units; runtime, for the bench). */
+#define BK4815_BAND_CODE_SPLIT_DEFAULT 23000000u     /* 230 MHz: measured crossover, see bk4815.c */
+uint16_t bk4815_band_code_for(uint32_t freq_10hz);
+void     bk4815_set_band_code_split(uint32_t freq_10hz);
+uint32_t bk4815_band_code_split(void);
 
 /* 0x75 bit 10, the LO injection side, applied at once and kept by every
  * later bk4815_set_band().  Default 1 (low-side, as the stock leaves it; see

@@ -155,6 +155,33 @@ bool bk4815_lo_bit10(void)
     return s_bit10;
 }
 
+/* The receive band code's split: below it the VHF code 0x11, at or above it
+ * the UHF code 0x0A.  The code selects the shared front end for BOTH chips
+ * (rf_dual_refresh()).  The stock uses the UHF code for its 250 MHz band 1 as
+ * well as for 400-520 (FUN_08016CEC: band 1 or 2 -> 0x0A); the port's old
+ * 280 MHz split left 220-280 MHz behind the VHF setting, ~30 dB down (radio
+ * 2026-11-11: -76 dBm read +9 at 279 MHz, +69 at 281).  The two codes cross
+ * at 230 MHz: BK4829 RSSI rise at -76 dBm, VHF / UHF code -- 200 MHz 73 / 1,
+ * 220 MHz 58 / 16, 230 MHz 38 / 37, 240 MHz 20 / 67, 250 MHz 0 / 77, 265 MHz
+ * 21 / 79 (radio 2026-11-11).  A runtime value so the bench can step it
+ * (console '>'). */
+static uint32_t s_band_code_split = BK4815_BAND_CODE_SPLIT_DEFAULT;
+
+uint16_t bk4815_band_code_for(uint32_t freq_10hz)
+{
+    return (freq_10hz >= s_band_code_split) ? 0x0Au : 0x11u;
+}
+
+void bk4815_set_band_code_split(uint32_t freq_10hz)
+{
+    s_band_code_split = freq_10hz;
+}
+
+uint32_t bk4815_band_code_split(void)
+{
+    return s_band_code_split;
+}
+
 static uint16_t s_band_code = 0xFFFFu;     /* last band code (0x75<5:0>) written */
 
 uint16_t bk4815_band_code(void)

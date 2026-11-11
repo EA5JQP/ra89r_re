@@ -537,7 +537,7 @@ static void SetFScan(uint32_t f)
          * ScanFast4815Read): tune + band register; the settle is in GetRssi(). */
         fMeasure = f;
         bk4815_set_frequency(f, false);
-        bk4815_set_band((f >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+        bk4815_set_band(bk4815_band_code_for(f));
         return;
     }
 
