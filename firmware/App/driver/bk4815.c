@@ -155,8 +155,16 @@ bool bk4815_lo_bit10(void)
     return s_bit10;
 }
 
+static uint16_t s_band_code = 0xFFFFu;     /* last band code (0x75<5:0>) written */
+
+uint16_t bk4815_band_code(void)
+{
+    return s_band_code;
+}
+
 void bk4815_set_band(uint16_t band)
 {
+    s_band_code = (uint16_t)(band & 0x3fu);
     /* The stock's FUN_08013790 is a read-modify-write: `0x75 = (read & 0xFFC0)
      * | value`, which preserves the register's own state -- bit 10 included,
      * which stays at its reset value 1.  This writes bit 10 explicitly:

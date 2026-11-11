@@ -1024,7 +1024,6 @@ static uint32_t s_dual_pri_f = 0u;
 static uint32_t s_dual_sec_f = 0u;
 static uint8_t  s_dual_rx_vfo = 0xFFu;   /* the RX_VFO the state was applied for */
 static uint32_t s_4829_mirror_f;         /* unassigned BK4829: the BK4815 tune mirrored onto it */
-static uint16_t s_band_written;          /* the BK4815 0x75 value rf_dual_refresh last wrote */
 static uint16_t s_tr_written;            /* the BK4815 0x0C word rf_dual_refresh last wrote */
 
 void rf_dual_reapply(void)
@@ -1034,10 +1033,9 @@ void rf_dual_reapply(void)
     s_dual_rx_vfo = 0xFFu;
     /* Force the mirror to be re-applied as well (the TX paths retune the 4829). */
     s_4829_mirror_f = 0u;
-    /* ... and the BK4815's band register: pa_select_band() rewrites 0x75 from
-     * the BK4829's frequency (a scan commit, a transmit), so the cached value
-     * no longer says what the chip holds. */
-    s_band_written = 0u;
+    /* (The BK4815's band register needs nothing here: rf_dual_refresh()
+     * compares the listened frequency's band with the driver's shadow,
+     * bk4815_band_code(), which every writer updates.) */
     /* ... and its T/R state: tx_start()/tx_stop() rewrite 0x0C from the
      * BK4829's band. */
     s_tr_written = 0u;
@@ -1135,15 +1133,27 @@ void rf_dual_refresh(void)
         s_dual_sec_f = f4815;
     }
 
-    if (roles.bk4815_vfo >= 0) {
-        {
-            const uint16_t band = (f4815 >= PA_BAND_SPLIT) ? 0x0Au : 0x11u;
+    /* The band code in the BK4815's 0x75 follows the frequency being LISTENED
+     * to, whichever chip listens.  It switches the shared front end: the
+     * stock's BK4829 receive entry writes it too (FUN_08016DE8 ->
+     * FUN_08013790).  Taken from the BK4815's own VFO, it left a BK4829 lane
+     * on 446 MHz with the VHF code while the other VFO sat on 120.1 MHz on the
+     * BK4815: 0x67 77 against 152 with the right code, -58 dBm carrier (radio
+     * 2026-11-11).  Compared against the driver's shadow, because
+     * pa_select_band() and the scanner write it too. */
+    {
+        const uint32_t lane_f = gEeprom.VfoInfo[(gEeprom.RX_VFO > 1u) ? 0u : gEeprom.RX_VFO]
+                                    .freq_config_RX.Frequency;
 
-            if (band != s_band_written) {
+        if (lane_f != 0u) {
+            const uint16_t band = (lane_f >= PA_BAND_SPLIT) ? 0x0Au : 0x11u;
+
+            if (band != bk4815_band_code())
                 bk4815_set_band(band);
-                s_band_written = band;
-            }
         }
+    }
+
+    if (roles.bk4815_vfo >= 0) {
 
         /* The BK4815's power word 0x0C must be a receive word for it to
          * hear anything.  rx_init() and tx_start()/tx_stop() set 0x0C from

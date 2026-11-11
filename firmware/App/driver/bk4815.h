@@ -187,6 +187,8 @@ void bk4815_set_tone(uint32_t tone_hz);
  * RX-audio source) survives.  `band` is the stock's low-six-bit code: 0x09/0x11
  * the VHF values, 0x0A/0x12 the UHF ones. */
 void bk4815_set_band(uint16_t band);
+/* The last band code bk4815_set_band() wrote (0x75<5:0>), 0xFFFF before any. */
+uint16_t bk4815_band_code(void);
 
 /* 0x75 bit 10, the LO injection side, applied at once and kept by every
  * later bk4815_set_band().  Default 1 (low-side, as the stock leaves it; see

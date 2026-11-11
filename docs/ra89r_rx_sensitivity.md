@@ -130,3 +130,39 @@ new build.
 4. The BK4829 boot registers the port still takes from the K1 rather than the
    stock (`0x1C`/`0x1D`/`0x1F`/`0x25`/`0x3A`, `0x13 = 0x3FF` in receive,
    `0x37`): candidates for the BK4829's slower quieting, untested.
+
+## UHF, and the band-code bug (2026-11-11)
+
+**Setup:** the radio's audio output straight into a USB sound card on the
+Kenwood jack (C-Media, captured at 30%; 100% clips on hiss), so no room noise:
+27 dB SINAD on a strong tone, 2nd/3rd harmonic -32/-41 dBc.  tinySA **high**
+output (-38..+13 dBm at the SMA) through 30 + 20 + 10 dB, so -98 dBm is the
+weakest level at the radio -- about 20 dB above the 2 m 12 dB SINAD point, so
+the UHF limit is **not** measured here.  446.000 MHz, NFM 1 kHz, SQL 0.
+
+| at the radio | -98 | -93 | -88 | -83 | -78 | -68 | -58 dBm |
+|---|---|---|---|---|---|---|---|
+| BK4815 SINAD | 26.0 | 25.8 | 25.8 | 25.7 | 25.7 | 25.8 | 25.6 dB |
+| BK4815 SNR (`0x44<13:8>`) | 25 | 26 | 26 | 26 | 26 | 26 | 26 |
+| BK4829 SINAD, **band-code bug** | -11.9 | -11.9 | -11.6 | 0.0 | -0.3 | -0.2 | 19.4 dB |
+| BK4829 SINAD, **fixed** | 19.1 | 13.7 | 16.4 | 20.0 | 19.6 | 18.1 | 17.7 dB |
+| BK4829 `0x67`, fixed (floor 56) | 82 | 93 | 103 | 134 | 134 | 134 | 153 |
+
+**The band code in the BK4815's `0x75` switches the shared front end for
+both chips.**  The stock writes it from the channel being received on either
+chip (`FUN_08016DE8` -> `FUN_08013790` on the BK4829 branch too).  The port
+wrote it from the *BK4815's own VFO*: with VFO B on the BK4829 at 446 MHz and
+VFO A on the BK4815 at 120.1 MHz, `0x75 = 0x0411` (the VHF code) and the
+BK4829 read `0x67` 77 at -58 dBm; the right code (`0x040A`) gave 152-153.
+Every BK4829 configuration register was identical in the two states, and
+neither the K1's nor the stock's `0x30` calibration sequence changed it.
+`rf_dual_refresh()` now takes the band code from the selected RX VFO's
+frequency and compares it with the driver's shadow (`bk4815_band_code()`),
+since `pa_select_band()` and the scanner write it too.  Any setup with the two
+VFOs on different chips *and* different bands (airband on one, 2 m or 70 cm on
+the other -- Auto's normal case) was hit.
+
+**Still open:** the BK4829 lane's audio is about 30 dB quieter than the
+BK4815 lane's at the same volume (tone -44.6 vs -14.8 dBFS on the card; ~19 dB
+at 2 m through the mic), which also caps its measured SINAD at the card's
+noise floor; and the UHF 12 dB SINAD points (needs ~20 dB more attenuation).
