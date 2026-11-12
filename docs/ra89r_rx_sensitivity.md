@@ -224,3 +224,27 @@ down on either code -- the edge of both front-end paths.
 | 300 | -111 | -104 | |
 | 340 | -115 | -101 | |
 | 145.5, for reference | -117 | -116 | |
+
+## Airband: the branch against `develop`, back to back (2026-11-12)
+
+AM, 1 kHz (tinySA `modulation am`, depth unknown), BK4829 lane, SQL 0, USB card
+(AGC off), 60 dB of pads, same set-up for both builds; `develop` is `1716bc4`
+(2026-11-02, before the receive changes on `driver/rx-stock-regs` /
+`driver/rx-noise-squelch`), remote PTT disabled for the bench.
+
+| SINAD (dB) | 133.0, -96 dBm | 133.0, -86 dBm | 121.5, -96 dBm | 121.5, -86 dBm |
+|---|---|---|---|---|
+| `develop` | 2.1 / 2.5 | 12.1 / 12.3 | 4.4 / 4.6 | 13.8 / 13.9 |
+| branch | 4.0 / 4.2 | 14.3 / 14.6 | 4.5 / 3.9 | 14.8 / 14.8 |
+
+No regression; the branch is equal or 1-2 dB better (its audio is ~26 dB
+louder, further above the card's own noise).  AM 10 dB SINAD is therefore
+about -90 dBm at 121.5-133 MHz on both builds, ~24 dB behind FM at 145.5 MHz
+(12 dB SINAD -114.5 dBm the same day); part of that is the generator's unknown
+AM depth and, below 130 MHz, the front end's roll-off (`ra89r_airband.md`).
+
+Bench lessons from this round: a laptop charger raised the airband floor too
+(127 MHz: `0x67` 139 with it, 108 without); after every flash the radio's
+volume knob has to be turned back up (the card then reads -60 dBFS hiss
+instead of -13), and the sound card comes back from a USB reset with its AGC
+on.
