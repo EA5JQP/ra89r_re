@@ -689,6 +689,12 @@ void SETTINGS_SaveSettings(void)
     (void)settings_save_all();
 }
 
+bool SETTINGS_SaveSettingsChecked(void)
+{
+    settings_dirty = false;
+    return settings_save_all();
+}
+
 #ifdef ENABLE_FMRADIO
 void SETTINGS_SaveFM(void)
 {
