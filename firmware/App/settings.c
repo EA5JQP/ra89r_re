@@ -21,6 +21,7 @@
     #include "app/fm.h"
 #endif
 #include "dcs.h"
+#include "driver/bk4815.h"
 #include "driver/py25q16.h"
 #include "frequencies.h"
 #include "k1_view.h"
@@ -148,12 +149,17 @@ typedef struct {
      * writes into 0xA150/0xA158 (App/k1_view.c).  Before, they were back to
      * their defaults at every boot. */
     uint8_t  k1_globals[K1VIEW_GLOBALS_SIZE];
+    /* v7: the hidden menu's RxSplt -- the receive front-end band-code split
+     * (driver/bk4815.c), in 10 MHz units, 18..28 (180..280 MHz). */
+    uint8_t  rx_split_10mhz;
 } settings_extra_t;
 
 /* The version-3/4 payload: the v5 prefix up to and including the scan byte. */
 #define EXTRA_V4_SIZE ((uint32_t)offsetof(settings_extra_t, f_lock))
 /* The version-5 payload: everything before the v6 globals record. */
 #define EXTRA_V5_SIZE ((uint32_t)offsetof(settings_extra_t, k1_globals))
+/* The version-6 payload: everything before the v7 RxSplt byte. */
+#define EXTRA_V6_SIZE ((uint32_t)offsetof(settings_extra_t, rx_split_10mhz))
 _Static_assert(sizeof(settings_extra_t) <= STORAGE_EXTRA_MAX,
                "the settings extra must fit the blob's extra area");
 
@@ -170,7 +176,8 @@ typedef struct {
 } settings_extra_v2_t;
 
 #define EXTRA_MAGIC      0x58545241u    /* "ARTX" */
-#define EXTRA_VERSION    6u
+#define EXTRA_VERSION    7u
+#define EXTRA_VERSION_V6 6u
 #define EXTRA_VERSION_V5 5u
 #define EXTRA_VERSION_V4 4u
 #define EXTRA_VERSION_V3 3u
@@ -221,6 +228,7 @@ void SettingsDefaults(void)
 
     s_rf_xcvr[0] = (uint8_t)RF_XCVR_AUTO;
     s_rf_xcvr[1] = (uint8_t)RF_XCVR_AUTO;
+    bk4815_set_band_code_split(BK4815_BAND_CODE_SPLIT_DEFAULT);
 
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
     gSetting_set_scn = SCAN_MODE_FAST;
@@ -379,6 +387,14 @@ void SETTINGS_InitEEPROM(void)
             extra.magic == EXTRA_MAGIC && extra.version == EXTRA_VERSION)
             have = true;
         if (!have) {
+            /* A v6 blob is the v7 layout without the RxSplt byte, which then
+             * keeps the default split. */
+            memset(&extra, 0, sizeof extra);
+            if (storage_get_extra(&extra, EXTRA_V6_SIZE) &&
+                extra.magic == EXTRA_MAGIC && extra.version == EXTRA_VERSION_V6)
+                have = true;
+        }
+        if (!have) {
             /* A v5 blob is the v6 layout without the globals record, which
              * then keeps the globals' defaults. */
             memset(&extra, 0, sizeof extra);
@@ -417,8 +433,11 @@ void SETTINGS_InitEEPROM(void)
                                       ? extra.f_lock : (uint8_t)F_LOCK_DEF;
                 gSetting_350EN  = extra.en350 != 0u;
             }
-            if (extra.version >= EXTRA_VERSION)
+            if (extra.version >= EXTRA_VERSION_V6)
                 k1_view_globals_unpack(extra.k1_globals);
+            if (extra.version >= EXTRA_VERSION &&
+                extra.rx_split_10mhz >= 18u && extra.rx_split_10mhz <= 28u)
+                bk4815_set_band_code_split((uint32_t)extra.rx_split_10mhz * 1000000u);
         } else {
             /* A version-2 blob has no scan byte: keep its fields and default
              * the scan mode to FAST. */
@@ -655,6 +674,7 @@ static bool settings_save_all(void)
     extra.f_lock = gSetting_F_LOCK;
     extra.en350  = gSetting_350EN ? 1u : 0u;
     k1_view_globals_pack(extra.k1_globals);
+    extra.rx_split_10mhz = (uint8_t)(bk4815_band_code_split() / 1000000u);
 
     if (!storage_set_extra(&extra, sizeof extra))
         return false;
