@@ -1195,6 +1195,24 @@ void CHFRSCANNER_ContinueScanning(void)
         // A rejected full-tune candidate is just a false RSSI hit. Keep the
         // learned floor; resetting here can make the next channel blind when
         // it is the real signal, especially while scanning down.
+        //
+        // Port adaptation: but do RAISE it to the rejected channel's RSSI --
+        // the full tune has just shown that level to be noise.  The floor was
+        // otherwise only learned from non-candidates, so once the band's noise
+        // rose more than the margin above the first sample, every probe was a
+        // candidate and the floor never moved again: an airband range scan
+        // full-tuned all 3480 channels at ~9/s (radio 2026-11-12: floor 86 at
+        // 118.0 MHz, noise 100-134 by 119.5 MHz, every probe a HIT).  Quiet
+        // probes still lower it at once (ScanFastIsCandidate()).  The BK4815
+        // precheck does not use this floor.
+        if (!ScanFastLaneIs4815())
+        {
+            const uint16_t noise = rx_rssi();
+
+            if (noise != 0u &&
+                (scanFastNoiseFloor == SCAN_FAST_RSSI_MAX || noise > scanFastNoiseFloor))
+                scanFastNoiseFloor = noise;
+        }
         scanFastLastFullTuneCandidate = false;
     }
 #endif
