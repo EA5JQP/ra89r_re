@@ -119,6 +119,35 @@ int main(void)
           rec_reg[rec_n - 1u] == 0x70 && rec_val[rec_n - 1u] == 0xa000,
           "BK4815 receive entry ends with the 0x70 restart pair");
 
+    /* The stock's PLL calibration (FUN_0801BF76/FUN_0801BF54) opens the entry:
+     * 0x0C = 0x0A03, 0x0B = 0x0800/0x8800/0x9800, then the 0x0C word that was
+     * in force (the audio-lane word here) goes back. */
+    bk4815_write_reg(0x0C, BK4815_PWR_RX_AUDIO);
+    rec_reset();
+    bk4815_receive_entry(true);
+    check(rec_n >= 5u &&
+          rec_reg[0] == 0x0C && rec_val[0] == 0x0a03 &&
+          rec_reg[1] == 0x0B && rec_val[1] == 0x0800 &&
+          rec_reg[2] == 0x0B && rec_val[2] == 0x8800 &&
+          rec_reg[3] == 0x0B && rec_val[3] == 0x9800 &&
+          rec_reg[4] == 0x0C && rec_val[4] == BK4815_PWR_RX_AUDIO,
+          "BK4815 receive entry starts with the stock's PLL calibration, 0x0C restored");
+    bk4815_write_reg(0x0C, BK4815_PWR_RX_QUIET);
+    rec_reset();
+    bk4815_pll_calibrate();
+    check(rec_n == 4u && rec_reg[3] == 0x0B && rec_val[3] == 0x9800,
+          "PLL calibration with the quiet word in force leaves 0x0C = 0x0A03");
+
+    /* The receive band code follows the stock: UHF code from the split
+     * (230 MHz by default, the measured crossover) up, VHF code for the 108-174 MHz band. */
+    check(bk4815_band_code_for(14550000u) == 0x11u && bk4815_band_code_for(22999999u) == 0x11u &&
+          bk4815_band_code_for(23000000u) == 0x0Au && bk4815_band_code_for(26500000u) == 0x0Au &&
+          bk4815_band_code_for(44600000u) == 0x0Au,
+          "band code: VHF below 230 MHz, UHF from 230 MHz (265 MHz is UHF now)");
+    bk4815_set_band_code_split(28000000u);
+    check(bk4815_band_code_for(26500000u) == 0x11u, "band-code split is settable (bench)");
+    bk4815_set_band_code_split(BK4815_BAND_CODE_SPLIT_DEFAULT);
+
     rec_reset();
     bk4815_receive_entry(false);
     check(rec_has(0x01, 0x0044), "narrow channel -> 0x01 = 0x0044 (12.5 kHz)");

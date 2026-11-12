@@ -330,8 +330,9 @@ int main(void)
     {
         bool found_a = false, found_b = false;
         unsigned mi;
-        bool labels_ok = strcmp(gSubMenu_RF[0], "4829") == 0 &&
-                         strcmp(gSubMenu_RF[1], "4815") == 0;
+        bool labels_ok = strcmp(gSubMenu_RF[0], "Auto") == 0 &&
+                         strcmp(gSubMenu_RF[1], "4829") == 0 &&
+                         strcmp(gSubMenu_RF[2], "4815") == 0;
         for (mi = 0; MenuList[mi].name[0] != '\0'; mi++) {
             if (MenuList[mi].menu_id == MENU_RF_A) found_a = true;
             if (MenuList[mi].menu_id == MENU_RF_B) found_b = true;
@@ -339,16 +340,16 @@ int main(void)
         printf("[dual] %s TrVfoA and TrVfoB menu items exist\n",
                (found_a && found_b) ? "ok  " : "FAIL");
         if (!(found_a && found_b)) failures++;
-        printf("[dual] %s transceiver menu offers only 4829 and 4815\n",
+        printf("[dual] %s transceiver menu offers Auto, 4829 and 4815\n",
                labels_ok ? "ok  " : "FAIL");
         if (!labels_ok) failures++;
     }
     gIsInSubMenu = true;
     gMenuCursor  = UI_MENU_GetViewPos(MENU_RF_A);
-    gSubMenuSelection = 0;              /* BK4829 */
+    gSubMenuSelection = 1;              /* BK4829 */
     MENU_AcceptSetting();
     gMenuCursor  = UI_MENU_GetViewPos(MENU_RF_B);
-    gSubMenuSelection = 1;              /* BK4815 */
+    gSubMenuSelection = 2;              /* BK4815 */
     MENU_AcceptSetting();
     {
         bool ok = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829 &&
@@ -362,13 +363,24 @@ int main(void)
     {
         bool ok;
 
-        /* An older settings blob stored AUTO as 0 in the reserved bytes;
-         * with Auto removed, that legacy value must default to BK4829. */
+        /* Auto (0, also an older blob's value) is the stock's 134 MHz split:
+         * the BK4829 at or below 134.000 MHz, the BK4815 above. */
+        const uint32_t saved = gEeprom.VfoInfo[0].freq_config_RX.Frequency;
+
         SETTINGS_SetVfoTransceiver(0u, (rf_xcvr_t)0);
-        ok = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829;
-        printf("[dual] %s legacy/invalid RF value 0 resolves to BK4829\n",
+        gEeprom.VfoInfo[0].freq_config_RX.Frequency = 13400000u;
+        ok = SETTINGS_GetVfoTransceiverSetting(0u) == RF_XCVR_AUTO &&
+             SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829;
+        gEeprom.VfoInfo[0].freq_config_RX.Frequency = 13400001u;
+        ok = ok && SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4815;
+        gEeprom.VfoInfo[0].freq_config_RX.Frequency = 44600625u;
+        ok = ok && SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4815;
+        SETTINGS_SetVfoTransceiver(0u, (rf_xcvr_t)0x7f);   /* erased/invalid */
+        ok = ok && SETTINGS_GetVfoTransceiverSetting(0u) == RF_XCVR_AUTO;
+        printf("[dual] %s Auto: <= 134.000 MHz BK4829, above BK4815; 0/invalid is Auto\n",
                ok ? "ok  " : "FAIL");
         if (!ok) failures++;
+        gEeprom.VfoInfo[0].freq_config_RX.Frequency = saved;
     }
 
     /* SetScn is the single scan mode: NORMAL / FAST (FAST BOTH and LISTEN were

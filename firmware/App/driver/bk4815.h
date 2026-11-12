@@ -114,6 +114,13 @@ void bk4815_configure(void);
  * bit in register 0x01 (`wide` = 25 kHz, else 12.5 kHz) and the `0x70`
  * receive restart pair.  Called on a lane (re)configuration, not per scan
  * probe. */
+/* The stock's PLL calibration (FUN_0801BF76/FUN_0801BF54): 0x0C = 0x0A03,
+ * 0x0B = 0x0800/0x8800/0x9800, then the previous 0x0C word back.  Run by
+ * bk4815_receive_entry(), i.e. after every tune of a VFO. */
+void bk4815_pll_calibrate(void);
+/* The last word written to 0x0C, by anyone (the part's own read-back is not
+ * reliable: it changes bits by itself). */
+uint16_t bk4815_power_word(void);
 void bk4815_receive_entry(bool wide);
 
 /* Register writes the boot configuration consists of: 1 block plus the singles. */
@@ -180,6 +187,14 @@ void bk4815_set_tone(uint32_t tone_hz);
  * RX-audio source) survives.  `band` is the stock's low-six-bit code: 0x09/0x11
  * the VHF values, 0x0A/0x12 the UHF ones. */
 void bk4815_set_band(uint16_t band);
+/* The last band code bk4815_set_band() wrote (0x75<5:0>), 0xFFFF before any. */
+uint16_t bk4815_band_code(void);
+/* The receive band code (0x0A UHF / 0x11 VHF) for a frequency, and the split
+ * it uses (10 Hz units; runtime, for the bench). */
+#define BK4815_BAND_CODE_SPLIT_DEFAULT 23000000u     /* 230 MHz: measured crossover, see bk4815.c */
+uint16_t bk4815_band_code_for(uint32_t freq_10hz);
+void     bk4815_set_band_code_split(uint32_t freq_10hz);
+uint32_t bk4815_band_code_split(void);
 
 /* 0x75 bit 10, the LO injection side, applied at once and kept by every
  * later bk4815_set_band().  Default 1 (low-side, as the stock leaves it; see

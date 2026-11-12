@@ -685,7 +685,7 @@ static bool ScanFastLaneIs4815(void)
 static uint16_t ScanFast4815Read(uint32_t frequency)
 {
     bk4815_set_frequency(frequency, false);
-    bk4815_set_band((frequency >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+    bk4815_set_band(bk4815_band_code_for(frequency));
     SYSTICK_DelayUs(SCAN_FAST_RECHECK_DELAY_US);
     bk4815_read_rssi();
     return (uint16_t)(bk4815_read_rssi() & 0x7fu);

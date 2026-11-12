@@ -163,6 +163,7 @@ enum
     MENU_BATTYP,
     MENU_RF_A,
     MENU_RF_B,
+    MENU_RX_SPLIT,      /* hidden: the receive band-code split (bk4815.c) */
 #if defined(ENABLE_FEAT_F4HWN) && defined(ENABLE_FEAT_F4HWN_LOGO_SAV)
     MENU_SET_SAV
 #endif
@@ -205,7 +206,7 @@ extern const t_menu_item MenuList[];
 extern const char* const            gSubMenu_TXP[8];
 extern const char* const            gSubMenu_SFT_D[3];
 extern const char* const            gSubMenu_W_N[2];
-extern const char* const            gSubMenu_RF[2];
+extern const char* const            gSubMenu_RF[3];
 extern const char* const            gSubMenu_OFF_ON[2];
 extern const char*                  gSubMenu_NA;
 extern const char* const            gSubMenu_TOT[11];

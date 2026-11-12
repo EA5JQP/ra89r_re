@@ -93,6 +93,10 @@ void rx_set_frequency(uint32_t freq_10hz)
         rx_gate_hold_closed();
 
     BK4819_SetFrequency(freq_10hz);
+    /* The stock recalibrates the VCO on every receive entry (FUN_08018A46);
+     * a retune without it keeps the old band's calibration. */
+    if (freq_10hz != s_freq_10hz && !tx_active())
+        BK4819_CalibrateVco();
     s_freq_10hz = freq_10hz;
     pa_select_band(freq_10hz);
 }
@@ -121,6 +125,30 @@ void rx_set_fm_active(bool active)
 static bool s_audio_4815;
 static uint32_t s_4815_freq;    /* the tune last applied to the BK4815 (for its squelch marks) */
 static bool s_force_4815_af;    /* console 'A' diagnostic */
+static bool     s_4815_noise_gate = true;   /* console '<': the stock's SNR/ex-noise verdict */
+static uint8_t  s_4815_snr;                 /* 0x44<13:8>, last poll */
+static uint16_t s_4815_exnoise;             /* 0x43<11:0>, last poll */
+static uint8_t  s_4815_verdict;             /* rx_4815_verdict(), last poll */
+static uint8_t  s_4815_exnoise_age;         /* polls until 0x43 is read again */
+#define RX_4815_EXNOISE_EVERY 8u            /* 80 ms at the 10 ms poll */
+
+void rx_4815_noise_gate_set(bool on)
+{
+    s_4815_noise_gate = on;
+}
+
+bool rx_4815_noise_gate_on(void)
+{
+    return s_4815_noise_gate;
+}
+
+void rx_4815_meters(uint16_t *rssi, uint8_t *snr, uint16_t *exnoise, uint8_t *verdict)
+{
+    if (rssi)    *rssi    = s_rssi;
+    if (snr)     *snr     = s_4815_snr;
+    if (exnoise) *exnoise = s_4815_exnoise;
+    if (verdict) *verdict = s_4815_verdict;
+}
 
 /* Noise-floor tracker per (lane, band, modulation): the BK4829's floor is
  * 49-57 at UHF, 96-103 at VHF in FM and 63 at VHF in AM (the AM AGC profile
@@ -257,7 +285,7 @@ void rx_scan_commit(uint32_t freq_10hz)
         /* The BK4815's full receive entry, as rf_dual_refresh() applies it for
          * a VFO: tune, band register, demod block + channel spacing. */
         bk4815_set_frequency(freq_10hz, false);
-        bk4815_set_band((freq_10hz >= PA_BAND_SPLIT) ? 0x0Au : 0x11u);
+        bk4815_set_band(bk4815_band_code_for(freq_10hz));
         bk4815_receive_entry(gRxVfo->CHANNEL_BANDWIDTH == BANDWIDTH_WIDE);
         s_4815_sub = RX_4815_SUB_UNKNOWN;   /* 0x73 rewritten: program again */
         s_4815_freq = freq_10hz;
@@ -403,7 +431,13 @@ void rx_poll(void)
         const bool     squelch_off = (gEeprom.SQUELCH_LEVEL == 0u);
         const bool     was_open    = s_squelch_open;
 
-        s_rssi = bk4815_read_rssi();
+        {
+            /* One 0x44 read gives both the RSSI (6:0) and the SNR (13:8). */
+            const uint16_t r44 = bk4815_read_reg(0x44u);
+
+            s_rssi     = (uint16_t)(r44 & 0x7fu);
+            s_4815_snr = (uint8_t)((r44 >> 8) & 0x3fu);
+        }
 
         /* Learn the lane's floor and take the marks from it: a fixed mark cannot
          * work on this board (see rx.h).  Not while a scan runs: it retunes
@@ -420,16 +454,61 @@ void rx_poll(void)
             const bool     weak_open = s_squelch_open &&
                 s_rssi < (uint16_t)(open_now + rx_squelch_margin(true, gEeprom.SQUELCH_LEVEL));
 
-            if (gScanStateDir == SCAN_OFF && (!s_squelch_open || weak_open))
+            /* And never from a sample the BK4815's own SNR meter calls a
+             * signal: a weak steady carrier below the mark was learned into
+             * the floor, the mark climbed over it and the carrier never opened
+             * the gate (radio 2026-11-08: -106 dBm at 145.5 MHz, SNR 13-15 dB,
+             * RSSI 52 against a learned mark of 58).  No carrier reads SNR
+             * 4-4.5 here, -126 dBm 4.5-6, -121 dBm 8.5-10. */
+            const bool snr_signal = s_4815_noise_gate && s_4815_snr >= RX_4815_SNR_MIN;
+            /* With the noise gate on, noise cannot open the gate (that needs
+             * SNR >= 8), so the "weak open" escape is not needed -- and it was
+             * a leak: a -121 dBm carrier's SNR wanders 8..13 around its median
+             * of 11, the samples under 8 were learned while open, and the mark
+             * crept from 34 to 39 over the RSSI of 36 and closed the gate after
+             * a minute (radio 2026-11-09).  Learn only while closed. */
+            const bool learn = s_4815_noise_gate ? (!s_squelch_open && !snr_signal)
+                                                 : (!s_squelch_open || weak_open);
+
+            if (gScanStateDir == SCAN_OFF && learn)
                 (void)rx_floor_update(1u, rx_lane_uhf(), s_rssi, true);
         }
 
         {
             const uint16_t open_mark  = rx_squelch_open_mark_now();
             const uint16_t close_mark = rx_squelch_close_mark_now();
-            const bool     present    = (s_rssi >= open_mark);
-            const bool     absent     = (s_rssi < close_mark);
+            bool           present    = (s_rssi >= open_mark);
+            bool           absent     = (s_rssi < close_mark);
             const bool     force      = s_force_4815_af || squelch_off;
+
+            /* The stock's noise gate: RSSI above the mark is not enough, the
+             * SNR and the ex-band noise must say "signal" too.  RSSI alone
+             * opened on noise the stock keeps muted (radio 2026-11-08). */
+            if (s_4815_noise_gate) {
+                /* 0x43, the ex-band noise, only matters once the RSSI is within
+                 * 3 of the mark and the SNR above 2 (rx_4815_verdict()); below
+                 * that the verdict is "none" whatever it says.  It is read only
+                 * then, and at most every RX_4815_EXNOISE_EVERY polls, to keep
+                 * the shared bit-banged bus quiet.  (A first bench run seemed
+                 * to hear this read in the audio; repeated A/B showed that was
+                 * room noise, radio 2026-11-08.) */
+                if ((uint16_t)(s_rssi + 3u) > open_mark && s_4815_snr > RX_4815_SNR_HOLD_MIN) {
+                    if (s_4815_exnoise_age == 0u) {
+                        s_4815_exnoise     = (uint16_t)(bk4815_read_reg(0x43u) & 0x0fffu);
+                        s_4815_exnoise_age = RX_4815_EXNOISE_EVERY;
+                    }
+                    s_4815_exnoise_age--;
+                } else {
+                    s_4815_exnoise_age = 0u;    /* read fresh on the next candidate */
+                }
+
+                const uint8_t v = rx_4815_verdict(gEeprom.SQUELCH_LEVEL, open_mark,
+                                                  s_rssi, s_4815_snr, s_4815_exnoise);
+
+                s_4815_verdict = v;
+                present = (v == RX_4815_SIGNAL);
+                absent  = (v == RX_4815_NONE);
+            }
 
             rx_squelch_step(&s_sq, present, absent, force);
             s_squelch_open = s_sq.open;
@@ -945,7 +1024,6 @@ static uint32_t s_dual_pri_f = 0u;
 static uint32_t s_dual_sec_f = 0u;
 static uint8_t  s_dual_rx_vfo = 0xFFu;   /* the RX_VFO the state was applied for */
 static uint32_t s_4829_mirror_f;         /* unassigned BK4829: the BK4815 tune mirrored onto it */
-static uint16_t s_band_written;          /* the BK4815 0x75 value rf_dual_refresh last wrote */
 static uint16_t s_tr_written;            /* the BK4815 0x0C word rf_dual_refresh last wrote */
 
 void rf_dual_reapply(void)
@@ -955,10 +1033,9 @@ void rf_dual_reapply(void)
     s_dual_rx_vfo = 0xFFu;
     /* Force the mirror to be re-applied as well (the TX paths retune the 4829). */
     s_4829_mirror_f = 0u;
-    /* ... and the BK4815's band register: pa_select_band() rewrites 0x75 from
-     * the BK4829's frequency (a scan commit, a transmit), so the cached value
-     * no longer says what the chip holds. */
-    s_band_written = 0u;
+    /* (The BK4815's band register needs nothing here: rf_dual_refresh()
+     * compares the listened frequency's band with the driver's shadow,
+     * bk4815_band_code(), which every writer updates.) */
     /* ... and its T/R state: tx_start()/tx_stop() rewrite 0x0C from the
      * BK4829's band. */
     s_tr_written = 0u;
@@ -1056,15 +1133,27 @@ void rf_dual_refresh(void)
         s_dual_sec_f = f4815;
     }
 
-    if (roles.bk4815_vfo >= 0) {
-        {
-            const uint16_t band = (f4815 >= PA_BAND_SPLIT) ? 0x0Au : 0x11u;
+    /* The band code in the BK4815's 0x75 follows the frequency being LISTENED
+     * to, whichever chip listens.  It switches the shared front end: the
+     * stock's BK4829 receive entry writes it too (FUN_08016DE8 ->
+     * FUN_08013790).  Taken from the BK4815's own VFO, it left a BK4829 lane
+     * on 446 MHz with the VHF code while the other VFO sat on 120.1 MHz on the
+     * BK4815: 0x67 77 against 152 with the right code, -58 dBm carrier (radio
+     * 2026-11-11).  Compared against the driver's shadow, because
+     * pa_select_band() and the scanner write it too. */
+    {
+        const uint32_t lane_f = gEeprom.VfoInfo[(gEeprom.RX_VFO > 1u) ? 0u : gEeprom.RX_VFO]
+                                    .freq_config_RX.Frequency;
 
-            if (band != s_band_written) {
+        if (lane_f != 0u) {
+            const uint16_t band = bk4815_band_code_for(lane_f);
+
+            if (band != bk4815_band_code())
                 bk4815_set_band(band);
-                s_band_written = band;
-            }
         }
+    }
+
+    if (roles.bk4815_vfo >= 0) {
 
         /* The BK4815's power word 0x0C must be a receive word for it to
          * hear anything.  rx_init() and tx_start()/tx_stop() set 0x0C from
@@ -1080,7 +1169,10 @@ void rf_dual_refresh(void)
             const uint16_t pwr = rx_vfo_is_4815() ? BK4815_PWR_RX_AUDIO
                                                   : BK4815_PWR_RX_QUIET;
 
-            if (pwr != s_tr_written) {
+            /* Against the driver's shadow, not a private cache: the PLL
+             * calibration, tx_start()/tx_stop() and the console benches write
+             * 0x0C too, and a stale cache left the quiet word in place. */
+            if (pwr != bk4815_power_word()) {
                 bk4815_write_reg(0x0C, pwr);
                 s_tr_written = pwr;
             }

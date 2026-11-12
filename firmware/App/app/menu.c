@@ -26,6 +26,7 @@
 #include "audio.h"
 #include "board.h"
 #include "driver/backlight.h"
+#include "driver/bk4815.h"
 #include "driver/bk4819.h"
 #include "driver/eeprom.h"
 #include "driver/gpio.h"
@@ -212,6 +213,11 @@ int MENU_GetLimits(uint8_t menu_id, int32_t *pMin, int32_t *pMax)
         case MENU_RF_B:
             //*pMin = 0;
             *pMax = ARRAY_SIZE(gSubMenu_RF) - 1;
+            break;
+
+        case MENU_RX_SPLIT:
+            //*pMin = 0;                      /* 180 MHz */
+            *pMax = 10;                         /* 280 MHz, 10 MHz steps */
             break;
 
         case MENU_RESET:
@@ -605,14 +611,12 @@ void MENU_AcceptSetting(void)
         case MENU_RF_A:
             /* Each item names its VFO explicitly, independent of which VFO is
              * selected on the main screen. */
-            SETTINGS_SetVfoTransceiver(0u, gSubMenuSelection == 0u
-                                             ? RF_XCVR_BK4829 : RF_XCVR_BK4815);
+            SETTINGS_SetVfoTransceiver(0u, (rf_xcvr_t)gSubMenuSelection);
             gRequestSaveSettings = true;
             return;
 
         case MENU_RF_B:
-            SETTINGS_SetVfoTransceiver(1u, gSubMenuSelection == 0u
-                                             ? RF_XCVR_BK4829 : RF_XCVR_BK4815);
+            SETTINGS_SetVfoTransceiver(1u, (rf_xcvr_t)gSubMenuSelection);
             gRequestSaveSettings = true;
             return;
 
@@ -913,6 +917,14 @@ void MENU_AcceptSetting(void)
             gSetting_500TX = gSubMenuSelection;
             break;
 #endif
+        case MENU_RX_SPLIT:
+            /* Port addition: the front end's VHF/UHF receive split; the UHF
+             * code from here up (bk4815.c, docs/ra89r_rx_sensitivity.md).
+             * Runtime only: power-on goes back to the measured 230 MHz. */
+            bk4815_set_band_code_split((180u + 10u * (uint32_t)gSubMenuSelection) * 100000u);
+            gVfoConfigureMode = VFO_CONFIGURE;
+            break;
+
         case MENU_350EN:
             gSetting_350EN       = gSubMenuSelection;
             gVfoConfigureMode    = VFO_CONFIGURE_RELOAD;
@@ -1166,11 +1178,11 @@ void MENU_ShowCurrentSetting(void)
             break;
 
         case MENU_RF_A:
-            gSubMenuSelection = SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4815 ? 1u : 0u;
+            gSubMenuSelection = (uint8_t)SETTINGS_GetVfoTransceiverSetting(0u);
             break;
 
         case MENU_RF_B:
-            gSubMenuSelection = SETTINGS_GetVfoTransceiver(1u) == RF_XCVR_BK4815 ? 1u : 0u;
+            gSubMenuSelection = (uint8_t)SETTINGS_GetVfoTransceiverSetting(1u);
             break;
 
 #ifndef ENABLE_FEAT_F4HWN
@@ -1395,6 +1407,13 @@ void MENU_ShowCurrentSetting(void)
         case MENU_350EN:
             gSubMenuSelection = gSetting_350EN;
             break;
+
+        case MENU_RX_SPLIT: {
+            const uint32_t mhz = bk4815_band_code_split() / 100000u;
+
+            gSubMenuSelection = (mhz <= 180u) ? 0u : (mhz >= 280u) ? 10u : (uint8_t)((mhz - 180u) / 10u);
+            break;
+        }
 
 #ifndef ENABLE_FEAT_F4HWN
         case MENU_SCREN:

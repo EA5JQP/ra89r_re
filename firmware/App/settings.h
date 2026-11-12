@@ -380,17 +380,26 @@ void SETTINGS_UpdateChannel(uint16_t channel, const VFO_Info_t *pVFO, bool keep)
     void SETTINGS_ResetTxLock(void);
 #endif
 
-/* Which RF transceiver a VFO uses.  Value 0 is reserved for old settings blobs
- * written when the menu had an Auto entry; getters normalize it to BK4829.
- * The choice lives in the port's own settings blob, not the read-only stock
- * codeplug. */
+/* Which RF transceiver a VFO uses.  Auto (0, also what old settings blobs
+ * hold in these bytes) is the stock's rule: the BK4829 at or below 134.000 MHz
+ * and the BK4815 above it (FUN_08006360, `freq <= 0x00CC77C0`) -- the stock
+ * receives every channel above 134 MHz on the BK4815.  The choice lives in the
+ * port's own settings blob, not the read-only stock codeplug. */
 typedef enum {
-    RF_XCVR_LEGACY_DEFAULT = 0,
+    RF_XCVR_AUTO = 0,
     RF_XCVR_BK4829 = 1,
     RF_XCVR_BK4815 = 2
 } rf_xcvr_t;
 
+#define RF_XCVR_AUTO_SPLIT_10HZ 13400000u   /* <= this: BK4829 */
+
+/* Pure: the chip a setting selects for a receive frequency (never AUTO). */
+rf_xcvr_t SETTINGS_ResolveTransceiver(rf_xcvr_t setting, uint32_t freq_10hz);
+/* The chip a VFO receives on now: its setting resolved against its RX
+ * frequency.  Never AUTO. */
 rf_xcvr_t SETTINGS_GetVfoTransceiver(uint8_t vfo);
+/* The stored setting (AUTO, BK4829 or BK4815), for the menu. */
+rf_xcvr_t SETTINGS_GetVfoTransceiverSetting(uint8_t vfo);
 void      SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr);
 
 /* The scanner's mode, shown as the SetScn menu item and persisted in the port's

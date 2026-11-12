@@ -168,26 +168,41 @@ typedef struct {
 #define EXTRA_VERSION_V2 2u
 
 /* The per-VFO RF transceiver choice, mirrored into the blob on save. */
-static uint8_t s_rf_xcvr[2] = { RF_XCVR_BK4829, RF_XCVR_BK4829 };
+static uint8_t s_rf_xcvr[2] = { RF_XCVR_AUTO, RF_XCVR_AUTO };
+
+static rf_xcvr_t rf_xcvr_valid(uint8_t v)
+{
+    /* Anything that is not one of the three values (an erased byte) is Auto. */
+    if (v != (uint8_t)RF_XCVR_BK4829 && v != (uint8_t)RF_XCVR_BK4815)
+        return RF_XCVR_AUTO;
+    return (rf_xcvr_t)v;
+}
+
+rf_xcvr_t SETTINGS_ResolveTransceiver(rf_xcvr_t setting, uint32_t freq_10hz)
+{
+    if (setting == RF_XCVR_BK4829 || setting == RF_XCVR_BK4815)
+        return setting;
+    return (freq_10hz <= RF_XCVR_AUTO_SPLIT_10HZ) ? RF_XCVR_BK4829 : RF_XCVR_BK4815;
+}
+
+rf_xcvr_t SETTINGS_GetVfoTransceiverSetting(uint8_t vfo)
+{
+    return (vfo > 1u) ? RF_XCVR_AUTO : rf_xcvr_valid(s_rf_xcvr[vfo]);
+}
 
 rf_xcvr_t SETTINGS_GetVfoTransceiver(uint8_t vfo)
 {
-    const uint8_t v = (vfo > 1u) ? (uint8_t)RF_XCVR_BK4829 : s_rf_xcvr[vfo];
+    const uint8_t v = (vfo > 1u) ? 0u : vfo;
 
-    /* Old settings blobs contain 0 for Auto in these former reserved bytes;
-     * invalid values also safely fall back to the fixed BK4829 default. */
-    if (v != (uint8_t)RF_XCVR_BK4829 && v != (uint8_t)RF_XCVR_BK4815)
-        return RF_XCVR_BK4829;
-    return (rf_xcvr_t)v;
+    return SETTINGS_ResolveTransceiver(SETTINGS_GetVfoTransceiverSetting(vfo),
+                                       gEeprom.VfoInfo[v].freq_config_RX.Frequency);
 }
 
 void SETTINGS_SetVfoTransceiver(uint8_t vfo, rf_xcvr_t xcvr)
 {
     if (vfo > 1u)
         return;
-    if (xcvr != RF_XCVR_BK4829 && xcvr != RF_XCVR_BK4815)
-        xcvr = RF_XCVR_BK4829;
-    s_rf_xcvr[vfo] = (uint8_t)xcvr;
+    s_rf_xcvr[vfo] = (uint8_t)rf_xcvr_valid((uint8_t)xcvr);
 }
 
 void SettingsDefaults(void)
@@ -195,8 +210,8 @@ void SettingsDefaults(void)
     memset(&gEeprom, 0, sizeof gEeprom);
     s_codeplug_bt_speaker_switch = false;
 
-    s_rf_xcvr[0] = (uint8_t)RF_XCVR_BK4829;
-    s_rf_xcvr[1] = (uint8_t)RF_XCVR_BK4829;
+    s_rf_xcvr[0] = (uint8_t)RF_XCVR_AUTO;
+    s_rf_xcvr[1] = (uint8_t)RF_XCVR_AUTO;
 
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
     gSetting_set_scn = SCAN_MODE_FAST;
