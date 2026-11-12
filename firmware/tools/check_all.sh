@@ -84,11 +84,15 @@ $CC -std=c11 -I App -I App/driver tools/test_spectrum.c \
     App/app/spectrum_rf.c -o /tmp/ra89r_test_spectrum
 run /tmp/ra89r_test_spectrum
 
-echo "== preview_k1 (screens + keys + settings, on a PC) =="
-$CC $HOST_FLAGS -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
-    -DBLUETOOTH_HOST_TEST \
-    -ffunction-sections -fdata-sections -Wl,--gc-sections \
-    tools/preview_k1.c tools/host/host_hw.c tools/host/host_bk4819.c \
+echo "== test_k5prog (K5/K1 serial programming protocol, CHIRP frames) =="
+$CC -std=c11 -Wall -Wextra -Werror -I App tools/test_k5prog.c App/k5prog.c \
+    -o /tmp/ra89r_test_k5prog
+run /tmp/ra89r_test_k5prog
+
+# The K1 application on a PC: preview_k1 and test_k1_view link the same set.
+K1_HOST_FLAGS="$HOST_FLAGS -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
+    -DBLUETOOTH_HOST_TEST -ffunction-sections -fdata-sections -Wl,--gc-sections"
+K1_HOST_SRCS="tools/host/host_hw.c tools/host/host_bk4819.c \
     tools/host/host_beeper.c tools/host/host_bluetooth.c \
     App/ui/main.c App/ui/menu.c App/ui/ui.c App/ui/status.c App/ui/welcome.c \
     App/ui/battery.c App/ui/scanner.c App/ui/helper.c App/ui/inputbox.c \
@@ -102,8 +106,18 @@ $CC $HOST_FLAGS -DPY32F403xD -include App/k1_features.h -DST7565_HOST_TEST \
     App/helper/battery.c App/helper/boot.c App/driver/system.c App/font.c \
     App/bitmaps.c App/driver/st7565.c App/driver/keyboard.c \
     App/driver/backlight.c App/driver/audio_path.c App/driver/scheduler.c \
-    App/app/scan_rate.c App/app/spectrum_rf.c \
-    -o /tmp/ra89r_preview_k1
+    App/app/scan_rate.c App/app/spectrum_rf.c App/k1_view.c"
+
+echo "== test_k1_view (CHIRP's K1 virtual EEPROM over the port's storage) =="
+$CC $K1_HOST_FLAGS tools/test_k1_view.c $K1_HOST_SRCS -o /tmp/ra89r_test_k1_view
+run /tmp/ra89r_test_k1_view
+
+echo "== k5prog_sim builds (the PTY radio tools/webchirp/chirp_e2e.py drives) =="
+$CC $K1_HOST_FLAGS tools/k5prog_sim.c App/k5prog.c $K1_HOST_SRCS -o /tmp/ra89r_k5prog_sim
+echo "built /tmp/ra89r_k5prog_sim"
+
+echo "== preview_k1 (screens + keys + settings, on a PC) =="
+$CC $K1_HOST_FLAGS tools/preview_k1.c $K1_HOST_SRCS -o /tmp/ra89r_preview_k1
 run /tmp/ra89r_preview_k1
 
 if [ -n "${ARM_TOOLCHAIN_ROOT:-}" ] && [ -d "$ARM_TOOLCHAIN_ROOT" ]; then

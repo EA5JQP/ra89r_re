@@ -85,6 +85,8 @@ static void cat_flush_pending(void)
     cat_pend_n = 0;
 }
 
+static bool k5_take(uint8_t b, uint32_t now);
+
 static void cat_input_service(uint32_t now)
 {
     int raw;
@@ -92,6 +94,12 @@ static void cat_input_service(uint32_t now)
     while ((raw = uart_getc()) >= 0) {
         uint8_t b = (uint8_t)raw;
         uint8_t i;
+
+        /* A CHIRP programming frame (App/k5prog.c) is taken before the CAT
+         * window sees it; it starts with 0xAB, which a frame of BCD digits
+         * cannot. */
+        if (cat_pend_n == 0u && k5_take(b, now))
+            continue;
 
         if (cat_pend_n > 0u && (uint32_t)(now - cat_pend_last) > CAT_BURST_GAP_MS)
             cat_flush_pending();
@@ -153,6 +161,150 @@ static int cat_console_getc(void)
 #include "ui.h"
 
 #define VERSION_STRING "ra89r_fw 0.2 (uart debug)"
+
+/* ---------------------------------------------------------------------------
+ * CHIRP / webchirp programming (docs/ra89r_chirp.md).
+ *
+ * The K5/K1 serial protocol (App/k5prog.c) on the console's USART1, serving
+ * the K1 virtual EEPROM CHIRP's F4HWN v6.2.0 driver addresses (App/k1_view.c).
+ * Replies go out raw; while a session is live the console's text output is
+ * muted and the K1 is told a serial config is in progress (no TX), as the
+ * K1's own uart.c does.  Channel writes reach the flash as they arrive; the
+ * settings and VFO blocks are applied at the 0x05DD reset CHIRP ends an
+ * upload with -- or, if an upload stops without one, when the session times
+ * out, followed by the same reset so the radio runs what was written.
+ * ------------------------------------------------------------------------- */
+#include "k1_view.h"
+#include "k5prog.h"
+
+static void k5_send(const uint8_t *buf, uint16_t len)
+{
+    uart_write_raw((const char *)buf, len);
+}
+
+static void k5_hello(void)
+{
+    uart_set_text_mute(1);
+    k1_view_open();
+}
+
+static void k5_reset(void)
+{
+    (void)k1_view_commit();
+    NVIC_SystemReset();
+}
+
+static const k5prog_ops_t k5_ops = {
+    k5_send, k1_view_read, k1_view_write, k5_hello, k5_reset,
+    EDITION_STRING " " AUTHOR_STRING_2 " " VERSION_STRING_2
+};
+
+/* Console remote PTT: '+', 'T', 'X', Enter within 3 s.  It used to be the
+ * single byte '+', and USART1 also carries CHIRP frames and CAT: one stray
+ * 0x2B (line noise, a wrong-baud connection) keyed the transmitter for up to
+ * 30 s.  Refused while a programming session is live and for 10 s after.
+ * Returns true when `ch` belonged to the sequence. */
+static uint8_t  s_ptt_seq;
+static uint32_t s_ptt_seq_t;
+static bool     k5_recent(uint32_t now);
+
+static bool remote_ptt_feed(char ch, uint32_t now)
+{
+    static const char want[] = { '+', 'T', 'X', '\r' };
+
+    if (s_ptt_seq != 0u && (uint32_t)(now - s_ptt_seq_t) > 3000u)
+        s_ptt_seq = 0;
+    if (s_ptt_seq == 0u) {
+        if (ch != '+')
+            return false;
+        s_ptt_seq   = 1;
+        s_ptt_seq_t = now;
+        return true;
+    }
+    if (ch == '\n' && s_ptt_seq == 3u)
+        ch = '\r';
+    if (ch != want[s_ptt_seq]) {
+        s_ptt_seq = 0;
+        uart_puts("\nremote PTT: cancelled (type +TX then Enter)\n");
+        return true;
+    }
+    if (++s_ptt_seq < sizeof want)
+        return true;
+    s_ptt_seq = 0;
+
+    if (k5_recent(now)) {
+        uart_puts("\nremote PTT: refused -- programming session (wait 10 s)\n");
+        return true;
+    }
+    {
+        /* Remote PTT on (driver/tx.c, tx_remote_ptt()): the radio's TX rules
+         * apply, released by '-' or after 30 s. */
+        const uint8_t st = tx_remote_ptt(true);
+
+        if (st != 0u)
+            uart_printf("\nremote PTT: refused -- %s\n", VfoStateStr[st]);
+        else
+            uart_printf("\nremote PTT: %s\n",
+                        tx_remote_active() ? "TX (30 s cap, '-' releases)"
+                                           : "already transmitting (not remote)");
+    }
+    return true;
+}
+
+static bool k5_take(uint8_t b, uint32_t now)
+{
+    return k5prog_feed(b, now);
+}
+
+static uint32_t s_k5_end;      /* when the last programming session ended */
+static bool     s_k5_ended;
+
+/* A programming session is live, or ended less than 10 s ago. */
+static bool k5_recent(uint32_t now)
+{
+    return k5prog_session_active(now) || k5prog_busy() ||
+           (s_k5_ended && (uint32_t)(now - s_k5_end) < 10000u);
+}
+
+/* Once per main-loop pass: session start/end bookkeeping. */
+static void k5_service(uint32_t now)
+{
+    static bool live;
+    const bool  active = k5prog_session_active(now) || k5prog_busy();
+
+    if (active) {
+        if (!live) {
+            live = true;
+            uart_set_text_mute(1);
+        }
+        gSerialConfigCountDown_500ms = 12;   /* 6 s, the K1's value */
+        return;
+    }
+    if (!live)
+        return;
+
+    live = false;
+    s_k5_end   = now;
+    s_k5_ended = true;
+    uart_set_text_mute(0);
+    {
+        const k1_view_stats_t *v = k1_view_stats();
+        const k5prog_stats_t  *p = k5prog_stats();
+        const bool pending = v->settings_dirty || v->vfo_dirty;
+
+        uart_printf("\n[chirp] session ended: %u frames (%u bad, %u stale), %u reads, %u writes; "
+                    "%u blocks changed flash, %u unchanged, %u bytes dropped\n",
+                    (unsigned)p->frames, (unsigned)p->bad, (unsigned)p->stale,
+                    (unsigned)p->reads, (unsigned)p->writes, (unsigned)v->written,
+                    (unsigned)v->unchanged, (unsigned)v->dropped);
+        if (pending) {
+            uart_puts("[chirp] upload stopped without a reset: applying the settings and restarting\n");
+            (void)k1_view_commit();
+            systick_delay_ms(20);
+            NVIC_SystemReset();
+        }
+    }
+}
 
 /* The Bluetooth debug console's view of the radio (app/bt_debug.h). */
 static void     bt_dbg_out(const char *text) { uart_puts(text); }
@@ -382,7 +534,7 @@ static void print_help(void)
               "          ( cycle the BK4815 0x0C power word   [ BK4829 AF on a BK4815 lane\n"
               "          ) BK4815 squelch meters (rssi/snr/ex-noise)   < toggle the BK4815 noise gate\n"
               "          { dump every BK4829 register (0x00-0x7F, read-only)   } RR VVVV write one\n"
-              "          + remote PTT on (TX rules apply, 30 s cap)   - remote PTT off\n"
+              "          +TX<Enter> remote PTT on (TX rules apply, 30 s cap)   - remote PTT off\n"
               "          ~ NNN set the PA PWM (hex, live while transmitting)\n"
               "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
               "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
@@ -2029,6 +2181,8 @@ int main(void)
               "console, 'i' shows diagnostics.\n");
     print_help();
 
+    k5prog_init(&k5_ops);
+
     for (;;) {
         uint32_t now = systick_millis();
 #ifdef ENABLE_CAT
@@ -2036,7 +2190,11 @@ int main(void)
         int c = cat_console_getc();
 #else
         int c = uart_getc();
+
+        while (c >= 0 && k5_take((uint8_t)c, now))
+            c = uart_getc();
 #endif
+        k5_service(now);
 
         if (c >= 0) {
             char ch = (char)c;
@@ -2051,7 +2209,9 @@ int main(void)
             /* '!' lines are the Bluetooth debug console (app/bt_debug.h,
              * tools/ra89r_bt.py): every letter here is taken, so it gets
              * whole lines instead. */
-            if (ch == '!' || bt_debug_active()) {
+            if (!bt_debug_active() && remote_ptt_feed(ch, now)) {
+                /* consumed by the remote-PTT sequence */
+            } else if (ch == '!' || bt_debug_active()) {
                 bt_debug_feed(ch);
             } else switch (ch) {
             case 'h':
@@ -2503,19 +2663,6 @@ int main(void)
                 BK4819_WriteRegister((BK4819_REGISTER_t)reg, (uint16_t)val);
                 uart_printf(" -> reads 0x%04X\n",
                             (unsigned)BK4819_ReadRegister((BK4819_REGISTER_t)reg));
-                break;
-            }
-            case '+': {
-                /* Remote PTT on (driver/tx.c, tx_remote_ptt()): the radio's TX
-                 * rules apply, released by '-' or after 30 s. */
-                const uint8_t st = tx_remote_ptt(true);
-
-                if (st != 0u)
-                    uart_printf("\nremote PTT: refused -- %s\n", VfoStateStr[st]);
-                else
-                    uart_printf("\nremote PTT: %s\n",
-                                tx_remote_active() ? "TX (30 s cap, '-' releases)"
-                                                   : "already transmitting (not remote)");
                 break;
             }
             case '~': {

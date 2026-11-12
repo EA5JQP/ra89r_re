@@ -720,7 +720,7 @@ leakage (not in line) read 124 dB below the Surecom's 8 W and varies with
 frequency, so it gave a false "300 MHz is blocked"; and a reading at -25 dBm
 on the tinySA's input carries its own harmonics -- add attenuation and check
 that each line drops by the pad's value.  The test keyed the radio over the
-console (`+`/`-` remote PTT, `~` for the PWM, `}` for `0x33`), so it can be
+console (`+TX`+Enter / `-` remote PTT -- a single `+` until 2026-11-05, `~` for the PWM, `}` for `0x33`), so it can be
 repeated without touching PTT; the scratch script that ran it is not in
 `tools/` yet.
 

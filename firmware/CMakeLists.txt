@@ -101,6 +101,8 @@ set(APP_SOURCES
     App/app/scanner.c
     App/cat.c
     App/cat_radio.c
+    App/k5prog.c
+    App/k1_view.c
     App/board.c
     App/radio.c
     App/functions.c

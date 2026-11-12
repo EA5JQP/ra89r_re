@@ -205,7 +205,7 @@ void pa_set_bt_audio(bool on) { (void)on; }
 /* ---------------------------------------------------------------------------
  * A tiny in-RAM stand-in for the external SPI NOR flash, covering three
  * regions: the codeplug (0x0000..0x3FFF, which the preview preloads with a
- * factory-shaped image), the K1 image (0x4000..0x13FFF, empty until the port's
+ * factory-shaped image), the K1 image (0x4000..0x1FFFF, empty until the port's
  * import writes it) and the two sectors the port's storage uses
  * (0x1FE000..0x1FFFFF, both empty on this radio).  Program ANDs bits and erase
  * sets 0xFF, like the real part, so the host can exercise the import, the
@@ -220,11 +220,11 @@ static uint8_t s_host_flash[HOST_FLASH_SIZE];
 static uint8_t s_host_codeplug[HOST_CP_SIZE];
 
 /* The K1 application's own EEPROM image: names 0x4000, attributes 0x8000,
- * channel records 0x9000, calibration 0x100C0.  This is the region the port's
+ * channel records 0x12000, calibration 0x100C0.  This is the region the port's
  * one-time import writes (driver/py25q16.c) and the K1 runtime then reads; the
  * host must model it or the preview would exercise a runtime nobody runs. */
 #define HOST_IMG_BASE 0x04000u
-#define HOST_IMG_SIZE 0x10000u
+#define HOST_IMG_SIZE 0x1C000u
 static uint8_t s_host_image[HOST_IMG_SIZE];
 
 static int host_flash_at(uint32_t addr, uint32_t *off)

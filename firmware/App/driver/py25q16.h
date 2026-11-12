@@ -76,7 +76,7 @@ bool     storage_id(uint16_t *man_dev, uint32_t *jedec);
 /* The port's own settings blob (no K1 counterpart): gEeprom, the frequency
  * channels the stock codeplug has no place for, and (with ENABLE_FMRADIO) the
  * K1's 48 FM memories. */
-#define STORAGE_EXTRA_MAX 336u
+#define STORAGE_EXTRA_MAX 384u
 bool storage_load_settings(void);
 bool storage_save_settings(void);
 bool storage_set_extra(const void *data, uint32_t size);
@@ -85,10 +85,18 @@ bool storage_write_test(uint32_t *bad_offset);
 
 /* The K1 application's EEPROM image, rebuilt in the RA89R's erased band at the
  * addresses the K1 code already uses (only the channel-record base moves off 0,
- * which is the stock's codeplug).  See docs/ra89r_calibration.md. */
+ * which is the stock's codeplug).  See docs/ra89r_calibration.md.
+ *
+ * The channel records sit at 0x12000-0x15FFF (1024 x 16 B).  They used to start
+ * at 0x9000, where record 256 and up ran into 0xA000-0xA177 -- the K1's own
+ * settings sector, which the K1 code still uses natively here (boot message
+ * 0xA0C8, spectrum 0xA148, FM 0xA028).  storage_import_k1() moves an image
+ * written by an older build (marker RKT2) once (docs/ra89r_chirp.md). */
 #define K1_IMAGE_NAME_BASE 0x04000u
 #define K1_IMAGE_ATTR_BASE 0x08000u
-#define K1_IMAGE_CH_BASE   0x09000u
+#define K1_IMAGE_CH_BASE   0x12000u
+#define K1_IMAGE_CH_SIZE   0x04000u   /* MR_CHANNELS_MAX x 16 B */
+#define K1_IMAGE_CH_BASE_OLD 0x09000u /* RKT2 layout */
 #define K1_IMAGE_CAL_BASE  0x100C0u
 #define K1_IMAGE_CAL_SIZE  0xD0u
 #define K1_IMAGE_BASE      0x04000u

@@ -23,6 +23,7 @@
 #include "dcs.h"
 #include "driver/py25q16.h"
 #include "frequencies.h"
+#include "k1_view.h"
 #include "misc.h"
 #include "driver/py25q16.h"
 #include "settings.h"
@@ -142,10 +143,17 @@ typedef struct {
     uint8_t  scan_mode;                   /* scan_mode_t (v4), scan_transceiver_mode_t (v3) */
     uint8_t  f_lock;                      /* gSetting_F_LOCK, TxLockModes_t (v5) */
     uint8_t  en350;                       /* gSetting_350EN (v5) */
+    /* v6: the gSetting_* globals the blob did not carry (SetPwr, SetTot, SetGui,
+     * battery text, dBm correction, ...), as their K1 bytes -- the values CHIRP
+     * writes into 0xA150/0xA158 (App/k1_view.c).  Before, they were back to
+     * their defaults at every boot. */
+    uint8_t  k1_globals[K1VIEW_GLOBALS_SIZE];
 } settings_extra_t;
 
 /* The version-3/4 payload: the v5 prefix up to and including the scan byte. */
 #define EXTRA_V4_SIZE ((uint32_t)offsetof(settings_extra_t, f_lock))
+/* The version-5 payload: everything before the v6 globals record. */
+#define EXTRA_V5_SIZE ((uint32_t)offsetof(settings_extra_t, k1_globals))
 _Static_assert(sizeof(settings_extra_t) <= STORAGE_EXTRA_MAX,
                "the settings extra must fit the blob's extra area");
 
@@ -162,7 +170,8 @@ typedef struct {
 } settings_extra_v2_t;
 
 #define EXTRA_MAGIC      0x58545241u    /* "ARTX" */
-#define EXTRA_VERSION    5u
+#define EXTRA_VERSION    6u
+#define EXTRA_VERSION_V5 5u
 #define EXTRA_VERSION_V4 4u
 #define EXTRA_VERSION_V3 3u
 #define EXTRA_VERSION_V2 2u
@@ -345,6 +354,10 @@ void SETTINGS_InitEEPROM(void)
      * comment says it belongs in this boot sequence. */
     MR_InitChannelAttributesCache();
 
+    /* The K1's scan-list names (0x880E, 24 x 4 B, in the attribute sector):
+     * CHIRP writes them; an erased entry reads as an empty name. */
+    PY25Q16_ReadBuffer(0x880Eu, gListName, sizeof gListName);
+
     /* The stock's shared settings next: they are what a radio configured by
      * the stock firmware or its CPS already carries. */
     codeplug_shared_settings();
@@ -365,7 +378,15 @@ void SETTINGS_InitEEPROM(void)
         if (storage_get_extra(&extra, sizeof extra) &&
             extra.magic == EXTRA_MAGIC && extra.version == EXTRA_VERSION)
             have = true;
-        else {
+        if (!have) {
+            /* A v5 blob is the v6 layout without the globals record, which
+             * then keeps the globals' defaults. */
+            memset(&extra, 0, sizeof extra);
+            if (storage_get_extra(&extra, EXTRA_V5_SIZE) &&
+                extra.magic == EXTRA_MAGIC && extra.version == EXTRA_VERSION_V5)
+                have = true;
+        }
+        if (!have) {
             /* A v3/v4 blob is the same layout without the v5 tail. */
             memset(&extra, 0, sizeof extra);
             if (storage_get_extra(&extra, EXTRA_V4_SIZE) &&
@@ -391,11 +412,13 @@ void SETTINGS_InitEEPROM(void)
                 gSetting_set_scn = (uint8_t)SCAN_MODE_FAST;
             }
 #endif
-            if (extra.version >= EXTRA_VERSION) {
+            if (extra.version >= EXTRA_VERSION_V5) {
                 gSetting_F_LOCK = (extra.f_lock < (uint8_t)F_LOCK_LEN)
                                       ? extra.f_lock : (uint8_t)F_LOCK_DEF;
                 gSetting_350EN  = extra.en350 != 0u;
             }
+            if (extra.version >= EXTRA_VERSION)
+                k1_view_globals_unpack(extra.k1_globals);
         } else {
             /* A version-2 blob has no scan byte: keep its fields and default
              * the scan mode to FAST. */
@@ -631,6 +654,7 @@ static bool settings_save_all(void)
 #endif
     extra.f_lock = gSetting_F_LOCK;
     extra.en350  = gSetting_350EN ? 1u : 0u;
+    k1_view_globals_pack(extra.k1_globals);
 
     if (!storage_set_extra(&extra, sizeof extra))
         return false;
