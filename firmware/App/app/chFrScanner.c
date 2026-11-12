@@ -4,6 +4,7 @@
 
 #include "app/app.h"
 #include "app/chFrScanner.h"
+#include "frequencies.h"
 #include "app/scan_rate.h"
 #include "audio.h"
 #include "driver/bk4815.h"
@@ -492,7 +493,14 @@ static void ScanFastTune(uint32_t frequency)
     const uint32_t jump = (frequency > scanFastPrevFrequency)
                               ? frequency - scanFastPrevFrequency
                               : scanFastPrevFrequency - frequency;
-    const bool     plain = scanFastPlainTune && scanFastPrevFrequency != 0 &&
+    /* Not in AM: there the plain 0x38/0x39 rewrite leaves the BK4829 off the
+     * new channel -- an airband range scan read 87-101 on a 120.000 MHz AM
+     * carrier that a normal tune reads at 175, and never stopped on it in 1500
+     * probes, while the REG_30 restart found it at once (radio 2026-11-12,
+     * console '#').  FM keeps the plain write. */
+    const bool     am    = (gRxVfo != NULL && gRxVfo->Modulation == MODULATION_AM) ||
+                           FREQUENCY_IsAirband(frequency);
+    const bool     plain = scanFastPlainTune && !am && scanFastPrevFrequency != 0 &&
                            jump <= SCAN_FAST_PLAIN_MAX_JUMP;
 
     scanFastPrevFrequency = frequency;
