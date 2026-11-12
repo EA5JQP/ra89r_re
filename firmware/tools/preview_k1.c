@@ -371,13 +371,19 @@ int main(void)
         gEeprom.VfoInfo[0].freq_config_RX.Frequency = 13400000u;
         ok = SETTINGS_GetVfoTransceiverSetting(0u) == RF_XCVR_AUTO &&
              SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829;
-        gEeprom.VfoInfo[0].freq_config_RX.Frequency = 13400001u;
+        gEeprom.VfoInfo[0].freq_config_RX.Frequency = 13400001u;   /* still airband */
+        ok = ok && SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829;
+        gEeprom.VfoInfo[0].freq_config_RX.Frequency = 13700000u;   /* first non-airband */
         ok = ok && SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4815;
         gEeprom.VfoInfo[0].freq_config_RX.Frequency = 44600625u;
         ok = ok && SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4815;
+        /* The airband is the BK4829's whatever the setting (AM). */
+        ok = ok && SETTINGS_ResolveTransceiver(RF_XCVR_BK4815, 12000000u) == RF_XCVR_BK4829 &&
+             SETTINGS_ResolveTransceiver(RF_XCVR_BK4815, 13690000u) == RF_XCVR_BK4829 &&
+             SETTINGS_ResolveTransceiver(RF_XCVR_BK4815, 13700000u) == RF_XCVR_BK4815;
         SETTINGS_SetVfoTransceiver(0u, (rf_xcvr_t)0x7f);   /* erased/invalid */
         ok = ok && SETTINGS_GetVfoTransceiverSetting(0u) == RF_XCVR_AUTO;
-        printf("[dual] %s Auto: <= 134.000 MHz BK4829, above BK4815; 0/invalid is Auto\n",
+        printf("[dual] %s Auto: BK4829 to 134 MHz and in the airband, BK4815 from 137 MHz; 0/invalid is Auto\n",
                ok ? "ok  " : "FAIL");
         if (!ok) failures++;
         gEeprom.VfoInfo[0].freq_config_RX.Frequency = saved;
