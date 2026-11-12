@@ -227,7 +227,7 @@ extern const char* const            gSubMenu_D_RSP[4];
     extern const char* const        gSubMenu_SET_LCK[];
     extern const char* const        gSubMenu_SET_MET[2];
     #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
-        extern const char* const    gSubMenu_SET_SCN[4];
+        extern const char* const    gSubMenu_SET_SCN[2];   /* NORMAL, FAST (ui/menu.c checks it) */
     #endif
     #ifdef ENABLE_FEAT_F4HWN_NARROWER
         extern const char* const    gSubMenu_SET_NFM[2];

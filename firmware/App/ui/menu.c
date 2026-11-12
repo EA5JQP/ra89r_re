@@ -443,6 +443,11 @@ const char* const gSubMenu_SCRAMBLER[] =
             "NORMAL",
             "FAST"
         };
+        /* The menu's range comes from the extern's size in menu.h: it said 4
+         * after FAST BOTH and LISTEN were removed, so SetScn offered two more
+         * entries read past this array (a stray "1" on the radio). */
+        _Static_assert(sizeof gSubMenu_SET_SCN / sizeof gSubMenu_SET_SCN[0] == 2u,
+                       "gSubMenu_SET_SCN must match its extern in ui/menu.h");
     #endif
 
     #ifdef ENABLE_FEAT_F4HWN_AUDIO
