@@ -393,7 +393,8 @@ typedef enum {
 
 #define RF_XCVR_AUTO_SPLIT_10HZ 13400000u   /* <= this: BK4829 */
 
-/* Pure: the chip a setting selects for a receive frequency (never AUTO). */
+/* Pure: the chip a setting selects for a receive frequency (never AUTO).
+ * The airband (108.0-137.0 MHz, AM) is always the BK4829. */
 rf_xcvr_t SETTINGS_ResolveTransceiver(rf_xcvr_t setting, uint32_t freq_10hz);
 /* The chip a VFO receives on now: its setting resolved against its RX
  * frequency.  Never AUTO. */

@@ -189,6 +189,12 @@ static rf_xcvr_t rf_xcvr_valid(uint8_t v)
 
 rf_xcvr_t SETTINGS_ResolveTransceiver(rf_xcvr_t setting, uint32_t freq_10hz)
 {
+    /* The airband is AM, and only the BK4829 demodulates AM: a VFO fixed to
+     * the BK4815 heard nothing there, and an airband range scan on it could
+     * not stop on a carrier (radio 2026-11-12).  The band wins over the
+     * setting, as it does for the modulation (radio.c). */
+    if (FREQUENCY_IsAirband(freq_10hz))
+        return RF_XCVR_BK4829;
     if (setting == RF_XCVR_BK4829 || setting == RF_XCVR_BK4815)
         return setting;
     return (freq_10hz <= RF_XCVR_AUTO_SPLIT_10HZ) ? RF_XCVR_BK4829 : RF_XCVR_BK4815;

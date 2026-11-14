@@ -448,3 +448,35 @@ behaviour has run on the radio.
 * PTT while scanning, and stop restoring the RX VFO/transceiver/audio.
 
 The branch stays unmerged until these pass on the radio.
+
+## Airband FAST scan (2026-11-12, branch `driver/scan-airband`)
+
+An airband range scan (`U`, 108.000-136.975 MHz in 8.33 kHz steps, SetScn
+FAST, SQL 1) did not work, for three separate reasons, each fixed and checked
+on the radio with an AM carrier on 120.000 MHz at -76 dBm:
+
+1. **The precheck floor could not follow the band's noise.**  It was learned
+   only from non-candidates; the airband noise rises 40+ counts across the band
+   (`0x67` 86 at 118.0 MHz, 100-134 by 119.5), so after the first sample every
+   probe was a candidate and got a full tune (~9 channels/s, 118.0-119.5 MHz in
+   20 s).  A candidate the full tune rejects now raises the floor to its RSSI
+   (`CHFRSCANNER_ContinueScanning()`; not a reset, which could blind the next
+   channel).  Result: 8680 probes in 60 s over the whole band, 8 full tunes.
+2. **The plain retune does not work in AM.**  With the plain `0x38`/`0x39`
+   probe write the BK4829 in AM never settled on the new channel: probes read
+   87-101 on the carrier a normal tune reads at 175, and 1500 probes passed it.
+   The `REG_30` restart (console `#`) found it at once, so `ScanFastTune()`
+   restarts whenever the VFO is AM or the probe is in the airband; FM keeps
+   the plain write.  AM probes run at ~47/s (a full airband pass ~75 s).
+3. **The BK4815 cannot receive AM.**  A VFO whose transceiver was fixed to the
+   BK4815 scanned the airband on it and never stopped (4218 probes).  The
+   airband (108.0-137.0 MHz) now always resolves to the BK4829
+   (`SETTINGS_ResolveTransceiver()`), whatever TrVfoA/B say: with TrVfoB =
+   4815, 118.000 and 136.975 MHz go to the BK4829, 145.500 MHz to the BK4815.
+
+With all three the scan stops on the 120.000 MHz carrier in 4.8-5.1 s from
+118.000 MHz, squelch open (RSSI 174-175).
+
+Also on this branch: SetScn showed two phantom entries (one read as "1")
+because `ui/menu.h` still declared `gSubMenu_SET_SCN[4]` after FAST BOTH and
+LISTEN were removed; it is `[2]` now, with a `_Static_assert`.

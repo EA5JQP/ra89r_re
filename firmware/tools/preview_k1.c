@@ -106,6 +106,54 @@ static void check_bt_gains(void)
 
 /* The hidden menu's band plan (F Lock) and 350 EN survive a save + reload
  * (settings blob v5); before, every boot was back to F_LOCK_DEF. */
+/* TX power comes from the stock's per-frequency page (0x3000, 3 bytes per
+ * 2 MHz row from 100 MHz) at the transmit frequency.  The K1 sampled three
+ * points per band, and its 470 MHz band reaches 1300 MHz, where this radio's
+ * page has High = 0 (from 640 MHz up): HIGH above 470 MHz came out as TXP 24
+ * and almost no RF (radio 2026-11-14).  The rows are this radio's. */
+static void check_tx_power_page(void)
+{
+    static const struct { uint16_t mhz; uint8_t low, mid, high; } rows[] = {
+        { 144, 53, 106, 139 }, { 174, 54, 123, 180 }, { 446, 44, 95, 146 },
+        { 470, 38, 105, 181 }, { 480, 36, 107, 186 }, { 520, 45, 119, 164 },
+    };
+    unsigned r, i;
+
+    /* The page as on this radio: a 45/119/176 filler, High = 0 from 640 MHz. */
+    for (r = 0; r < 401u; r++) {
+        const uint32_t a = 0x3000u + r * 3u;
+        host_set_codeplug_byte(a, 45u);
+        host_set_codeplug_byte(a + 1u, 119u);
+        host_set_codeplug_byte(a + 2u, (100u + 2u * r >= 640u) ? 0u : 176u);
+    }
+    for (i = 0; i < sizeof rows / sizeof rows[0]; i++) {
+        const uint32_t a = 0x3000u + (rows[i].mhz - 100u) / 2u * 3u;
+        host_set_codeplug_byte(a, rows[i].low);
+        host_set_codeplug_byte(a + 1u, rows[i].mid);
+        host_set_codeplug_byte(a + 2u, rows[i].high);
+    }
+
+    for (i = 0; i < sizeof rows / sizeof rows[0]; i++) {
+        VFO_Info_t vfo = *gTxVfo;
+        const unsigned want = rows[i].high + 24u;   /* the F4HWN HIGH step */
+        bool ok;
+
+        vfo.freq_config_TX.Frequency = (uint32_t)rows[i].mhz * 100000u + 50000u;
+        vfo.pTX = &vfo.freq_config_TX;
+        vfo.OUTPUT_POWER = OUTPUT_POWER_HIGH;
+        RADIO_ConfigureSquelchAndOutputPower(&vfo);
+        ok = vfo.TXP_CalculatedSetting == want;
+        printf("[txpower] %s HIGH at %u.5 MHz -> TXP %u (want %u, the page's High + 24)\n",
+               ok ? "ok  " : "FAIL", (unsigned)rows[i].mhz,
+               (unsigned)vfo.TXP_CalculatedSetting, want);
+        if (!ok) failures++;
+    }
+
+    /* Restore the erased page for the rest of the preview. */
+    for (r = 0; r < 401u * 3u; r++)
+        host_set_codeplug_byte(0x3000u + r, 0xFFu);
+}
+
 static void check_flock_persists(void)
 {
     const uint8_t before_lock = gSetting_F_LOCK;
@@ -230,7 +278,7 @@ int main(void)
     check_bt_gains();
     check_flock_persists();
     check_bt_audio_path_policy();
-    SETTINGS_LoadCalibration(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
+    SETTINGS_LoadCalibration(); check_tx_power_page(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
 
     /* ---- the image: the import must have given the K1 real channels -------
      *
@@ -371,13 +419,19 @@ int main(void)
         gEeprom.VfoInfo[0].freq_config_RX.Frequency = 13400000u;
         ok = SETTINGS_GetVfoTransceiverSetting(0u) == RF_XCVR_AUTO &&
              SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829;
-        gEeprom.VfoInfo[0].freq_config_RX.Frequency = 13400001u;
+        gEeprom.VfoInfo[0].freq_config_RX.Frequency = 13400001u;   /* still airband */
+        ok = ok && SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4829;
+        gEeprom.VfoInfo[0].freq_config_RX.Frequency = 13700000u;   /* first non-airband */
         ok = ok && SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4815;
         gEeprom.VfoInfo[0].freq_config_RX.Frequency = 44600625u;
         ok = ok && SETTINGS_GetVfoTransceiver(0u) == RF_XCVR_BK4815;
+        /* The airband is the BK4829's whatever the setting (AM). */
+        ok = ok && SETTINGS_ResolveTransceiver(RF_XCVR_BK4815, 12000000u) == RF_XCVR_BK4829 &&
+             SETTINGS_ResolveTransceiver(RF_XCVR_BK4815, 13690000u) == RF_XCVR_BK4829 &&
+             SETTINGS_ResolveTransceiver(RF_XCVR_BK4815, 13700000u) == RF_XCVR_BK4815;
         SETTINGS_SetVfoTransceiver(0u, (rf_xcvr_t)0x7f);   /* erased/invalid */
         ok = ok && SETTINGS_GetVfoTransceiverSetting(0u) == RF_XCVR_AUTO;
-        printf("[dual] %s Auto: <= 134.000 MHz BK4829, above BK4815; 0/invalid is Auto\n",
+        printf("[dual] %s Auto: BK4829 to 134 MHz and in the airband, BK4815 from 137 MHz; 0/invalid is Auto\n",
                ok ? "ok  " : "FAIL");
         if (!ok) failures++;
         gEeprom.VfoInfo[0].freq_config_RX.Frequency = saved;

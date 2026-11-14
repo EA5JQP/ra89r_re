@@ -554,7 +554,14 @@ void RADIO_ConfigureSquelchAndOutputPower(VFO_Info_t *pInfo)
     else if (currentPower == 6)
         Op = 2; // High eeprom calibration data
 
-    PY25Q16_ReadBuffer(0x100D0 + (Band * 16) + (Op * 3), Txp, 3);
+    /* RA89R: the stock's power byte at the transmit frequency itself
+     * (its per-frequency page, 2 MHz rows), not the K1's three points per
+     * band from 0x100D0.  The K1's 470 MHz band runs to 1300 MHz, so its mid
+     * and top points (885/1300 MHz) landed where the stock page's High byte
+     * is 0: HIGH above 470 MHz gave TXP 24 and almost no RF (radio
+     * 2026-11-14, docs/ra89r_rfpath.md).  Three equal points make
+     * FREQUENCY_CalculateOutputPower() return the value unchanged. */
+    Txp[0] = Txp[1] = Txp[2] = storage_stock_power(pInfo->pTX->Frequency, Op);
 
 #ifdef ENABLE_FEAT_F4HWN
     // make low and mid even lower
@@ -625,7 +632,7 @@ void RADIO_ConfigureSquelchAndOutputPower(VFO_Info_t *pInfo)
         else // case 6
         {
             // Txp[p] += 30; // For UV-K5 V1
-            Txp[p] += 24;
+            Txp[p] = (Txp[p] > 255 - 24) ? 255 : (uint8_t)(Txp[p] + 24);  /* RA89R: saturate, an erased 0xFF byte wrapped to 23 */
         }
     }
 #else
