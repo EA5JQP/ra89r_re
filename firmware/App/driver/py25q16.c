@@ -313,8 +313,9 @@ bool storage_writable(uint32_t addr, uint32_t size)
 }
 
 /* One power byte from the stock's per-frequency page.  `level` = 0/1/2 =
- * Low/Mid/High. */
-static uint8_t stock_power(uint32_t freq10, uint8_t level)
+ * Low/Mid/High.  The TX power path reads it at the transmit frequency, as
+ * the stock does (radio.c, RADIO_ConfigureSquelchAndOutputPower). */
+uint8_t storage_stock_power(uint32_t freq10, uint8_t level)
 {
     uint32_t mhz = freq10 / 100000u;    /* 10 Hz units -> MHz */
     uint32_t row;
@@ -361,7 +362,7 @@ static void build_k1_calibration(uint8_t cal[K1_IMAGE_CAL_SIZE])
         for (level = 0; level < 3u; level++)
             for (point = 0; point < 3u; point++)
                 cal[CAL_TX + band * 16u + level * 3u + point] =
-                    stock_power(f[point], (uint8_t)level);
+                    storage_stock_power(f[point], (uint8_t)level);
     }
 
     stock_rssi(rssi);
