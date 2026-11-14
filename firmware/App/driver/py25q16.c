@@ -289,7 +289,8 @@ bool storage_write_test(uint32_t *bad_offset)
  * attributes were added after the calibration, so the version went to 2.
  * Bump it whenever the layout changes. */
 #define K1_IMAGE_MAGIC_ADDR 0x100B8u
-#define K1_IMAGE_MAGIC      0x32544B52u   /* "RKT2": calibration + channel image */
+#define K1_IMAGE_MAGIC      0x33544B52u   /* "RKT3": RKT2 with the channels at 0x12000 */
+#define K1_IMAGE_MAGIC_V2   0x32544B52u   /* "RKT2": channels at 0x9000 */
 #define K1_IMAGE_SECTOR     0x10000u
 
 /* Calibration field offsets from K1_IMAGE_CAL_BASE. */
@@ -402,9 +403,33 @@ void storage_import_k1(void)
     if (present == K1_IMAGE_MAGIC)
         return;                     /* already imported */
 
+    if (present == K1_IMAGE_MAGIC_V2) {
+        /* An RKT2 image: everything stays where it is except the channel
+         * records, which move from 0x9000 to K1_IMAGE_CH_BASE.  Records 256-279
+         * (0xA000-0xA17F) overlapped the K1's settings bytes there and cannot be
+         * told apart from them, so they are not carried over. */
+        static uint8_t buf[256];
+        uint32_t off;
+
+        for (sector = K1_IMAGE_CH_BASE; sector < K1_IMAGE_CH_BASE + K1_IMAGE_CH_SIZE;
+             sector += SPI_FLASH_SECTOR_SIZE)
+            spi_flash_sector_erase(sector);
+        for (off = 0; off < K1_IMAGE_CH_SIZE; off += sizeof buf) {
+            if (off >= 256u * 16u && off < 280u * 16u)
+                continue;
+            spi_flash_read(K1_IMAGE_CH_BASE_OLD + off, buf, sizeof buf);
+            spi_flash_program(K1_IMAGE_CH_BASE + off, buf, sizeof buf);
+        }
+        PY25Q16_WriteBuffer(K1_IMAGE_MAGIC_ADDR, magic, sizeof magic, false);
+        return;
+    }
+
     /* Erase the image's sectors first: names 0x4000-0x7FFF, attributes
-     * 0x8000-0x8FFF (one sector is enough), channel records 0x9000-0x9FFF. */
-    for (sector = 0x4000u; sector < 0xA000u; sector += SPI_FLASH_SECTOR_SIZE)
+     * 0x8000-0x8FFF (one sector is enough), the channel records. */
+    for (sector = 0x4000u; sector < 0x9000u; sector += SPI_FLASH_SECTOR_SIZE)
+        spi_flash_sector_erase(sector);
+    for (sector = K1_IMAGE_CH_BASE; sector < K1_IMAGE_CH_BASE + K1_IMAGE_CH_SIZE;
+         sector += SPI_FLASH_SECTOR_SIZE)
         spi_flash_sector_erase(sector);
     spi_flash_sector_erase(K1_IMAGE_SECTOR);
 

@@ -283,7 +283,7 @@ int main(void)
     /* ---- the image: the import must have given the K1 real channels -------
      *
      * The radio boots onto the codeplug's first channel, and the runtime now
-     * reads the records the one-time import wrote (0x9000).  If the image is
+     * reads the records the one-time import wrote (0x12000).  If the image is
      * empty, RADIO_ConfigureChannel falls back to gEeprom.FreqChannel (a
      * frequency channel, band default frequency) and COMMON_SwitchVFOMode then
      * has nothing to switch to -- the "stuck on F3, no new frequency" fault.

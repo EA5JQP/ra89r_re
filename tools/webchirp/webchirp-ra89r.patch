@@ -1,0 +1,75 @@
+diff --git a/web/js/python-sources.ts b/web/js/python-sources.ts
+index 9a281f8..faca87e 100644
+--- a/web/js/python-sources.ts
++++ b/web/js/python-sources.ts
+@@ -56,6 +56,14 @@ export const QUANSHENG_UNOFFICIAL_DRIVERS = Object.freeze([
+     releases: ["v6.3.0"],
+     sha256: "a307886d90b6481b441c2cd34b622c8dacfc2080a34fc1e0ea2377054ee4ef96",
+   },
++  // Retevis RA89R running ra89r_fw (github.com/EA5JQP/ra89r_re): the v6.2.0
++  // driver above with the RA89R's 115200 serial speed. Imports f4hwn_v6_2_0.
++  {
++    module: "ra89r_f4hwn",
++    relPath: "extra_drivers/quansheng/ra89r_f4hwn.py",
++    releases: ["RA89R ra89r_fw"],
++    sha256: "379c93995eb69abdd56d8bf17c1b4bbc86155cbf52456d44f2b48fd06dc494bc",
++  },
+ ]);
+ export const EXTRA_DRIVER_RELATIVE_FILES = Object.freeze(
+   QUANSHENG_UNOFFICIAL_DRIVERS.map((driver) => driver.relPath),
+diff --git a/web/python/extra_drivers/quansheng/ra89r_f4hwn.py b/web/python/extra_drivers/quansheng/ra89r_f4hwn.py
+new file mode 100644
+index 0000000..dfedaad
+--- /dev/null
++++ b/web/python/extra_drivers/quansheng/ra89r_f4hwn.py
+@@ -0,0 +1,43 @@
++# Retevis RA89R running ra89r_fw (the F4HWN UV-K1 port) -- CHIRP driver.
++#
++# The firmware serves the K5/K1 serial programming protocol and the F4HWN
++# v6.2.0 virtual EEPROM layout (firmware/App/k5prog.c, firmware/App/k1_view.c,
++# docs/ra89r_chirp.md), so this is the published F4HWN v6.2.0 CHIRP driver
++# with the RA89R's serial speed: the console/CAT/programming port runs at
++# 115200, not the K5's 38400.
++#
++# Install next to f4hwn_v6_2_0.py as chirp/drivers/ra89r_f4hwn.py (desktop
++# CHIRP: "Load module"; webchirp: see tools/webchirp/README.md).
++#
++# SPDX-License-Identifier: GPL-3.0-or-later  (as the CHIRP driver it extends)
++
++from chirp import chirp_common, directory
++from chirp.drivers import f4hwn_v6_2_0 as _f4hwn
++
++
++@directory.register
++class RA89RF4HWNRadio(_f4hwn.UVK5RadioEgzumer):
++    """Retevis RA89R (ra89r_fw, F4HWN v6.2.0 layout)"""
++    VENDOR = "Retevis"
++    MODEL = "RA89R (F4HWN port)"
++    BAUD_RATE = 115200
++
++    @classmethod
++    def get_prompts(cls):
++        rp = chirp_common.RadioPrompts()
++        rp.experimental = (
++            "This driver talks to the ra89r_fw custom firmware on a Retevis "
++            "RA89R, not to the stock firmware.\n\n"
++            "Download and keep an image before changing anything. Channels, "
++            "names, scan lists, VFOs and settings are written; the "
++            "calibration area is read-only on this radio (an upload with "
++            "'upload calibration' ticked leaves it unchanged).")
++        rp.pre_download = (
++            "1. Turn the radio on (ra89r_fw running).\n"
++            "2. Connect the programming cable (Kenwood jack, 115200).\n"
++            "3. Click OK to download.\n")
++        rp.pre_upload = (
++            "1. Turn the radio on (ra89r_fw running).\n"
++            "2. Connect the programming cable (Kenwood jack, 115200).\n"
++            "3. Click OK to upload. The radio restarts when it is done.\n")
++        return rp
+diff --git a/web/radio-catalog-quansheng-unofficial.json b/web/radio-catalog-quansheng-unofficial.json
+index 7f43bb0..a0bf2b9 100644
+--- a/web/radio-catalog-quansheng-unofficial.json
++++ b/web/radio-catalog-quansheng-unofficial.json
+@@ -1 +1 @@
+-{"chirpRevision":"0b4076d9b19a2a133d11f31546cff8153b39eb89","driverSet":"quansheng-unofficial","count":6,"radios":[{"key":"f4hwn_v4_3:UVK5RadioEgzumer","module":"f4hwn_v4_3","className":"UVK5RadioEgzumer","vendor":"Quansheng","model":"UV-K5 (egzumer + f4hwn)","baudRate":38400,"isLiveRadio":false,"releaseLabel":"v4.3.2"},{"key":"f4hwn_v5_9_0:UVK5RadioEgzumer","module":"f4hwn_v5_9_0","className":"UVK5RadioEgzumer","vendor":"Quansheng","model":"UV-K1 & UV-K5 V3 (F4HWN Fusion)","baudRate":38400,"isLiveRadio":false,"releaseLabel":"v5.9.0"},{"key":"f4hwn_v6:UVK5RadioEgzumer","module":"f4hwn_v6","className":"UVK5RadioEgzumer","vendor":"Quansheng","model":"UV-K1 & UV-K5 V3 (F4HWN)","baudRate":38400,"isLiveRadio":false,"releaseLabel":"v6.0.0"},{"key":"f4hwn_v6_1_0:UVK5RadioEgzumer","module":"f4hwn_v6_1_0","className":"UVK5RadioEgzumer","vendor":"Quansheng","model":"UV-K1 & UV-K5 V3 (F4HWN)","baudRate":38400,"isLiveRadio":false,"releaseLabel":"v6.1.0"},{"key":"f4hwn_v6_2_0:UVK5RadioEgzumer","module":"f4hwn_v6_2_0","className":"UVK5RadioEgzumer","vendor":"Quansheng","model":"UV-K1 & UV-K5 V3 (F4HWN)","baudRate":38400,"isLiveRadio":false,"releaseLabel":"v6.2.0"},{"key":"f4hwn_v6_3_0:UVK5RadioEgzumer","module":"f4hwn_v6_3_0","className":"UVK5RadioEgzumer","vendor":"Quansheng","model":"UV-K1 & UV-K5 V3 (F4HWN)","baudRate":38400,"isLiveRadio":false,"releaseLabel":"v6.3.0"}]}
++{"chirpRevision":"0b4076d9b19a2a133d11f31546cff8153b39eb89","driverSet":"quansheng-unofficial","count":7,"radios":[{"key":"f4hwn_v4_3:UVK5RadioEgzumer","module":"f4hwn_v4_3","className":"UVK5RadioEgzumer","vendor":"Quansheng","model":"UV-K5 (egzumer + f4hwn)","baudRate":38400,"isLiveRadio":false,"releaseLabel":"v4.3.2"},{"key":"f4hwn_v5_9_0:UVK5RadioEgzumer","module":"f4hwn_v5_9_0","className":"UVK5RadioEgzumer","vendor":"Quansheng","model":"UV-K1 & UV-K5 V3 (F4HWN Fusion)","baudRate":38400,"isLiveRadio":false,"releaseLabel":"v5.9.0"},{"key":"f4hwn_v6:UVK5RadioEgzumer","module":"f4hwn_v6","className":"UVK5RadioEgzumer","vendor":"Quansheng","model":"UV-K1 & UV-K5 V3 (F4HWN)","baudRate":38400,"isLiveRadio":false,"releaseLabel":"v6.0.0"},{"key":"f4hwn_v6_1_0:UVK5RadioEgzumer","module":"f4hwn_v6_1_0","className":"UVK5RadioEgzumer","vendor":"Quansheng","model":"UV-K1 & UV-K5 V3 (F4HWN)","baudRate":38400,"isLiveRadio":false,"releaseLabel":"v6.1.0"},{"key":"f4hwn_v6_2_0:UVK5RadioEgzumer","module":"f4hwn_v6_2_0","className":"UVK5RadioEgzumer","vendor":"Quansheng","model":"UV-K1 & UV-K5 V3 (F4HWN)","baudRate":38400,"isLiveRadio":false,"releaseLabel":"v6.2.0"},{"key":"f4hwn_v6_3_0:UVK5RadioEgzumer","module":"f4hwn_v6_3_0","className":"UVK5RadioEgzumer","vendor":"Quansheng","model":"UV-K1 & UV-K5 V3 (F4HWN)","baudRate":38400,"isLiveRadio":false,"releaseLabel":"v6.3.0"},{"key":"ra89r_f4hwn:RA89RF4HWNRadio","module":"ra89r_f4hwn","className":"RA89RF4HWNRadio","vendor":"Retevis","model":"RA89R (F4HWN port)","baudRate":115200,"isLiveRadio":false,"releaseLabel":"RA89R ra89r_fw"}]}

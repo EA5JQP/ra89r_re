@@ -11,6 +11,9 @@ void uart_write(const char *buf, uint32_t len);
 void uart_write_raw(const char *buf, uint32_t len);
 void uart_puts(const char *s);
 void uart_printf(const char *fmt, ...);
+/* Drop console text (putc/puts/printf/write) while non-zero; raw writes
+ * still go out.  Used while a CHIRP programming session is live. */
+void uart_set_text_mute(int mute);
 
 /* Non-blocking receive. */
 int uart_rx_ready(void);

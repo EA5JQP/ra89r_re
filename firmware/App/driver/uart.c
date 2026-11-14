@@ -88,8 +88,21 @@ void uart_init(uint32_t baud)
     NVIC_EnableIRQ(USART1_IRQn);
 }
 
+/* Console text is dropped while a CHIRP programming session owns the line
+ * (App/k5prog.c): an asynchronous print landing inside a reply frame would
+ * break the frame.  Raw writes (uart_write_raw) are what the protocol replies
+ * use, so they always go out. */
+static volatile uint8_t s_mute;
+
+void uart_set_text_mute(int mute)
+{
+    s_mute = mute ? 1u : 0u;
+}
+
 void uart_putc(char c)
 {
+    if (s_mute)
+        return;
     if (c == '\n')
         putc_raw('\r');
     putc_raw(c);
