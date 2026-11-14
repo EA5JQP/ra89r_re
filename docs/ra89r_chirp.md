@@ -5,10 +5,11 @@ Programming the custom firmware's channels and settings from
 F4HWN **v6.2.0** CHIRP driver.  Branch `driver/chirp`; plan in
 `docs/superpowers/plans/2026-11-03-chirp-webchirp.md`.
 
-State: **host-verified, not yet run on the radio.**  The real CHIRP driver,
-unmodified, downloads, edits and uploads against the firmware's own code on a
-PTY (`tools/webchirp/chirp_e2e.py`).  Nothing here has been observed on the
-radio yet.
+State: **validated on the radio (2026-11-14)**, merged into `develop`.  The
+real CHIRP driver (local CHIRP `master` d99bb227 + webchirp's
+`f4hwn_v6_2_0.py` through `ra89r_f4hwn.py`) downloads and uploads over the
+console's cable at 115200; see "Radio run" below.  The PTY check
+(`tools/webchirp/chirp_e2e.py`) still runs the same driver offline.
 
 ## What talks to what
 
@@ -139,8 +140,12 @@ codeplug itself is untouched).
   During a session the K1's `SerialConfigInProgress()` already refuses every
   TX source.
 * **TX permission is not channel data.**  On this firmware the radio-wide F
-  Lock band plan decides it.  The per-channel TX lock only blocks out-of-band
-  frequencies, as in the K1.  An upload carries F Lock in `0xA150` and
+  Lock band plan decides it.  The per-channel TX lock (`txLock` in CHIRP, the
+  K1's `TX_LOCK`) only means "obey the band plan": `RADIO_CheckTx()` refuses
+  when `TX_freq_check() != 0 && TX_LOCK`, so it never blocks an in-plan
+  frequency.  With the default plan (`DEF`: 137-174, 174-350, 400-600 MHz)
+  a marine channel with `txLock = ON` **can still transmit** (156-162 MHz is
+  in plan); `CE` (144-146, 430-440) or `DISABLE ALL` is what stops it.  An upload carries F Lock in `0xA150` and
   round-trips it unchanged.  To make the radio receive-only, set F Lock to
   `DISABLE ALL`.
 
@@ -164,7 +169,34 @@ codeplug itself is untouched).
   and calibration unchanged.  Run 2026-11-03: all pass; download 0.4 s and
   upload 0.1 s on the PTY (the radio's bit-banged flash will be slower).
 
-## Bench gate (open)
+## Radio run (2026-11-14)
+
+Image: `driver/rxsplt-save` @ `783a989` (this branch + the blob-v7 RxSplt
+save + develop's TX-power fix), flashed over a radio that already ran the
+RKT3 layout.  Driven from a script around the CHIRP driver on `/dev/ttyUSB0`:
+
+* **Download**: 7.2-7.5 s, firmware `RA89R F4HWN 0.3`; the 4 channels and
+  names matched the radio; every setting parsed (the K1-only ones -- DTMF,
+  key actions, backlight -- read the K1 defaults, never set on this radio).
+* **Upload**: cleared the 4 channels and wrote 68 (PMR1-16, NFM; 52 marine
+  channels, FM, duplex ones as coast RX with a -4.6 MHz offset), scan lists
+  1/2 named `PMR`/`MAR`: **10.1 s**, then the radio's own reset.
+* **Download again**: all 68 read back field for field (frequency, name,
+  mode, duplex/offset, power, scan list, TX lock); list names kept; nothing
+  beyond them used.
+* **TX lockout**: `+TX` 2.3 s after a download put **no carrier** on a tinySA
+  (-117 dBm, the floor; the refusal text is muted with the session), and
+  keyed normally 18 s after (-82 dBm on the tinySA, then `-` released).
+* **Boot race**: the first download 4 s after the upload's reset failed with
+  `Bad response header` -- CHIRP's hello met the boot banner (`boot...`).  A
+  retry once the radio is up works; a user just retries.
+* **LOW power**: PMR2 at "LOW 3 = 250 mW" measured ~45 uW: the F4HWN LOW
+  ladder divides the page's Low byte (44) to TXP 13, where the PA barely
+  conducts.  The LOW/MID ladder is not calibrated for this radio (open,
+  `docs/ra89r_rfpath.md`).
+
+## Bench gate
+
 
 On the radio, with webchirp running locally with the RA89R entry
 (`tools/webchirp/README.md`):
@@ -178,5 +210,11 @@ On the radio, with webchirp running locally with the RA89R entry
    with `calib.bin`.
 5. The console still works after the session, and CAT (Look4Sat) still works.
 
-Open: upload time on the real flash (each changed block is a sector
-erase); whether the CH340/cable round-trip at 115200 needs a smaller block.
+Results: 1, 2 (channels, names, list names, deletes; a VFO and a menu
+setting were not edited on the radio), 3 and the console part of 5 passed
+(2026-11-14, above).  Upload time on the real flash: 10.1 s for 68 channels;
+115200 needs no smaller block.  **Still open:** 4 -- this firmware has no
+full flash dump any more (`E` is now the scan-start automation and `e` prints
+64 bytes, so `tools/ra89r_eeprom.py dump` fails with "no dump header"); the
+PTY check shows CHIRP's writes never reach `0x3000`-`0x38AF`, but the radio
+has not been re-dumped.  CAT (Look4Sat) after a session is untested.

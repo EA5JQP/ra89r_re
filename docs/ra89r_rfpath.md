@@ -723,6 +723,13 @@ A reading of ~1 uW at "HIGH" was the VFO left on **LOW1** (TXP 10): check
 the Power setting first.  `preview_k1` checks TXP at HIGH against this
 radio's page rows at 144-520 MHz.
 
+Open: the **LOW/MID ladder is not calibrated** for this radio.  HIGH lands at
+the PWM cap everywhere, but the F4HWN LOW steps divide the page's Low byte
+(`* 4 / {20,15,10,8,6}` at VHF, `{25,19,13,9,6}` at UHF): "LOW 3 = 250 mW"
+on PMR2 (446.01875, Low byte 44) is TXP 13 and measured ~45 uW (radio
+2026-11-14, `docs/ra89r_chirp.md`).  A per-level sweep against the Surecom is
+what would fix the dividers.
+
 ### TX between the bands: 300 MHz (radio 2026-10-31)
 
 The board has two TX filter paths, selected by the `0x33` band pins
