@@ -154,6 +154,53 @@ static int cat_console_getc(void)
 
 #define VERSION_STRING "ra89r_fw 0.2 (uart debug)"
 
+/* Console remote PTT: '+', 'T', 'X', Enter within 3 s.  It used to be the
+ * single byte '+', and USART1 also carries CAT (and, on driver/chirp, CHIRP
+ * frames): one stray 0x2B (line noise, a wrong-baud connection) keyed the
+ * transmitter for up to 30 s.  Returns true when `ch` belonged to the
+ * sequence. */
+static uint8_t  s_ptt_seq;
+static uint32_t s_ptt_seq_t;
+
+static bool remote_ptt_feed(char ch, uint32_t now)
+{
+    static const char want[] = { '+', 'T', 'X', '\r' };
+
+    if (s_ptt_seq != 0u && (uint32_t)(now - s_ptt_seq_t) > 3000u)
+        s_ptt_seq = 0;
+    if (s_ptt_seq == 0u) {
+        if (ch != '+')
+            return false;
+        s_ptt_seq   = 1;
+        s_ptt_seq_t = now;
+        return true;
+    }
+    if (ch == '\n' && s_ptt_seq == 3u)
+        ch = '\r';
+    if (ch != want[s_ptt_seq]) {
+        s_ptt_seq = 0;
+        uart_puts("\nremote PTT: cancelled (type +TX then Enter)\n");
+        return true;
+    }
+    if (++s_ptt_seq < sizeof want)
+        return true;
+    s_ptt_seq = 0;
+
+    {
+        /* Remote PTT on (driver/tx.c, tx_remote_ptt()): the radio's TX rules
+         * apply, released by '-' or after 30 s. */
+        const uint8_t st = tx_remote_ptt(true);
+
+        if (st != 0u)
+            uart_printf("\nremote PTT: refused -- %s\n", VfoStateStr[st]);
+        else
+            uart_printf("\nremote PTT: %s\n",
+                        tx_remote_active() ? "TX (30 s cap, '-' releases)"
+                                           : "already transmitting (not remote)");
+    }
+    return true;
+}
+
 /* The Bluetooth debug console's view of the radio (app/bt_debug.h). */
 static void     bt_dbg_out(const char *text) { uart_puts(text); }
 static uint32_t bt_dbg_millis(void) { return systick_millis(); }
@@ -382,7 +429,7 @@ static void print_help(void)
               "          ( cycle the BK4815 0x0C power word   [ BK4829 AF on a BK4815 lane\n"
               "          ) BK4815 squelch meters (rssi/snr/ex-noise)   < toggle the BK4815 noise gate\n"
               "          { dump every BK4829 register (0x00-0x7F, read-only)   } RR VVVV write one\n"
-              "          + remote PTT on (TX rules apply, 30 s cap)   - remote PTT off\n"
+              "          +TX<Enter> remote PTT on (TX rules apply, 30 s cap)   - remote PTT off\n"
               "          ~ NNN set the PA PWM (hex, live while transmitting)\n"
               "          T TX path/duty read-out   x TX band pin   w TX variant sweep\n"
               "          Y step the PA duty   C toggle PC13   (PTT transmits)\n"
@@ -2051,7 +2098,9 @@ int main(void)
             /* '!' lines are the Bluetooth debug console (app/bt_debug.h,
              * tools/ra89r_bt.py): every letter here is taken, so it gets
              * whole lines instead. */
-            if (ch == '!' || bt_debug_active()) {
+            if (!bt_debug_active() && remote_ptt_feed(ch, now)) {
+                /* consumed by the remote-PTT sequence */
+            } else if (ch == '!' || bt_debug_active()) {
                 bt_debug_feed(ch);
             } else switch (ch) {
             case 'h':
@@ -2503,19 +2552,6 @@ int main(void)
                 BK4819_WriteRegister((BK4819_REGISTER_t)reg, (uint16_t)val);
                 uart_printf(" -> reads 0x%04X\n",
                             (unsigned)BK4819_ReadRegister((BK4819_REGISTER_t)reg));
-                break;
-            }
-            case '+': {
-                /* Remote PTT on (driver/tx.c, tx_remote_ptt()): the radio's TX
-                 * rules apply, released by '-' or after 30 s. */
-                const uint8_t st = tx_remote_ptt(true);
-
-                if (st != 0u)
-                    uart_printf("\nremote PTT: refused -- %s\n", VfoStateStr[st]);
-                else
-                    uart_printf("\nremote PTT: %s\n",
-                                tx_remote_active() ? "TX (30 s cap, '-' releases)"
-                                                   : "already transmitting (not remote)");
                 break;
             }
             case '~': {

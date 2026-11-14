@@ -695,7 +695,7 @@ its in-between band.  The default band plan (`F_LOCK_DEF`) allows TX at
 what such a transmission does.
 
 Measured at 300.000 MHz, power 7 (PB14 compare 719 = the ARR/2 clamp, `0x36 =
-0xC8A2`, `0x33 = 0x8033`), remote PTT (console `+`), tinySA HIGH input in line
+0xC8A2`, `0x33 = 0x8033`), remote PTT (console `+`, now `+TX`+Enter), tinySA HIGH input in line
 behind the pads, 250-950 MHz, 2.4 MHz bins:
 
 | | 60 dB in line | 70 dB in line | at the radio (70 dB) |
@@ -720,7 +720,7 @@ leakage (not in line) read 124 dB below the Surecom's 8 W and varies with
 frequency, so it gave a false "300 MHz is blocked"; and a reading at -25 dBm
 on the tinySA's input carries its own harmonics -- add attenuation and check
 that each line drops by the pad's value.  The test keyed the radio over the
-console (`+`/`-` remote PTT, `~` for the PWM, `}` for `0x33`), so it can be
+console (`+TX`+Enter / `-` remote PTT -- a single `+` until 2026-11-05, `~` for the PWM, `}` for `0x33`), so it can be
 repeated without touching PTT; the scratch script that ran it is not in
 `tools/` yet.
 
