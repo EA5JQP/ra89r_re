@@ -920,9 +920,10 @@ void MENU_AcceptSetting(void)
         case MENU_RX_SPLIT:
             /* Port addition: the front end's VHF/UHF receive split; the UHF
              * code from here up (bk4815.c, docs/ra89r_rx_sensitivity.md).
-             * Runtime only: power-on goes back to the measured 230 MHz. */
+             * Saved in the settings blob (v7). */
             bk4815_set_band_code_split((180u + 10u * (uint32_t)gSubMenuSelection) * 100000u);
-            gVfoConfigureMode = VFO_CONFIGURE;
+            gVfoConfigureMode    = VFO_CONFIGURE;
+            gRequestSaveSettings = true;       /* settings blob v7 */
             break;
 
         case MENU_350EN:

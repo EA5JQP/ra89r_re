@@ -248,3 +248,13 @@ Bench lessons from this round: a laptop charger raised the airband floor too
 volume knob has to be turned back up (the card then reads -60 dBFS hiss
 instead of -13), and the sound card comes back from a USB reset with its AGC
 on.
+
+## RxSplt is saved (settings blob v7, 2026-11-12)
+
+The hidden menu's `RxSplt` (the receive band-code split) is one byte appended
+to the settings blob as v7 (`driver/rxsplt-save`, on top of `driver/chirp`'s
+v6): 10 MHz units, 18..28; older blobs and out-of-range bytes keep 230 MHz.
+**Validated on the radio:** set to 260 MHz and saved, power-cycled, came back
+at 260 (then set back to 230).  The first attempt "failed" because the
+console's `5` re-wrote the blob without refreshing the port's own fields --
+fixed in the same branch, `5` now does the menu's full save.

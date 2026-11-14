@@ -2869,9 +2869,13 @@ int main(void)
             case '5':
                 /* Save the port's settings to the external flash (blob in the
                  * empty tail of the part -- see driver/py25q16.c). */
+                /* The full save: storage_save_settings() alone re-wrote the
+                 * blob without refreshing the port's own fields (the extra:
+                 * TrVfo, SetScn, F Lock, the K1 globals, RxSplt), so a value
+                 * changed from the console was not saved (radio 2026-11-12). */
                 uart_printf("\nstorage: settings save %s\n",
-                            storage_save_settings() ? "PASS (read back)"
-                                                         : "FAILED");
+                            SETTINGS_SaveSettingsChecked() ? "PASS (read back)"
+                                                           : "FAILED");
                 break;
             case '6': {
                 /* The write test docs/ra89r_eeprom.md has been carrying as pending:

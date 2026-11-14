@@ -33,6 +33,7 @@
 #include "py32f4xx.h"      /* TIM7/DMA/SYSCFG scratch, for the backlight checks */
 #include "misc.h"
 #include "settings.h"
+#include "driver/bk4815.h"
 #include "radio.h"
 #include "settings.h"
 #include "ui/main.h"
@@ -176,6 +177,25 @@ static void check_flock_persists(void)
     SETTINGS_SaveSettings();
 }
 
+/* The hidden menu's RxSplt survives a save + reload (settings blob v7). */
+static void check_rx_split_persists(void)
+{
+    const uint32_t before = bk4815_band_code_split();
+    bool ok;
+
+    bk4815_set_band_code_split(25000000u);      /* 250 MHz */
+    SETTINGS_SaveSettings();
+    bk4815_set_band_code_split(18000000u);
+    SETTINGS_InitEEPROM();
+    ok = bk4815_band_code_split() == 25000000u;
+    printf("[settings] %s RxSplt survives save/reload (%u MHz)\n",
+           ok ? "ok  " : "FAIL", (unsigned)(bk4815_band_code_split() / 100000u));
+    if (!ok) failures++;
+
+    bk4815_set_band_code_split(before);
+    SETTINGS_SaveSettings();
+}
+
 static void check_bt_audio_path_policy(void)
 {
     bool ok;
@@ -277,6 +297,7 @@ int main(void)
     check_bt_speaker_switch();
     check_bt_gains();
     check_flock_persists();
+    check_rx_split_persists();
     check_bt_audio_path_policy();
     SETTINGS_LoadCalibration(); check_tx_power_page(); RADIO_ConfigureChannel(0, VFO_CONFIGURE_RELOAD); RADIO_ConfigureChannel(1, VFO_CONFIGURE_RELOAD); RADIO_SelectVfos(); SETTINGS_FixupVfoPointers();
 
