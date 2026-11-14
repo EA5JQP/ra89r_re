@@ -104,4 +104,8 @@ bool storage_write_test(uint32_t *bad_offset);
 bool storage_writable(uint32_t addr, uint32_t size);
 void storage_import_k1(void);
 
+/* The stock's factory power byte (0x3000 page, 2 MHz rows from 100 MHz) for a
+ * frequency in 10 Hz units; `level` 0/1/2 = Low/Mid/High. */
+uint8_t storage_stock_power(uint32_t freq10, uint8_t level);
+
 #endif

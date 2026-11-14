@@ -683,6 +683,46 @@ setting.  The K1 reads its per-band low/mid/high calibration from EEPROM
 **provisional** stand-in; the per-level duty for each band still needs a measured
 sweep, and the provisional table is where its results go.
 
+### TX power per frequency, and the 470 MHz hole (radio 2026-11-14)
+
+**Superseded above:** the TX power no longer goes through the K1's three
+points per band.  `RADIO_ConfigureSquelchAndOutputPower()` takes the stock's
+power byte for the **transmit frequency itself**, `storage_stock_power()`
+(page `0x3000`, `{Low, Mid, High}` per 2 MHz row from 100 MHz), as the stock
+does (`FUN_080201CC` -> `FUN_0800E3F6`).  HIGH is that High byte + 24 (the
+F4HWN step, now saturating), and the PB14 compare is `TXP * 1439 / 255`
+clamped to 719, so **any TXP >= 128 is full drive**.
+
+Why: the K1's 470 MHz band runs to 1300 MHz, so the import sampled it at
+470/885/1300 MHz.  This radio's page has High = 0 from 640 MHz up, so HIGH
+above 470 MHz interpolated to TXP 24 (compare 135): **~27 dB down at 480 MHz**,
+"no appreciable watts" on a Surecom.  The other K1 bands sample frequencies the
+page covers, so they were unaffected at HIGH.
+
+The page's rows from ~176 to ~398 MHz hold the uncalibrated `45/119/176`
+filler (the factory aligned only VHF and UHF), so HIGH at 300 MHz is TXP 200,
+full drive (~4 W, with the strong 2nd harmonic measured above).  MID/LOW now
+follow each 2 MHz row instead of a straight line between three points.
+
+Measured at HIGH, BK4829 TX, remote PTT, tinySA behind 30+20+10 dB pads; the
+pads + tinySA read 10-12 dB low against a Surecom SW-102, so each column was
+anchored to the Surecom (LOW input ~70.8 dB, HIGH input ~68.8 dB):
+
+| MHz | before | after | Surecom |
+|---|---|---|---|
+| 145.5 | 7.5 W | (unchanged, compare 719) | 7.5 W |
+| 175 | | | 5.8 W |
+| 300 / 340 | | TXP 200, compare 719 | 4.06 / 4.85 W |
+| 433 / 446 / 460 | | | 7.9 / 7.8 / 7.3 W |
+| 470.0 | ~8 W (TXP 205) | 7.9 W | |
+| 472 / 476 | (TXP 24) | 5.6 / 7.9 W | |
+| 480 | +13.5 dBm (TXP 20) | 7.1 W (TXP 210, compare 719) | "no watts" before |
+| 490 / 500 / 510 / 520 | | 5.6 / 7.1 / 6.3 / 5.0 W | |
+
+A reading of ~1 uW at "HIGH" was the VFO left on **LOW1** (TXP 10): check
+the Power setting first.  `preview_k1` checks TXP at HIGH against this
+radio's page rows at 144-520 MHz.
+
 ### TX between the bands: 300 MHz (radio 2026-10-31)
 
 The board has two TX filter paths, selected by the `0x33` band pins
@@ -695,7 +735,7 @@ its in-between band.  The default band plan (`F_LOCK_DEF`) allows TX at
 what such a transmission does.
 
 Measured at 300.000 MHz, power 7 (PB14 compare 719 = the ARR/2 clamp, `0x36 =
-0xC8A2`, `0x33 = 0x8033`), remote PTT (console `+`), tinySA HIGH input in line
+0xC8A2`, `0x33 = 0x8033`), remote PTT (console `+`, now `+TX`+Enter), tinySA HIGH input in line
 behind the pads, 250-950 MHz, 2.4 MHz bins:
 
 | | 60 dB in line | 70 dB in line | at the radio (70 dB) |
